@@ -220,6 +220,101 @@ static let itemRadius: CGFloat = 12
 xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -destination 'platform=macOS' build
 ```
 
+## 小米 MiMo 接手说明
+
+接下来可能会让小米 MiMo 模型接手本项目。请把它当作一个擅长推理、代码和 Agent 工作流的模型来使用，但必须给它清晰的边界和验收标准。
+
+### 对 MiMo 的基本判断
+
+截至 2026-05-24，公开资料显示 MiMo 系列的定位偏向推理、代码、长上下文和工具调用。小米 MiMo 官方页面介绍 V2.5 系列时强调 1M 上下文、Agent 场景和对 Claude Code、OpenCode、OpenClaw 等编码工具链的兼容；MiMo-7B 的技术报告也强调数学、编程和通用推理任务上的强化训练。
+
+因此，它适合接手这类任务：
+
+- 阅读项目文档和代码，理解已有约束。
+- 在明确任务范围内做 SwiftUI 小步 UI 优化。
+- 根据现有设计常量继续收敛界面比例。
+- 把复杂工作拆成可验证的小提交。
+- 做偏工程化的整理，例如组件拆分、状态整理、数据持久化。
+
+但它不应该被直接要求“凭感觉重做整个界面”。本项目最难的部分不是写出 SwiftUI 控件，而是维持 Apple Music 式 macOS 视觉、圆角关系、窗口比例和素材工具的克制感。
+
+### MiMo 的优势应该这样利用
+
+- 利用它的长上下文能力，让它一次读完本文、`ContentView.swift`、`LibraryStore.swift` 和最近的 Git diff。
+- 利用它的代码能力，让它做局部、可编译、可回退的小改动。
+- 利用它的中文理解能力，让它把用户的中文审美反馈转成具体 UI 调整。
+- 利用它的 Agent 能力，让它形成“读文件、改代码、编译、汇报”的闭环。
+- 利用它的效率优势，让它快速做多轮小迭代，而不是一次性大重构。
+
+### 需要防范的风险
+
+- 不要让它为了“看起来完整”新增大量无关功能。
+- 不要让它重写架构、换技术栈、引入不必要依赖。
+- 不要让它重新使用 SwiftUI 原生 `VideoPlayer` 做主预览播放器。
+- 不要让它随意修改 `Design` 中的圆角、间距和比例常量。
+- 不要让它把视觉做成网页后台、卡片墙或营销页。
+- 不要让它在没有编译验证的情况下声称完成。
+- 如果它无法看到运行截图，就必须明确说明“本轮只做代码层验证”，不能假装视觉已经确认。
+
+### 给 MiMo 的接手协议
+
+MiMo 接手时必须按这个顺序工作：
+
+1. 运行 `git status --short`，确认当前工作区状态。
+2. 阅读 `README.md`。
+3. 阅读 `LapianBao/ContentView.swift`。
+4. 阅读 `LapianBao/LibraryStore.swift`。
+5. 只处理用户明确提出的任务，不顺手做大范围重构。
+6. 修改前说明要改的区域和原因。
+7. 修改后运行：
+
+```bash
+xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -destination 'platform=macOS' build
+```
+
+8. 如果修改 UI，应尽量通过 Xcode 预览、运行 App 或截图验证视觉结果。
+9. 只有用户明确要求时才提交 Git。
+
+### 可以直接给 MiMo 的启动提示词
+
+```text
+你正在接手一个 macOS SwiftUI 项目：拉片宝。
+
+项目路径是：
+/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao
+
+请先阅读 README.md，再阅读 LapianBao/ContentView.swift 和 LapianBao/LibraryStore.swift。
+
+这个 App 是一个 Apple Music 风格的本地视频素材库，不是网页后台。当前重点是优化右侧预览区和中间素材库的 UI。请保持现有技术栈：SwiftUI + AppKit + AVFoundation。不要重新引入 SwiftUI 原生 VideoPlayer 作为主预览播放器，因为它会在悬停时压暗画面。不要随意破坏 Design 中的圆角、间距和比例关系。
+
+你的工作方式必须是小步修改、编译验证、清楚汇报。完成后运行：
+xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -destination 'platform=macOS' build
+
+如果你无法实际看到运行画面，请明确说明本轮只做了代码编译验证，不能声称视觉已经完全确认。
+```
+
+### 最适合 MiMo 继续做的下一批任务
+
+1. 优化预览区比例：视频画面、控制条、波形、标签编辑区之间需要更成熟的层级。
+2. 优化自定义播放器：控制条 hover 显示、播放结束状态、拖动进度时的反馈。
+3. 优化波形：让它更像剪辑工具中的时间线，并与播放进度产生关系。
+4. 优化素材库卡片：标题、时长、标签、选中状态和网格密度。
+5. 拆分 `ContentView.swift`：先拆播放器，再拆素材卡片，最后拆侧边栏。
+6. 实现标签持久化：优先使用项目本地 JSON 文件，不要一开始就上复杂数据库。
+
+### 暂时不建议 MiMo 先做的事
+
+- 不要先做云同步、账号系统、多设备同步。
+- 不要先做数据库重构。
+- 不要先做完整全屏播放器。
+- 不要先改窗口外框和红黄绿按钮位置，除非用户再次明确要求。
+- 不要一次性重做整套视觉语言。
+
+### MiMo 资料依据
+
+- 小米 MiMo 官方页：https://mimo.mi.com/
+- MiMo-7B 技术报告：https://arxiv.org/abs/2505.07608
+
 ## 给下一位 AI 的工作方式
 
 如果你是接手本项目的 AI，请按这个顺序工作：
