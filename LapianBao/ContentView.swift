@@ -35,30 +35,39 @@ private enum PreviewKeyboardCommand {
 }
 
 private struct WindowConfigurator: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
-            configure(view.window)
+            context.coordinator.configureIfNeeded(view.window)
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
-            configure(nsView.window)
+            context.coordinator.configureIfNeeded(nsView.window)
         }
     }
 
-    private func configure(_ window: NSWindow?) {
-        guard let window else { return }
-        window.styleMask.remove([.titled, .closable, .miniaturizable])
-        window.styleMask.insert(.resizable)
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.hasShadow = true
-        window.isMovableByWindowBackground = false
+    final class Coordinator {
+        private weak var configuredWindow: NSWindow?
+
+        func configureIfNeeded(_ window: NSWindow?) {
+            guard let window, configuredWindow !== window else { return }
+            configuredWindow = window
+            window.styleMask.remove([.titled, .closable, .miniaturizable])
+            window.styleMask.insert(.resizable)
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.backgroundColor = .clear
+            window.isOpaque = false
+            window.hasShadow = true
+            window.isMovableByWindowBackground = false
+        }
     }
 }
 
@@ -419,7 +428,7 @@ private struct WaveformControlBar: View {
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.white.opacity(0.74))
                 .lineLimit(1)
-                .frame(width: 156, alignment: .leading)
+                .frame(width: 80, alignment: .leading)
 
             AudioWaveformView(
                 samples: samples,
@@ -461,7 +470,7 @@ private struct FrameScrubberView: View {
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.white.opacity(0.74))
                 .lineLimit(1)
-                .frame(width: 156, alignment: .leading)
+                .frame(width: 80, alignment: .leading)
 
             GeometryReader { geo in
                 let width = geo.size.width
@@ -575,7 +584,7 @@ private struct SimpleProgressBar: View {
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.white.opacity(0.74))
                 .lineLimit(1)
-                .frame(width: 156, alignment: .leading)
+                .frame(width: 80, alignment: .leading)
 
             GeometryReader { geo in
                 let width = geo.size.width
@@ -622,18 +631,11 @@ private struct SceneCutTile: View {
     let timeLabel: String
     let onTap: () -> Void
 
+    @State private var cachedImage: NSImage?
+
     var body: some View {
         Button(action: onTap) {
             ZStack(alignment: .bottomLeading) {
-                if let image = NSImage(data: cut.thumbnailData) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                }
-
                 Text(timeLabel)
                     .font(.caption2.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.white)
@@ -642,10 +644,27 @@ private struct SceneCutTile: View {
                     .clipShape(Capsule())
                     .padding(5)
             }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .background {
+                if let image = cachedImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Color.white.opacity(0.08)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .aspectRatio(16 / 9, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .buttonStyle(.plain)
+        .task(id: cut.id) {
+            guard cachedImage == nil else { return }
+            let data = cut.thumbnailData
+            let img = await Task.detached(priority: .utility) {
+                NSImage(data: data)
+            }.value
+            cachedImage = img
+        }
     }
 }
 
@@ -666,10 +685,10 @@ struct ContentView: View {
     @State private var activePreviewTab: PreviewTab = .frames
     @State private var hoveredVideoPath: String? = nil
     @State private var tagPopoverVideoPath: String? = nil
-    @Namespace private var tabNamespace
     @State private var isImportSheetPresented = false
     @State private var importURLText = ""
     @State private var importEndpointText = ""
+    @State private var isShowingImportAdvanced = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -981,97 +1000,136 @@ struct ContentView: View {
     private var importTile: some View {
         Button {
             importEndpointText = libraryStore.instagramImportEndpoint
+            autoFillClipboardURL()
             isImportSheetPresented = true
         } label: {
-            VStack(spacing: 10) {
+            ZStack {
                 Image(systemName: "plus")
-                    .font(.system(size: 28, weight: .semibold))
-                    .frame(width: 52, height: 52)
-                    .background(.white.opacity(0.12))
-                    .clipShape(Circle())
-
-                Text("导入")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.82))
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.28))
             }
             .frame(maxWidth: .infinity)
             .aspectRatio(16 / 9, contentMode: .fit)
-            .background(.white.opacity(0.055))
+            .background(.white.opacity(0.03))
             .contentShape(RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous)
-                    .stroke(.white.opacity(0.16), style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
+                    .stroke(.white.opacity(0.09), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
             }
         }
         .buttonStyle(.plain)
     }
 
+    private func autoFillClipboardURL() {
+        guard
+            let clip = NSPasteboard.general.string(forType: .string)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !clip.isEmpty,
+            let url = URL(string: clip),
+            LibraryStore.platformName(for: url) != nil
+        else { return }
+        importURLText = clip
+    }
+
     private var importSheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             HStack {
-                Text("导入链接")
+                Text("下载视频")
                     .font(.title2.bold())
                 Spacer()
                 Button {
                     isImportSheetPresented = false
                 } label: {
-                    Image(systemName: "xmark")
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
                 .help("关闭")
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("链接")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TextField("Instagram Reel 或帖子链接", text: $importURLText)
+            VStack(alignment: .leading, spacing: 6) {
+                TextField("粘贴 Instagram 链接…", text: $importURLText)
                     .textFieldStyle(.roundedBorder)
-            }
+                    .font(.body)
+                    .onSubmit {
+                        guard !importURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isImporting else { return }
+                        libraryStore.saveInstagramImportEndpoint(importEndpointText)
+                        libraryStore.importRemoteVideo(from: importURLText)
+                    }
 
-            HStack(spacing: 8) {
-                Image(systemName: platformIconName)
-                    .frame(width: 16)
-                Text(detectedImportPlatform)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("解析 API")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TextField("可选：填入你手头的下载 API 地址", text: $importEndpointText)
-                    .textFieldStyle(.roundedBorder)
+                if !importURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: platformIconName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(detectedImportPlatform)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 2)
+                }
             }
 
             if let job = libraryStore.remoteImportJob {
                 importJobStatus(job)
             }
 
-            HStack {
+            HStack(alignment: .bottom) {
+                Button {
+                    isShowingImportAdvanced.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isShowingImportAdvanced ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                        Text("高级设置")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+
                 Spacer()
+
                 Button("取消") {
                     isImportSheetPresented = false
                 }
+                .keyboardShortcut(.cancelAction)
+
                 Button {
                     libraryStore.saveInstagramImportEndpoint(importEndpointText)
                     libraryStore.importRemoteVideo(from: importURLText)
                 } label: {
-                    Text("导入")
-                        .fontWeight(.semibold)
+                    HStack(spacing: 6) {
+                        if isImporting {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(isImporting ? "下载中…" : "下载")
+                            .fontWeight(.semibold)
+                    }
                 }
+                .keyboardShortcut(.defaultAction)
                 .disabled(importURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isImporting)
+            }
+
+            if isShowingImportAdvanced {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("自定义下载 API（可选）")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("http://localhost:8080/download", text: $importEndpointText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                    Text("若不填，将自动使用本机 yt-dlp。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(width: 420)
     }
 
     private var detectedImportPlatform: String {
@@ -1204,64 +1262,13 @@ struct ContentView: View {
     }
 
     private var previewTabSwitcher: some View {
-        HStack(spacing: 0) {
+        Picker("", selection: $activePreviewTab) {
             ForEach(PreviewTab.allCases, id: \.self) { tab in
-                Button {
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
-                        activePreviewTab = tab
-                    }
-                } label: {
-                    Text(tab.rawValue)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(activePreviewTab == tab ? .primary : .secondary)
-                        .padding(.vertical, 7)
-                        .padding(.horizontal, 15)
-                        .background {
-                            if activePreviewTab == tab {
-                                Capsule(style: .continuous)
-                                    .fill(
-                                        LinearGradient(
-                                            stops: [
-                                                .init(color: .white.opacity(0.28), location: 0),
-                                                .init(color: .white.opacity(0.09), location: 1)
-                                            ],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .overlay {
-                                        Capsule(style: .continuous)
-                                            .stroke(.white.opacity(0.26), lineWidth: 0.8)
-                                    }
-                                    .matchedGeometryEffect(id: "tabPill", in: tabNamespace)
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
+                Text(tab.rawValue).tag(tab)
             }
         }
-        .padding(4)
-        .background {
-            Capsule(style: .continuous)
-                .fill(.ultraThinMaterial)
-            Capsule(style: .continuous)
-                .fill(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white.opacity(0.10), location: 0),
-                            .init(color: .clear, location: 0.5)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-        }
-        .clipShape(Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(.white.opacity(0.14), lineWidth: 0.8)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 
     @ViewBuilder
@@ -1347,9 +1354,9 @@ struct ContentView: View {
     }
 
     private func frameStripImages(for video: VideoItem) -> [NSImage]? {
-        guard let dataArray = libraryStore.frameStripByVideoPath[video.url.path],
-              !dataArray.isEmpty else { return nil }
-        return dataArray.compactMap { NSImage(data: $0) }
+        guard let images = libraryStore.frameStripImagesByVideoPath[video.url.path],
+              !images.isEmpty else { return nil }
+        return images
     }
 
     private func videoTile(_ video: VideoItem) -> some View {
@@ -1359,23 +1366,7 @@ struct ContentView: View {
             selectAndPlay(video)
         } label: {
             ZStack(alignment: .bottomLeading) {
-                if let image = thumbnailImage(for: video) {
-                    GeometryReader { proxy in
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
-                    }
-                } else {
-                    RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous)
-                        .fill(.black.opacity(0.32))
-
-                    Image(systemName: "play.fill")
-                        .font(.title2)
-                        .foregroundStyle(.white.opacity(0.52))
-                }
-
+                // thumbnail に依存しないコンテンツだけ ZStack に置く
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0.3),
@@ -1415,6 +1406,19 @@ struct ContentView: View {
                 .padding(9)
             }
             .aspectRatio(16 / 9, contentMode: .fit)
+            .background {
+                // 封面作为 background，不参与 ZStack 尺寸计算
+                if let image = thumbnailImage(for: video) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Color.black.opacity(0.32)
+                    Image(systemName: "play.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.52))
+                }
+            }
             .contentShape(RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous))
             .overlay {
@@ -1478,8 +1482,7 @@ struct ContentView: View {
     }
 
     private func thumbnailImage(for video: VideoItem) -> NSImage? {
-        guard let data = libraryStore.thumbnailDataByVideoPath[video.url.path] else { return nil }
-        return NSImage(data: data)
+        libraryStore.thumbnailImageByVideoPath[video.url.path]
     }
 
     private func durationTextIfReady(for video: VideoItem) -> String? {
@@ -1492,8 +1495,7 @@ struct ContentView: View {
     }
 
     private var previewTimecodeText: String {
-        let duration = previewDuration > 0 ? previewDuration : 0
-        return "\(formatTimecode(previewElapsed, frameRate: previewFrameRate)) / \(formatTimecode(duration, frameRate: previewFrameRate))"
+        formatTimecode(previewElapsed, frameRate: previewFrameRate)
     }
 
     private func formatDuration(_ seconds: Double) -> String {
@@ -1519,7 +1521,10 @@ struct ContentView: View {
         let minutes = (totalWholeSeconds % 3600) / 60
         let wholeSeconds = totalWholeSeconds % 60
 
-        return String(format: "%02d:%02d:%02d:%02d", hours, minutes, wholeSeconds, frames)
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d:%02d", hours, minutes, wholeSeconds, frames)
+        }
+        return String(format: "%02d:%02d:%02d", minutes, wholeSeconds, frames)
     }
 
     private func selectAndPlay(_ video: VideoItem) {
@@ -1555,6 +1560,7 @@ struct ContentView: View {
             previewPlaybackMessage = unsupportedMessage
             libraryStore.loadWaveform(for: video)
             libraryStore.loadFrameStrip(for: video)
+            libraryStore.loadCachedSceneCuts(for: video)
             return
         }
 
@@ -1567,6 +1573,7 @@ struct ContentView: View {
         isPreviewPlaying = true
         libraryStore.loadWaveform(for: video)
         libraryStore.loadFrameStrip(for: video)
+        libraryStore.loadCachedSceneCuts(for: video)
     }
 
     private func loadPreviewFrameRate(for video: VideoItem) {
@@ -1742,36 +1749,47 @@ struct ContentView: View {
 
     private func updatePreviewProgress() {
         guard previewPlayer.currentItem != nil else {
-            isPreviewPlaying = false
-            previewElapsed = 0
-            previewProgress = 0
+            if isPreviewPlaying { isPreviewPlaying = false }
+            if previewElapsed != 0 { previewElapsed = 0 }
+            if previewProgress != 0 { previewProgress = 0 }
             return
         }
 
         if let item = previewPlayer.currentItem, item.status == .failed {
-            isPreviewPlaying = false
-            previewPlaybackMessage = item.error?.localizedDescription ?? "这个视频无法播放"
-            previewElapsed = 0
-            previewProgress = 0
+            if isPreviewPlaying { isPreviewPlaying = false }
+            let msg = item.error?.localizedDescription ?? "这个视频无法播放"
+            if previewPlaybackMessage != msg { previewPlaybackMessage = msg }
+            if previewElapsed != 0 { previewElapsed = 0 }
+            if previewProgress != 0 { previewProgress = 0 }
             return
         }
 
-        if previewPlayer.currentItem?.status == .readyToPlay {
+        if previewPlayer.currentItem?.status == .readyToPlay, previewPlaybackMessage != nil {
             previewPlaybackMessage = nil
         }
 
         if let duration = currentPlayerDuration() {
-            previewDuration = duration
+            assignIfChanged(&previewDuration, duration, tolerance: 0.001)
         }
 
         let elapsed = previewPlayer.currentTime().seconds
         if elapsed.isFinite, previewDuration > 0 {
-            previewElapsed = min(max(0, elapsed), previewDuration)
-            previewProgress = min(1, max(0, previewElapsed / previewDuration))
+            let nextElapsed = min(max(0, elapsed), previewDuration)
+            assignIfChanged(&previewElapsed, nextElapsed, tolerance: 0.001)
+            assignIfChanged(&previewProgress, min(1, max(0, nextElapsed / previewDuration)), tolerance: 0.0001)
         }
 
-        previewPlaybackRate = Double(previewPlayer.rate)
-        isPreviewPlaying = abs(previewPlaybackRate) > 0.001
+        let nextRate = Double(previewPlayer.rate)
+        assignIfChanged(&previewPlaybackRate, nextRate, tolerance: 0.0001)
+        let nextPlaying = abs(nextRate) > 0.001
+        if isPreviewPlaying != nextPlaying {
+            isPreviewPlaying = nextPlaying
+        }
+    }
+
+    private func assignIfChanged(_ value: inout Double, _ nextValue: Double, tolerance: Double) {
+        guard abs(value - nextValue) > tolerance else { return }
+        value = nextValue
     }
 
     private func currentPlayerDuration() -> Double? {
