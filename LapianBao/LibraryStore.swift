@@ -49,6 +49,7 @@ struct RemoteImportJob: Identifiable, Equatable {
     enum Status: Equatable {
         case idle
         case importing
+        case transcoding          // VP9/AV1 → H.264 后处理阶段
         case succeeded(String)
         case failed(String)
     }
@@ -57,18 +58,7 @@ struct RemoteImportJob: Identifiable, Equatable {
     let sourceURL: URL
     let platform: String
     var status: Status
-}
-
-struct SceneIndexingStatus: Equatable {
-    var isRunning = false
-    var completed = 0
-    var total = 0
-    var currentVideoName: String?
-
-    var progress: Double {
-        guard total > 0 else { return 0 }
-        return min(1, max(0, Double(completed) / Double(total)))
-    }
+    var downloadProgress: Double? // nil = 不确定；0.0–1.0 = 已知进度
 }
 
 nonisolated private final class SceneDetectionProcessRegistry: @unchecked Sendable {
@@ -105,13 +95,14 @@ final class LibraryStore: ObservableObject {
     @Published var tagsByVideoPath: [String: [String]] = [:]
     @Published var isSidebarVisible = true
     @Published var thumbnailDataByVideoPath: [String: Data] = [:]
+    @Published var thumbnailImageByVideoPath: [String: NSImage] = [:]
     @Published var durationByVideoPath: [String: Double] = [:]
     @Published var playbackSupportByVideoPath: [String: VideoPlaybackSupport] = [:]
     @Published var waveformSamplesByVideoPath: [String: [Double]] = [:]
     @Published var frameStripByVideoPath: [String: [Data]] = [:]
+    @Published var frameStripImagesByVideoPath: [String: [NSImage]] = [:]
     @Published var sceneCutsByVideoPath: [String: [SceneCut]] = [:]
     @Published var sceneDetectionProgress: [String: Double] = [:]
-    @Published var sceneIndexingStatus = SceneIndexingStatus()
     @Published var remoteImportJob: RemoteImportJob?
     @Published var instagramImportEndpoint = UserDefaults.standard.string(forKey: "instagramImportEndpoint") ?? ""
 
@@ -141,7 +132,6 @@ final class LibraryStore: ObservableObject {
     private var waveformTasks: [String: Task<Void, Never>] = [:]
     private var frameStripTasks: [String: Task<Void, Never>] = [:]
     private var sceneDetectionTasks: [String: Task<Void, Never>] = [:]
-    private var sceneIndexingTask: Task<Void, Never>?
     private var scopedLibraryURL: URL?
     private var sceneCutCache: [String: SceneCutCacheEntry] = [:]
 
@@ -217,18 +207,18 @@ final class LibraryStore: ObservableObject {
         let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sourceURL = URL(string: trimmed) else {
             remoteImportJob = RemoteImportJob(
-                sourceURL: URL(string: "https://instagram.com")!,
+                sourceURL: URL(string: "https://example.com")!,
                 platform: "未知平台",
                 status: .failed("请输入有效链接")
             )
             return
         }
 
-        guard let platform = Self.platformName(for: sourceURL), Self.isInstagramURL(sourceURL) else {
+        guard let platform = Self.platformName(for: sourceURL) else {
             remoteImportJob = RemoteImportJob(
                 sourceURL: sourceURL,
-                platform: Self.platformName(for: sourceURL) ?? "未知平台",
-                status: .failed("当前只接入了 Instagram 下载器")
+                platform: "未知平台",
+                status: .failed("暂不支持该平台，目前支持 Instagram、YouTube、小红书、Bilibili 和抖音")
             )
             return
         }
@@ -245,12 +235,30 @@ final class LibraryStore: ObservableObject {
         let endpoint = instagramImportEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         remoteImportJob = RemoteImportJob(sourceURL: sourceURL, platform: platform, status: .importing)
 
+        // 进度回调：yt-dlp 每行输出一次，跳回主线程更新 UI
+        let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
+            Task { @MainActor [weak self] in
+                guard case .importing = self?.remoteImportJob?.status else { return }
+                self?.remoteImportJob?.downloadProgress = progress
+            }
+        }
+        // 转码回调：下载结束、VP9→H.264 转码即将开始时触发
+        let transcodingCallback: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.remoteImportJob?.status = .transcoding
+                self?.remoteImportJob?.downloadProgress = nil
+            }
+        }
+
         Task { [weak self] in
             do {
-                let outputURL = try await Self.downloadInstagramVideo(
+                let outputURL = try await Self.downloadVideo(
                     from: sourceURL,
                     into: libraryURL,
-                    endpoint: endpoint
+                    platform: platform,
+                    endpoint: endpoint,
+                    progressCallback: progressCallback,
+                    transcodingCallback: transcodingCallback
                 )
 
                 guard !Task.isCancelled else { return }
@@ -276,20 +284,26 @@ final class LibraryStore: ObservableObject {
 
     static func platformName(for url: URL) -> String? {
         guard let host = url.host?.lowercased() else { return nil }
-        if host == "instagram.com"
-            || host == "www.instagram.com"
-            || host == "m.instagram.com"
-            || host == "instagr.am" {
+        if host == "instagram.com" || host == "www.instagram.com"
+            || host == "m.instagram.com" || host == "instagr.am" {
             return "Instagram"
         }
         if host.contains("xiaohongshu.com") || host.contains("xhslink.com") {
             return "小红书"
         }
+        if host == "youtube.com" || host == "www.youtube.com"
+            || host == "m.youtube.com" || host == "youtu.be"
+            || host == "music.youtube.com" {
+            return "YouTube"
+        }
+        if host.contains("bilibili.com") || host == "b23.tv" {
+            return "Bilibili"
+        }
+        if host.contains("douyin.com") || host == "v.douyin.com"
+            || host.contains("tiktok.com") || host == "vm.tiktok.com" {
+            return "抖音"
+        }
         return nil
-    }
-
-    private static func isInstagramURL(_ url: URL) -> Bool {
-        platformName(for: url) == "Instagram"
     }
 
     private func persistLibraryAccess(for folder: URL) {
@@ -371,12 +385,12 @@ final class LibraryStore: ObservableObject {
         selectedTags = []
         tagsByVideoPath = [:]
         frameStripByVideoPath = [:]
+        frameStripImagesByVideoPath = [:]
         frameStripTasks.values.forEach { $0.cancel() }
         frameStripTasks.removeAll()
         loadTagsJSON()
         loadThumbnails(for: videos)
         loadSceneCutCache()
-        startBackgroundSceneIndexing()
     }
 
     func addTag(to video: VideoItem) {
@@ -494,6 +508,7 @@ final class LibraryStore: ObservableObject {
             guard !Task.isCancelled else { return }
 
             self?.frameStripByVideoPath[path] = frames
+            self?.frameStripImagesByVideoPath[path] = frames.compactMap { NSImage(data: $0) }
             self?.frameStripTasks[path] = nil
         }
     }
@@ -562,12 +577,24 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func stopSceneIndexing() {
-        sceneIndexingTask?.cancel()
-        sceneIndexingTask = nil
-        SceneDetectionProcessRegistry.shared.cancelRunningProcess()
-        sceneIndexingStatus = SceneIndexingStatus()
-        sceneDetectionProgress.removeAll()
+    func loadCachedSceneCuts(for video: VideoItem) {
+        let path = video.url.path
+        guard
+            sceneCutsByVideoPath[path] == nil,
+            sceneDetectionTasks[path] == nil,
+            let cachedEntry = validCachedSceneCutEntry(for: video)
+        else { return }
+
+        sceneDetectionTasks[path] = Task { [weak self] in
+            let cuts = await Self.sceneCuts(from: cachedEntry.cutTimes, for: video.url)
+            guard !Task.isCancelled else {
+                self?.sceneDetectionTasks[path] = nil
+                return
+            }
+
+            self?.sceneCutsByVideoPath[path] = cuts
+            self?.sceneDetectionTasks[path] = nil
+        }
     }
 
     private func sceneCutCacheURL() -> URL? {
@@ -603,92 +630,6 @@ final class LibraryStore: ObservableObject {
         } catch {
             return
         }
-    }
-
-    private func startBackgroundSceneIndexing() {
-        sceneIndexingTask?.cancel()
-        SceneDetectionProcessRegistry.shared.cancelRunningProcess()
-
-        let videosToIndex = videos
-        sceneIndexingStatus = SceneIndexingStatus(
-            isRunning: !videosToIndex.isEmpty,
-            completed: 0,
-            total: videosToIndex.count,
-            currentVideoName: nil
-        )
-        sceneIndexingTask = Task { [weak self] in
-            var completed = 0
-
-            for video in videosToIndex {
-                guard !Task.isCancelled else {
-                    self?.sceneIndexingStatus = SceneIndexingStatus()
-                    return
-                }
-
-                self?.sceneIndexingStatus = SceneIndexingStatus(
-                    isRunning: true,
-                    completed: completed,
-                    total: videosToIndex.count,
-                    currentVideoName: video.name
-                )
-
-                await self?.loadOrDetectSceneCuts(for: video)
-
-                guard !Task.isCancelled else {
-                    self?.sceneIndexingStatus = SceneIndexingStatus()
-                    return
-                }
-
-                completed += 1
-                self?.sceneIndexingStatus = SceneIndexingStatus(
-                    isRunning: true,
-                    completed: completed,
-                    total: videosToIndex.count,
-                    currentVideoName: video.name
-                )
-            }
-
-            self?.sceneIndexingStatus = SceneIndexingStatus(
-                isRunning: false,
-                completed: completed,
-                total: videosToIndex.count,
-                currentVideoName: nil
-            )
-            self?.sceneIndexingTask = nil
-        }
-    }
-
-    private func loadOrDetectSceneCuts(for video: VideoItem) async {
-        guard !Task.isCancelled else { return }
-
-        let path = video.url.path
-        guard sceneDetectionTasks[path] == nil else { return }
-
-        if let cachedEntry = validCachedSceneCutEntry(for: video) {
-            if sceneCutsByVideoPath[path] == nil {
-                let cuts = await Self.sceneCuts(from: cachedEntry.cutTimes, for: video.url)
-                guard !Task.isCancelled else { return }
-                sceneCutsByVideoPath[path] = cuts
-            }
-            return
-        }
-
-        sceneDetectionProgress[path] = 0.0
-        let cuts = await Self.performSceneDetection(for: video.url) { [weak self] progress in
-            Task { @MainActor in
-                guard self?.sceneIndexingTask?.isCancelled != true else { return }
-                self?.sceneDetectionProgress[path] = progress
-            }
-        }
-
-        guard !Task.isCancelled else {
-            sceneDetectionProgress[path] = nil
-            return
-        }
-
-        sceneCutsByVideoPath[path] = cuts
-        storeSceneCutCache(for: video, cuts: cuts)
-        sceneDetectionProgress[path] = nil
     }
 
     private func validCachedSceneCutEntry(for video: VideoItem) -> SceneCutCacheEntry? {
@@ -894,7 +835,7 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func makeSceneCuts(for asset: AVAsset, cutTimes: [Double]) async -> [SceneCut] {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 480, height: 270)
+        generator.maximumSize = CGSize(width: 200, height: 113)
         // 从切点之后取帧，保证拿到新场景的首帧而非旧场景末帧
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
@@ -1118,7 +1059,7 @@ final class LibraryStore: ObservableObject {
         var errorDescription: String? {
             switch self {
             case .downloaderMissing:
-                return "没有找到 yt-dlp。请先安装 yt-dlp，或配置一个 Instagram 下载 API。"
+                return "下载失败：请检查网络连接，或在高级设置中配置自定义 API。"
             case let .downloaderFailed(message):
                 return message.isEmpty ? "Instagram 下载失败" : message
             case .invalidAPIEndpoint:
@@ -1145,41 +1086,260 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    nonisolated private static func downloadInstagramVideo(
+    // MARK: - 统一下载入口
+
+    nonisolated private static func downloadVideo(
         from sourceURL: URL,
         into libraryURL: URL,
-        endpoint: String
+        platform: String,
+        endpoint: String,
+        progressCallback: (@Sendable (Double) -> Void)? = nil,
+        transcodingCallback: (@Sendable () -> Void)? = nil
     ) async throws -> URL {
+        let safeFolder = platform.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
         let destinationDirectory = libraryURL
             .appendingPathComponent("Imports", isDirectory: true)
-            .appendingPathComponent("Instagram", isDirectory: true)
+            .appendingPathComponent(safeFolder.isEmpty ? "Other" : safeFolder, isDirectory: true)
 
-        try FileManager.default.createDirectory(
-            at: destinationDirectory,
-            withIntermediateDirectories: true
-        )
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
 
-        if let downloaderURL = localYTDLPURL() {
-            return try await runYTDLP(
-                executableURL: downloaderURL,
-                sourceURL: sourceURL,
-                destinationDirectory: destinationDirectory
-            )
+        var rawURL: URL?
+
+        // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
+        if rawURL == nil, let ytdlp = localYTDLPURL(),
+           let result = try? await runYTDLPOnce(
+               executableURL: ytdlp,
+               sourceURL: sourceURL,
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
+           ) {
+            rawURL = result
         }
 
-        guard !endpoint.isEmpty else {
-            throw RemoteImportError.downloaderMissing
+        // 2. 小红书：原生页面解析（yt-dlp 对需要登录的内容失效时接手）
+        if rawURL == nil, platform == "小红书",
+           let result = try? await downloadXiaoHongShuNative(
+               from: sourceURL,
+               destinationDirectory: destinationDirectory
+           ) {
+            rawURL = result
         }
 
-        return try await importViaConfiguredAPI(
-            sourceURL: sourceURL,
-            endpoint: endpoint,
-            destinationDirectory: destinationDirectory
+        // 3. 用户自定义 API
+        if rawURL == nil, !endpoint.isEmpty,
+           let result = try? await importViaConfiguredAPI(
+               sourceURL: sourceURL,
+               endpoint: endpoint,
+               destinationDirectory: destinationDirectory
+           ) {
+            rawURL = result
+        }
+
+        // 4. cobalt.tools 兜底（对 Instagram / YouTube 有效，需要服务可用）
+        if rawURL == nil,
+           let result = try? await importViaCobalt(sourceURL: sourceURL, destinationDirectory: destinationDirectory) {
+            rawURL = result
+        }
+
+        guard let downloadedURL = rawURL else {
+            throw RemoteImportError.downloaderFailed("所有下载方式均失败，请确认链接是否可公开访问")
+        }
+
+        // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264
+        return await transcodeToH264IfNeeded(downloadedURL, willTranscodeCallback: transcodingCallback) ?? downloadedURL
+    }
+
+    // MARK: - VP9/AV1 → H.264 转码（解决 macOS 播放兼容性）
+
+    nonisolated private static func transcodeToH264IfNeeded(
+        _ url: URL,
+        willTranscodeCallback: (@Sendable () -> Void)? = nil
+    ) async -> URL? {
+        await Task.detached(priority: .utility) {
+            let ffprobePath = "/opt/homebrew/bin/ffprobe"
+            guard FileManager.default.isExecutableFile(atPath: ffprobePath) else { return nil }
+
+            // 用 ffprobe 探测视频流编码
+            let probeProcess = Process()
+            probeProcess.executableURL = URL(fileURLWithPath: ffprobePath)
+            probeProcess.arguments = [
+                "-v", "quiet",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                url.path
+            ]
+            let probePipe = Pipe()
+            probeProcess.standardOutput = probePipe
+            probeProcess.standardError = Pipe()
+
+            guard (try? probeProcess.run()) != nil else { return nil }
+            probeProcess.waitUntilExit()
+
+            let codec = (String(
+                data: probePipe.fileHandleForReading.readDataToEndOfFile(),
+                encoding: .utf8
+            ) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+            // macOS AVFoundation 在 MP4 容器中不支持 VP9 / AV1 / VP8
+            let unsupported = ["vp9", "vp09", "av1", "av01", "vp8"]
+            guard unsupported.contains(codec) else { return nil }
+
+            // 通知 UI 进入转码阶段
+            willTranscodeCallback?()
+
+            // 找 ffmpeg
+            let ffmpegPath = "/opt/homebrew/bin/ffmpeg"
+            guard FileManager.default.isExecutableFile(atPath: ffmpegPath) else { return nil }
+
+            // 先输出到临时文件，避免和原文件重名冲突
+            let stem = url.deletingPathExtension().lastPathComponent
+            let tmpURL = url.deletingLastPathComponent()
+                .appendingPathComponent("\(stem)-transcoding-tmp.mp4")
+
+            let ffmpegProcess = Process()
+            ffmpegProcess.executableURL = URL(fileURLWithPath: ffmpegPath)
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            ffmpegProcess.environment = env
+            ffmpegProcess.arguments = [
+                "-i", url.path,
+                "-c:v", "libx264",
+                "-crf", "23",
+                "-preset", "fast",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-y",
+                tmpURL.path
+            ]
+            ffmpegProcess.standardOutput = Pipe()
+            ffmpegProcess.standardError = Pipe()
+
+            guard (try? ffmpegProcess.run()) != nil else { return nil }
+            ffmpegProcess.waitUntilExit()
+
+            guard
+                ffmpegProcess.terminationStatus == 0,
+                FileManager.default.fileExists(atPath: tmpURL.path)
+            else {
+                try? FileManager.default.removeItem(at: tmpURL)
+                return nil
+            }
+
+            // 删除原 VP9 文件，把临时文件重命名回原名
+            try? FileManager.default.removeItem(at: url)
+            let finalURL = url.deletingLastPathComponent()
+                .appendingPathComponent("\(stem).mp4")
+            if (try? FileManager.default.moveItem(at: tmpURL, to: finalURL)) != nil {
+                return finalURL
+            }
+            return tmpURL
+        }.value
+    }
+
+    // MARK: - 小红书原生解析器
+
+    nonisolated private static func downloadXiaoHongShuNative(
+        from sourceURL: URL,
+        destinationDirectory: URL
+    ) async throws -> URL {
+        // 解析 note ID（去掉 query string）
+        let noteId = sourceURL.lastPathComponent.components(separatedBy: "?").first
+            ?? sourceURL.lastPathComponent
+
+        // 抓取页面
+        var req = URLRequest(url: sourceURL)
+        req.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
         )
+        req.setValue("https://www.xiaohongshu.com", forHTTPHeaderField: "Referer")
+        req.timeoutInterval = 30
+
+        let (data, _) = try await URLSession.shared.data(for: req)
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw RemoteImportError.downloaderFailed("小红书页面读取失败")
+        }
+
+        // 提取 window.__INITIAL_STATE__=...;
+        guard let stateStart = html.range(of: "window.__INITIAL_STATE__=") else {
+            throw RemoteImportError.downloaderFailed("未找到视频数据，该笔记可能需要登录才能查看")
+        }
+        let afterEquals = html[stateStart.upperBound...]
+        // 找到第一个换行或 </script> 之前
+        let jsonRaw: String
+        if let newline = afterEquals.firstIndex(of: "\n") {
+            jsonRaw = String(afterEquals[..<newline])
+        } else {
+            jsonRaw = String(afterEquals.prefix(512_000))
+        }
+        var jsonStr = jsonRaw
+        if jsonStr.hasSuffix(";") { jsonStr.removeLast() }
+
+        guard
+            let jsonData = jsonStr.data(using: .utf8),
+            let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let noteSection = root["note"] as? [String: Any],
+            let detailMap = noteSection["noteDetailMap"] as? [String: Any],
+            let entry = detailMap[noteId] as? [String: Any],
+            let noteObj = entry["note"] as? [String: Any],
+            let videoObj = noteObj["video"] as? [String: Any]
+        else {
+            throw RemoteImportError.downloaderFailed("小红书：未找到视频信息，该笔记可能不是视频或需要登录")
+        }
+
+        // 优先：原画直链
+        var videoURL: URL?
+        if let consumer = videoObj["consumer"] as? [String: Any],
+           let key = consumer["originVideoKey"] as? String, !key.isEmpty {
+            videoURL = URL(string: "https://sns-video-bd.xhscdn.com/\(key)")
+        }
+
+        // 回退：stream 格式（h264 > h265 > av1）
+        if videoURL == nil,
+           let media = videoObj["media"] as? [String: Any],
+           let stream = media["stream"] as? [String: Any] {
+            for codec in ["h264", "h265", "av1"] {
+                if let list = stream[codec] as? [[String: Any]],
+                   let first = list.first,
+                   let masterUrl = first["masterUrl"] as? String,
+                   let u = URL(string: masterUrl) {
+                    videoURL = u
+                    break
+                }
+            }
+        }
+
+        guard let downloadURL = videoURL else {
+            throw RemoteImportError.downloaderFailed("小红书：找不到视频下载地址，该视频可能仅限好友可见")
+        }
+
+        // 下载视频文件
+        var dlReq = URLRequest(url: downloadURL)
+        dlReq.setValue("https://www.xiaohongshu.com", forHTTPHeaderField: "Referer")
+        dlReq.timeoutInterval = 180
+
+        let (videoData, videoResp) = try await URLSession.shared.data(for: dlReq)
+        guard
+            let http = videoResp as? HTTPURLResponse,
+            (200..<300).contains(http.statusCode),
+            !videoData.isEmpty
+        else {
+            throw RemoteImportError.downloadFailed
+        }
+
+        let outputURL = destinationDirectory.appendingPathComponent("xiaohongshu-\(noteId).mp4")
+        try videoData.write(to: outputURL, options: .atomic)
+        return outputURL
     }
 
     nonisolated private static func localYTDLPURL() -> URL? {
         [
+            // miniconda 版优先：Python 3.13，pyexpat 正常，Instagram/YouTube 均可用
+            "/opt/miniconda3/bin/yt-dlp",
+            "/opt/anaconda3/bin/yt-dlp",
+            // Homebrew 版（Python 3.14 在部分 macOS 上 pyexpat 有兼容问题，作为备选）
             "/opt/homebrew/bin/yt-dlp",
             "/usr/local/bin/yt-dlp",
             "/usr/bin/yt-dlp"
@@ -1188,22 +1348,32 @@ final class LibraryStore: ObservableObject {
         .map(URL.init(fileURLWithPath:))
     }
 
-    nonisolated private static func runYTDLP(
+    nonisolated private static func runYTDLPOnce(
         executableURL: URL,
         sourceURL: URL,
-        destinationDirectory: URL
+        destinationDirectory: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         try await Task.detached(priority: .utility) {
             let process = Process()
             process.executableURL = executableURL
+
+            // 确保 yt-dlp 能找到 ffmpeg（App 启动时没有完整 PATH）
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            process.environment = env
+
             process.arguments = [
                 "--no-playlist",
-                "--paths",
-                destinationDirectory.path,
-                "-o",
-                "%(uploader|instagram)s-%(id)s.%(ext)s",
-                "--print",
-                "after_move:filepath",
+                "-f", "bestvideo+bestaudio/best",
+                "--merge-output-format", "mp4",
+                "--ffmpeg-location", "/opt/homebrew/bin",
+                "--progress",   // 非 TTY 环境也强制输出进度
+                "--newline",    // 每次进度更新输出新行，便于实时解析
+                "--no-colors",  // 去掉 ANSI 转义码，方便文本解析
+                "--paths", destinationDirectory.path,
+                "-o", "%(uploader|instagram)s-%(id)s.%(ext)s",
+                "--print", "after_move:filepath",
                 sourceURL.absoluteString
             ]
 
@@ -1212,17 +1382,47 @@ final class LibraryStore: ObservableObject {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
+            // 实时读取 stderr 解析进度（yt-dlp 进度输出到 stderr）
+            // 用 @unchecked Sendable 类封装可变状态，避免 Swift 6 并发警告
+            final class StderrCollector: @unchecked Sendable {
+                private let lock = NSLock()
+                private var buffer = Data()
+                func append(_ data: Data) {
+                    lock.lock(); defer { lock.unlock() }
+                    buffer.append(data)
+                }
+                var data: Data {
+                    lock.lock(); defer { lock.unlock() }
+                    return buffer
+                }
+            }
+            let collector = StderrCollector()
+
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else { return }
+                collector.append(chunk)
+                if let text = String(data: chunk, encoding: .utf8) {
+                    for line in text.components(separatedBy: .newlines) {
+                        if let p = parseYTDLPProgressLine(line) {
+                            progressCallback?(p)
+                        }
+                    }
+                }
+            }
+
             try process.run()
             process.waitUntilExit()
+
+            // nil 掉 handler（内部会等当前 handler 执行完毕），再排空剩余数据
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            collector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
 
             let output = String(
                 data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
                 encoding: .utf8
             ) ?? ""
-            let errorOutput = String(
-                data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
-                encoding: .utf8
-            ) ?? ""
+            let errorOutput = String(data: collector.data, encoding: .utf8) ?? ""
 
             guard process.terminationStatus == 0 else {
                 throw RemoteImportError.downloaderFailed(errorOutput)
@@ -1244,6 +1444,22 @@ final class LibraryStore: ObservableObject {
 
             return URL(fileURLWithPath: outputPath)
         }.value
+    }
+
+    /// 解析 yt-dlp 进度行，如 "[download]  45.6% of 1.23MiB at 2.34MiB/s ETA 00:12"
+    nonisolated private static func parseYTDLPProgressLine(_ line: String) -> Double? {
+        guard line.contains("[download]"), line.contains("%") else { return nil }
+        // 忽略 "Destination:" 等非进度行
+        guard !line.contains("Destination:"),
+              !line.contains("already been downloaded"),
+              !line.contains("Merging") else { return nil }
+        let tokens = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        for token in tokens where token.hasSuffix("%") {
+            if let value = Double(token.dropLast()), value >= 0 {
+                return min(1.0, value / 100.0)
+            }
+        }
+        return nil
     }
 
     nonisolated private static func importViaConfiguredAPI(
@@ -1291,6 +1507,83 @@ final class LibraryStore: ObservableObject {
         return outputURL
     }
 
+    // MARK: - cobalt.tools 内置备用下载
+
+    nonisolated private struct CobaltRequest: Encodable {
+        let url: String
+    }
+
+    nonisolated private struct CobaltResponse: Decodable {
+        let status: String
+        let url: URL?
+        let filename: String?
+        let picker: [CobaltPickerItem]?
+
+        struct CobaltPickerItem: Decodable {
+            let type: String?
+            let url: URL
+        }
+    }
+
+    nonisolated private static func importViaCobalt(
+        sourceURL: URL,
+        destinationDirectory: URL
+    ) async throws -> URL {
+        guard let cobaltEndpoint = URL(string: "https://api.cobalt.tools/") else {
+            throw RemoteImportError.downloaderMissing
+        }
+
+        var request = URLRequest(url: cobaltEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+        request.httpBody = try JSONEncoder().encode(
+            CobaltRequest(url: sourceURL.absoluteString)
+        )
+
+        let (data, httpResp) = try await URLSession.shared.data(for: request)
+        guard
+            let resp = httpResp as? HTTPURLResponse,
+            (200..<300).contains(resp.statusCode)
+        else {
+            throw RemoteImportError.downloaderFailed("cobalt.tools 无法处理该链接，请安装 yt-dlp 后重试")
+        }
+
+        let cobalt = try JSONDecoder().decode(CobaltResponse.self, from: data)
+
+        let downloadURL: URL
+        switch cobalt.status {
+        case "redirect", "tunnel", "stream":
+            guard let u = cobalt.url else { throw RemoteImportError.invalidAPIResponse }
+            downloadURL = u
+        case "picker":
+            // 多媒体帖子：优先取第一个视频，否则取第一项
+            guard let item = cobalt.picker?.first(where: { $0.type == "video" })
+                          ?? cobalt.picker?.first
+            else { throw RemoteImportError.invalidAPIResponse }
+            downloadURL = item.url
+        default:
+            throw RemoteImportError.downloaderFailed("cobalt.tools 无法解析该链接，请安装 yt-dlp 后重试")
+        }
+
+        let fallbackName = downloadURL.lastPathComponent.isEmpty
+            ? "instagram-\(UUID().uuidString).mp4"
+            : downloadURL.lastPathComponent
+        let filename = sanitizedFilename(cobalt.filename ?? fallbackName)
+        let outputURL = destinationDirectory.appendingPathComponent(filename)
+
+        let (videoData, videoResp) = try await URLSession.shared.data(from: downloadURL)
+        guard
+            let vResp = videoResp as? HTTPURLResponse,
+            (200..<300).contains(vResp.statusCode),
+            !videoData.isEmpty
+        else { throw RemoteImportError.downloadFailed }
+
+        try videoData.write(to: outputURL, options: .atomic)
+        return outputURL
+    }
+
     nonisolated private static func sanitizedFilename(_ name: String) -> String {
         let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
         let components = name.components(separatedBy: forbidden)
@@ -1307,13 +1600,13 @@ final class LibraryStore: ObservableObject {
         frameStripTasks.removeAll()
         sceneDetectionTasks.values.forEach { $0.cancel() }
         sceneDetectionTasks.removeAll()
-        sceneIndexingTask?.cancel()
-        sceneIndexingTask = nil
         thumbnailDataByVideoPath.removeAll()
+        thumbnailImageByVideoPath.removeAll()
         durationByVideoPath.removeAll()
         playbackSupportByVideoPath.removeAll()
         waveformSamplesByVideoPath.removeAll()
         frameStripByVideoPath.removeAll()
+        frameStripImagesByVideoPath.removeAll()
         sceneCutsByVideoPath.removeAll()
         sceneDetectionProgress.removeAll()
 
@@ -1327,6 +1620,7 @@ final class LibraryStore: ObservableObject {
 
                 if let data = videoMetadata.thumbnailData {
                     self?.thumbnailDataByVideoPath[path] = data
+                    self?.thumbnailImageByVideoPath[path] = NSImage(data: data)
                 }
 
                 if let duration = videoMetadata.duration {

@@ -9,6 +9,7 @@ import SwiftUI
 import AVFoundation
 import AppKit
 import Combine
+import ImageIO
 
 private enum Design {
     static let windowInset: CGFloat = 8
@@ -636,16 +637,6 @@ private struct SceneCutTile: View {
     var body: some View {
         Button(action: onTap) {
             ZStack(alignment: .bottomLeading) {
-                Text(timeLabel)
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(5)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Capsule())
-                    .padding(5)
-            }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .background {
                 if let image = cachedImage {
                     Image(nsImage: image)
                         .resizable()
@@ -653,36 +644,62 @@ private struct SceneCutTile: View {
                 } else {
                     Color.white.opacity(0.08)
                 }
+
+                // Gradient overlay for time label readability
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.4),
+                        .init(color: .black.opacity(0.55), location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                Text(timeLabel)
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .padding(5)
             }
+            .aspectRatio(16 / 9, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.10), lineWidth: 1)
+            }
         }
         .buttonStyle(.plain)
         .task(id: cut.id) {
             guard cachedImage == nil else { return }
             let data = cut.thumbnailData
-            let img = await Task.detached(priority: .utility) {
-                NSImage(data: data)
+            // CGImageSource 走 Apple 硬件 JPEG 解码器（Apple Silicon 上由 ISP 加速）
+            // kCGImageSourceThumbnailMaxPixelSize 限制解码分辨率，不在 GPU 上二次缩放
+            let img: NSImage? = await Task.detached(priority: .utility) {
+                guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+                let opts: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 200,
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+                else { return nil }
+                return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
             }.value
             cachedImage = img
         }
     }
 }
 
+// MARK: - ContentView
+
 struct ContentView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @AppStorage("mediaGridSize") private var mediaGridSize = 1
     @State private var isHoveringWindowControls = false
-    @State private var previewPlayer = AVPlayer()
-    @State private var isPreviewPlaying = false
-    @State private var previewElapsed = 0.0
-    @State private var previewDuration = 0.0
-    @State private var previewProgress = 0.0
-    @State private var previewFrameRate = 30.0
-    @State private var previewPlaybackRate = 0.0
-    @State private var previewPlaybackMessage: String?
     @State private var renamingTag: String? = nil
     @State private var renameInput = ""
-    @State private var activePreviewTab: PreviewTab = .frames
     @State private var hoveredVideoPath: String? = nil
     @State private var tagPopoverVideoPath: String? = nil
     @State private var isImportSheetPresented = false
@@ -710,23 +727,6 @@ struct ContentView: View {
         }
         .background(WindowConfigurator())
         .frame(minWidth: 720, minHeight: 500)
-        .onAppear {
-            playPreview(libraryStore.selectedVideo)
-        }
-        .onChange(of: libraryStore.selectedVideo) { _, newVideo in
-            playPreview(newVideo)
-        }
-        .onChange(of: libraryStore.playbackSupportByVideoPath) { _, _ in
-            applyPlaybackSupportIfNeeded()
-        }
-        .onReceive(Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()) { _ in
-            updatePreviewProgress()
-        }
-        .onReceive(
-            NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)
-        ) { _ in
-            handlePreviewEnd()
-        }
         .alert("重命名标签", isPresented: Binding(
             get: { renamingTag != nil },
             set: { if !$0 { renamingTag = nil } }
@@ -768,7 +768,7 @@ struct ContentView: View {
 
             if isCompact {
                 VStack(spacing: Design.panelSpacing) {
-                    previewPanel
+                    PreviewPanelView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     videoGrid(isCompact: true)
@@ -779,7 +779,7 @@ struct ContentView: View {
                     videoGrid(isCompact: false)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    previewPanel
+                    PreviewPanelView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
@@ -866,64 +866,11 @@ struct ContentView: View {
                     .padding(.bottom, 4)
             }
 
-            sceneIndexingStatusView
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
-
             Text("\(libraryStore.videos.count) 个视频")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 4)
-        }
-    }
-
-    @ViewBuilder
-    private var sceneIndexingStatusView: some View {
-        let status = libraryStore.sceneIndexingStatus
-        if status.isRunning || status.total > 0 {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Image(systemName: status.isRunning ? "sparkles" : "checkmark.circle")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(status.isRunning ? "后台识别切点" : "切点缓存完成")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(status.completed)/\(max(status.total, 1))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                }
-
-                ProgressView(value: status.progress)
-                    .progressViewStyle(.linear)
-                    .controlSize(.small)
-
-                if let name = status.currentVideoName, status.isRunning {
-                    Text(name)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                if status.isRunning {
-                    Button {
-                        libraryStore.stopSceneIndexing()
-                    } label: {
-                        Label("停止识别", systemImage: "stop.fill")
-                            .font(.caption2.weight(.semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 1)
-                    .help("停止后台切点识别")
-                }
-            }
-            .padding(10)
-            .background(.white.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: Design.itemRadius, style: .continuous))
         }
     }
 
@@ -1050,7 +997,7 @@ struct ContentView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                TextField("粘贴 Instagram 链接…", text: $importURLText)
+                TextField("粘贴 Instagram、YouTube、小红书、Bilibili 或抖音链接…", text: $importURLText)
                     .textFieldStyle(.roundedBorder)
                     .font(.body)
                     .onSubmit {
@@ -1137,22 +1084,25 @@ struct ContentView: View {
             let url = URL(string: importURLText.trimmingCharacters(in: .whitespacesAndNewlines)),
             let platform = LibraryStore.platformName(for: url)
         else { return "等待识别平台" }
-
-        if platform == "Instagram" {
-            return "Instagram"
-        }
-        return "\(platform) 尚未接入"
+        return platform
     }
 
     private var platformIconName: String {
-        detectedImportPlatform == "Instagram" ? "camera" : "link"
+        switch detectedImportPlatform {
+        case "Instagram": return "camera"
+        case "YouTube":   return "play.rectangle.fill"
+        case "小红书":    return "book.pages.fill"
+        case "Bilibili":  return "tv.fill"
+        case "抖音":      return "music.note.tv.fill"
+        default:          return "link"
+        }
     }
 
     private var isImporting: Bool {
-        if case .importing = libraryStore.remoteImportJob?.status {
-            return true
+        switch libraryStore.remoteImportJob?.status {
+        case .importing, .transcoding: return true
+        default: return false
         }
-        return false
     }
 
     @ViewBuilder
@@ -1160,22 +1110,64 @@ struct ContentView: View {
         switch job.status {
         case .idle:
             EmptyView()
+
         case .importing:
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("正在导入 \(job.platform)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    if job.downloadProgress == nil {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text("正在下载 \(job.platform)…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if let p = job.downloadProgress {
+                        Text("\(Int(p * 100))%")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let p = job.downloadProgress {
+                    ProgressView(value: p)
+                        .progressViewStyle(.linear)
+                        .tint(.white.opacity(0.75))
+                        .animation(.linear(duration: 0.2), value: p)
+                }
             }
+
+        case .transcoding:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("正在转码为 H.264…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("原始视频使用了 VP9 / AV1 编码，macOS 不支持直接播放，正在自动转换。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
         case let .succeeded(filename):
             Label(filename, systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
+
         case let .failed(message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.orange)
+            ScrollView {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 80)
+            .overlay(alignment: .topLeading) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            .padding(.leading, 18)
         }
     }
 
@@ -1208,162 +1200,11 @@ struct ContentView: View {
         return widths[index]
     }
 
-    private var previewPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                Text("预览")
-                    .font(.title2.bold())
-                Spacer()
-                if let selectedVideo = libraryStore.selectedVideo {
-                    sceneDetectionControls(for: selectedVideo)
-                }
-            }
-
-            if let selectedVideo = libraryStore.selectedVideo {
-                // 视频画面
-                PreviewPlayerView(
-                    player: previewPlayer,
-                    statusMessage: previewPlaybackMessage
-                )
-
-                // Tab 切换栏（在时间线上方）
-                previewTabSwitcher
-
-                // 动态时间线（随 Tab 变化）
-                previewTimeline(for: selectedVideo)
-
-                // Tab 内容区
-                previewTabContent(for: selectedVideo)
-
-                // 视频信息（简化，只留名字）
-                Text(selectedVideo.name)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 2)
-
-                Spacer(minLength: 0)
-            } else {
-                ContentUnavailableView(
-                    "选择一个视频",
-                    systemImage: "play.rectangle",
-                    description: Text("点击左侧视频后，会在这里直接播放。")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(16)
-        .contentPanel()
-        .background {
-            PreviewKeyboardHandler(handle: handlePreviewKeyboardCommand)
-        }
-    }
-
-    private var previewTabSwitcher: some View {
-        Picker("", selection: $activePreviewTab) {
-            ForEach(PreviewTab.allCases, id: \.self) { tab in
-                Text(tab.rawValue).tag(tab)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-    }
-
-    @ViewBuilder
-    private func previewTimeline(for video: VideoItem) -> some View {
-        switch activePreviewTab {
-        case .frames:
-            FrameScrubberView(
-                frames: frameStripImages(for: video),
-                progress: previewProgress,
-                timecodeText: previewTimecodeText,
-                sceneCuts: normalizedSceneCuts(for: video),
-                isPlaying: isPreviewPlaying,
-                togglePlayback: togglePreviewPlayback,
-                seek: { seekPreview(to: $0) }
-            )
-        case .audio:
-            WaveformControlBar(
-                samples: libraryStore.waveformSamplesByVideoPath[video.url.path],
-                progress: previewProgress,
-                timecodeText: previewTimecodeText,
-                isPlaying: isPreviewPlaying,
-                togglePlayback: togglePreviewPlayback,
-                seek: { seekPreview(to: $0) },
-                sceneCuts: normalizedSceneCuts(for: video)
-            )
-        case .content:
-            SimpleProgressBar(
-                progress: previewProgress,
-                timecodeText: previewTimecodeText,
-                isPlaying: isPreviewPlaying,
-                togglePlayback: togglePreviewPlayback,
-                seek: { seekPreview(to: $0) }
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func previewTabContent(for video: VideoItem) -> some View {
-        switch activePreviewTab {
-        case .frames:
-            scenePanel(for: video)
-        case .audio:
-            EmptyView()
-        case .content:
-            Text("AI 内容提取功能正在开发中")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 8)
-        }
-    }
-
-    @ViewBuilder
-    private func scenePanel(for video: VideoItem) -> some View {
-        let path = video.url.path
-        let cuts = libraryStore.sceneCutsByVideoPath[path] ?? []
-
-        VStack(alignment: .leading, spacing: 8) {
-            if cuts.isEmpty && libraryStore.sceneDetectionProgress[path] == nil {
-                Text("点击「识别场景」按钮开始自动分析")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
-            } else {
-                let columns = [GridItem(.adaptive(minimum: 76), spacing: 6)]
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: 6) {
-                        ForEach(cuts) { cut in
-                            SceneCutTile(
-                                cut: cut,
-                                timeLabel: formatDuration(cut.time)
-                            ) {
-                                let progress = previewDuration > 0 ? cut.time / previewDuration : 0
-                                seekPreview(to: progress)
-                            }
-                        }
-                    }
-                    .padding(.bottom, 4)
-                }
-            }
-        }
-    }
-
-    private func frameStripImages(for video: VideoItem) -> [NSImage]? {
-        guard let images = libraryStore.frameStripImagesByVideoPath[video.url.path],
-              !images.isEmpty else { return nil }
-        return images
-    }
-
     private func videoTile(_ video: VideoItem) -> some View {
         let isSelected = libraryStore.selectedVideo == video
 
         return Button {
-            selectAndPlay(video)
+            libraryStore.selectedVideo = video
         } label: {
             ZStack(alignment: .bottomLeading) {
                 // thumbnail に依存しないコンテンツだけ ZStack に置く
@@ -1490,14 +1331,6 @@ struct ContentView: View {
         return formatDuration(duration)
     }
 
-    private func durationText(for video: VideoItem) -> String {
-        durationTextIfReady(for: video) ?? "--:--"
-    }
-
-    private var previewTimecodeText: String {
-        formatTimecode(previewElapsed, frameRate: previewFrameRate)
-    }
-
     private func formatDuration(_ seconds: Double) -> String {
         let totalSeconds = max(0, Int(seconds.rounded()))
         let hours = totalSeconds / 3600
@@ -1511,202 +1344,501 @@ struct ContentView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    private func formatTimecode(_ seconds: Double, frameRate: Double) -> String {
-        let fps = max(1, Int(frameRate.rounded()))
-        let clampedSeconds = max(0, seconds)
-        let totalFrames = Int((clampedSeconds * Double(fps)).rounded(.down))
-        let frames = totalFrames % fps
-        let totalWholeSeconds = totalFrames / fps
-        let hours = totalWholeSeconds / 3600
-        let minutes = (totalWholeSeconds % 3600) / 60
-        let wholeSeconds = totalWholeSeconds % 60
+    private func tagChips(for video: VideoItem) -> some View {
+        let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
 
-        if hours > 0 {
-            return String(format: "%02d:%02d:%02d:%02d", hours, minutes, wholeSeconds, frames)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                if tags.isEmpty {
+                    Text("未分类")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(tags, id: \.self) { tag in
+                        HStack(spacing: 4) {
+                            Text(tag)
+                                .font(.caption.weight(.medium))
+                            Button {
+                                libraryStore.removeTag(tag, from: video)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("删除标签")
+                        }
+                        .padding(.leading, 8)
+                        .padding(.trailing, 6)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Capsule())
+                    }
+                }
+            }
         }
-        return String(format: "%02d:%02d:%02d", minutes, wholeSeconds, frames)
+    }
+}
+
+// MARK: - PreviewPanelView
+
+// MARK: - PreviewController
+/// 持有 AVPlayer、Timer 和所有播放状态。作为 @StateObject 存在，
+/// Timer 触发时只有 PreviewPanelView 重渲染，ScenePanelView 完全不受影响。
+@MainActor
+private final class PreviewController: ObservableObject {
+    // ── Published（Timer 驱动，每 250ms 可能变化）────────────────
+    @Published var isPlaying     = false
+    @Published var elapsed       = 0.0
+    @Published var duration      = 0.0
+    @Published var progress      = 0.0
+    @Published var frameRate     = 30.0
+    @Published var playbackRate  = 0.0
+    @Published var playbackMessage: String?
+
+    let player = AVPlayer()
+
+    // 由 PreviewPanelView.onAppear 注入，weak 避免循环引用
+    weak var libraryStore: LibraryStore?
+
+    private(set) var currentVideoPath: String?
+    private var cancellables = Set<AnyCancellable>()
+    private var frameRateTask: Task<Void, Never>?
+    /// AVPlayer 原生周期观察者：只在播放期间触发，暂停/停止后完全静默，
+    /// 消除了 Combine Timer 在暂停时的无效调用开销。
+    private var timeObserverToken: Any?
+
+    init() {
+        // 周期观察者每 250ms 触发一次（仅播放中），取代 Combine Timer
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+        timeObserverToken = player.addPeriodicTimeObserver(
+            forInterval: interval, queue: .main
+        ) { [weak self] _ in
+            // addPeriodicTimeObserver 的 block 是 nonisolated，
+            // 用 Task @MainActor 切回 actor，实际已在 main queue 上故无线程切换开销
+            Task { @MainActor [weak self] in self?.updateProgress() }
+        }
+
+        NotificationCenter.default
+            .publisher(for: AVPlayerItem.didPlayToEndTimeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.handleEnd() }
+            .store(in: &cancellables)
     }
 
-    private func selectAndPlay(_ video: VideoItem) {
-        if libraryStore.selectedVideo != video {
-            libraryStore.selectedVideo = video
+    deinit {
+        if let token = timeObserverToken {
+            player.removeTimeObserver(token)
         }
-        playPreview(video)
     }
 
-    private func playPreview(_ video: VideoItem?) {
+    // MARK: – 加载视频
+
+    func loadVideo(_ video: VideoItem?) {
+        frameRateTask?.cancel()
+        frameRateTask = nil
+
         guard let video else {
-            previewPlayer.pause()
-            previewPlayer.replaceCurrentItem(with: nil)
-            isPreviewPlaying = false
-            previewElapsed = 0
-            previewDuration = 0
-            previewProgress = 0
-            previewFrameRate = 30
-            previewPlaybackRate = 0
-            previewPlaybackMessage = nil
+            player.pause()
+            player.replaceCurrentItem(with: nil)
+            isPlaying = false; elapsed = 0; duration = 0; progress = 0
+            frameRate = 30; playbackRate = 0; playbackMessage = nil
+            currentVideoPath = nil
             return
         }
 
-        loadPreviewFrameRate(for: video)
+        currentVideoPath = video.url.path
+        loadFrameRate(for: video)
 
-        if let unsupportedMessage = libraryStore.playbackSupportByVideoPath[video.url.path]?.message {
-            previewPlayer.replaceCurrentItem(with: nil)
-            isPreviewPlaying = false
-            previewElapsed = 0
-            previewDuration = libraryStore.durationByVideoPath[video.url.path] ?? 0
-            previewProgress = 0
-            previewPlaybackRate = 0
-            previewPlaybackMessage = unsupportedMessage
-            libraryStore.loadWaveform(for: video)
-            libraryStore.loadFrameStrip(for: video)
-            libraryStore.loadCachedSceneCuts(for: video)
+        let store = libraryStore
+        if let msg = store?.playbackSupportByVideoPath[video.url.path]?.message {
+            player.replaceCurrentItem(with: nil)
+            isPlaying = false; elapsed = 0
+            duration = store?.durationByVideoPath[video.url.path] ?? 0
+            progress = 0; playbackRate = 0; playbackMessage = msg
+            store?.loadWaveform(for: video)
+            store?.loadFrameStrip(for: video)
+            store?.loadCachedSceneCuts(for: video)
             return
         }
 
-        previewPlaybackMessage = nil
-        previewPlayer.replaceCurrentItem(with: AVPlayerItem(url: video.url))
-        previewElapsed = 0
-        previewDuration = libraryStore.durationByVideoPath[video.url.path] ?? 0
-        previewProgress = 0
-        playPreview(atRate: 1)
-        isPreviewPlaying = true
-        libraryStore.loadWaveform(for: video)
-        libraryStore.loadFrameStrip(for: video)
-        libraryStore.loadCachedSceneCuts(for: video)
+        playbackMessage = nil
+        player.replaceCurrentItem(with: AVPlayerItem(url: video.url))
+        elapsed = 0
+        duration = store?.durationByVideoPath[video.url.path] ?? 0
+        progress = 0
+        setRate(1)
+        isPlaying = true
+        store?.loadWaveform(for: video)
+        store?.loadFrameStrip(for: video)
+        store?.loadCachedSceneCuts(for: video)
     }
 
-    private func loadPreviewFrameRate(for video: VideoItem) {
-        let path = video.url.path
-        previewFrameRate = 30
-
-        Task {
-            let frameRate = await Self.frameRate(for: video.url)
-            guard libraryStore.selectedVideo?.url.path == path else { return }
-            previewFrameRate = frameRate
-        }
-    }
-
-    nonisolated private static func frameRate(for url: URL) async -> Double {
-        let asset = AVURLAsset(url: url)
+    func applyPlaybackSupportIfNeeded() {
         guard
-            let tracks = try? await asset.loadTracks(withMediaType: .video),
-            let videoTrack = tracks.first,
-            let nominalFrameRate = try? await videoTrack.load(.nominalFrameRate),
-            nominalFrameRate.isFinite,
-            nominalFrameRate > 0
-        else {
-            return 30
-        }
-
-        return Double(nominalFrameRate)
-    }
-
-    private func applyPlaybackSupportIfNeeded() {
-        guard
-            let video = libraryStore.selectedVideo,
-            let unsupportedMessage = libraryStore.playbackSupportByVideoPath[video.url.path]?.message
+            let path = currentVideoPath,
+            let msg = libraryStore?.playbackSupportByVideoPath[path]?.message
         else { return }
-
-        previewPlayer.pause()
-        previewPlayer.replaceCurrentItem(with: nil)
-        isPreviewPlaying = false
-        previewElapsed = 0
-        previewDuration = libraryStore.durationByVideoPath[video.url.path] ?? previewDuration
-        previewProgress = 0
-        previewPlaybackRate = 0
-        previewPlaybackMessage = unsupportedMessage
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        isPlaying = false; elapsed = 0
+        duration = libraryStore?.durationByVideoPath[path] ?? duration
+        progress = 0; playbackRate = 0; playbackMessage = msg
     }
 
-    private func togglePreviewPlayback() {
-        if isPreviewPlaying || abs(previewPlaybackRate) > 0.001 {
-            pausePreview()
-        } else {
-            playPreview(atRate: 1)
-        }
+    // MARK: – 播放控制
+
+    func togglePlayback() {
+        if isPlaying || abs(playbackRate) > 0.001 { pause() } else { setRate(1) }
     }
 
-    private func pausePreview() {
-        previewPlayer.pause()
-        previewPlaybackRate = 0
-        isPreviewPlaying = false
+    func pause() {
+        player.pause(); playbackRate = 0; isPlaying = false
     }
 
-    private func playPreview(atRate rate: Double) {
-        guard previewPlayer.currentItem != nil else { return }
-        previewPlayer.rate = Float(rate)
-        previewPlaybackRate = rate
-        isPreviewPlaying = abs(rate) > 0.001
+    func setRate(_ rate: Double) {
+        guard player.currentItem != nil else { return }
+        player.rate = Float(rate); playbackRate = rate
+        isPlaying = abs(rate) > 0.001
     }
 
-    private func handlePreviewKeyboardCommand(_ command: PreviewKeyboardCommand) -> Bool {
-        guard libraryStore.selectedVideo != nil, previewPlayer.currentItem != nil else {
-            return false
-        }
-
-        switch command {
-        case .togglePlayback:
-            togglePreviewPlayback()
-        case .pause:
-            pausePreview()
-        case .shuttleForward:
-            let nextRate = previewPlaybackRate > 0 ? min(previewPlaybackRate * 2, 8) : 1
-            playPreview(atRate: nextRate)
-        case .shuttleBackward:
-            let nextRate = previewPlaybackRate < 0 ? max(previewPlaybackRate * 2, -8) : -1
-            playPreview(atRate: nextRate)
-        case .stepForward:
-            stepPreviewFrame(by: 1)
-        case .stepBackward:
-            stepPreviewFrame(by: -1)
-        }
-
-        return true
+    func stepFrame(by direction: Int) {
+        pause()
+        seekToSeconds(elapsed + Double(direction) / max(frameRate, 1))
     }
 
-    private func stepPreviewFrame(by direction: Int) {
-        pausePreview()
-        let fps = max(previewFrameRate, 1)
-        seekPreview(toSeconds: previewElapsed + Double(direction) / fps)
+    // MARK: – Seek
+
+    func seekToProgress(_ p: Double) {
+        let d = effectiveDuration; guard let d, d > 0 else { return }
+        seekToSeconds(d * min(1, max(0, p)))
     }
 
-    private func seekPreview(to progress: Double) {
-        let duration = previewDuration > 0 ? previewDuration : currentPlayerDuration()
-        guard let duration, duration > 0 else { return }
-
-        let nextProgress = min(1, max(0, progress))
-        seekPreview(toSeconds: duration * nextProgress)
-    }
-
-    private func seekPreview(toSeconds seconds: Double) {
-        let duration = previewDuration > 0 ? previewDuration : currentPlayerDuration()
-        guard let duration, duration > 0 else { return }
-
-        let targetSeconds = min(duration, max(0, seconds))
-        previewElapsed = targetSeconds
-        previewProgress = min(1, max(0, targetSeconds / duration))
-        previewPlayer.seek(
-            to: CMTime(seconds: targetSeconds, preferredTimescale: 600),
-            toleranceBefore: .zero,
-            toleranceAfter: .zero
+    /// 直接按秒跳转（供 ScenePanelView 调用，不需要传入 duration）
+    func seekToSeconds(_ seconds: Double) {
+        let d = effectiveDuration; guard let d, d > 0 else { return }
+        let t = min(d, max(0, seconds))
+        elapsed = t
+        progress = min(1, max(0, t / d))
+        player.seek(
+            to: CMTime(seconds: t, preferredTimescale: 600),
+            toleranceBefore: .zero, toleranceAfter: .zero
         )
     }
 
-    private func handlePreviewEnd() {
-        isPreviewPlaying = false
-        previewPlaybackRate = 0
-        previewProgress = 0
-        previewElapsed = 0
-        previewPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+    // MARK: – Timer & 通知
+
+    private func updateProgress() {
+        guard player.currentItem != nil else {
+            if isPlaying { isPlaying = false }
+            if elapsed != 0 { elapsed = 0 }
+            if progress != 0 { progress = 0 }
+            return
+        }
+
+        if let item = player.currentItem, item.status == .failed {
+            if isPlaying { isPlaying = false }
+            let msg = item.error?.localizedDescription ?? "这个视频无法播放"
+            if playbackMessage != msg { playbackMessage = msg }
+            if elapsed != 0 { elapsed = 0 }
+            if progress != 0 { progress = 0 }
+            return
+        }
+
+        if player.currentItem?.status == .readyToPlay, playbackMessage != nil {
+            playbackMessage = nil
+        }
+
+        if let d = playerDuration() { assign(&duration, d, tol: 0.001) }
+
+        let t = player.currentTime().seconds
+        if t.isFinite, duration > 0 {
+            let next = min(max(0, t), duration)
+            assign(&elapsed, next, tol: 0.001)
+            assign(&progress, min(1, max(0, next / duration)), tol: 0.0001)
+        }
+
+        let nextRate = Double(player.rate)
+        assign(&playbackRate, nextRate, tol: 0.0001)
+        let nextPlaying = abs(nextRate) > 0.001
+        if isPlaying != nextPlaying { isPlaying = nextPlaying }
     }
 
-    private func normalizedSceneCuts(for video: VideoItem) -> [Double] {
-        guard
-            let cuts = libraryStore.sceneCutsByVideoPath[video.url.path],
-            previewDuration > 0
-        else { return [] }
-        return cuts.map { min(1, max(0, $0.time / previewDuration)) }
+    private func handleEnd() {
+        isPlaying = false; playbackRate = 0; progress = 0; elapsed = 0
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
     }
+
+    private func loadFrameRate(for video: VideoItem) {
+        let path = video.url.path; frameRate = 30
+        frameRateTask = Task { [weak self] in
+            let fps = await Self.fetchFrameRate(for: video.url)
+            guard !Task.isCancelled, self?.currentVideoPath == path else { return }
+            self?.frameRate = fps
+        }
+    }
+
+    nonisolated private static func fetchFrameRate(for url: URL) async -> Double {
+        let asset = AVURLAsset(url: url)
+        guard
+            let tracks = try? await asset.loadTracks(withMediaType: .video),
+            let track = tracks.first,
+            let fps = try? await track.load(.nominalFrameRate),
+            fps.isFinite, fps > 0
+        else { return 30 }
+        return Double(fps)
+    }
+
+    // MARK: – 工具
+
+    var effectiveDuration: Double? {
+        duration > 0 ? duration : playerDuration()
+    }
+
+    private func playerDuration() -> Double? {
+        guard let s = player.currentItem?.duration.seconds, s.isFinite, s > 0 else { return nil }
+        return s
+    }
+
+    private func assign(_ v: inout Double, _ next: Double, tol: Double) {
+        guard abs(v - next) > tol else { return }
+        v = next
+    }
+}
+
+// MARK: - ScenePanelView
+/// Equatable 视图：只有 video 或 controller 引用变化时才重新渲染 body。
+/// Timer 每 250ms 触发 PreviewController.objectWillChange，
+/// PreviewPanelView 重渲后将相同的 (video, controller) 传给本视图，
+/// .equatable() 比较相等 → body 完全跳过，场景网格不参与渲染循环。
+private struct ScenePanelView: View, Equatable {
+    let video: VideoItem
+    let controller: PreviewController
+    @EnvironmentObject private var libraryStore: LibraryStore
+
+    static func == (lhs: ScenePanelView, rhs: ScenePanelView) -> Bool {
+        lhs.video == rhs.video && lhs.controller === rhs.controller
+    }
+
+    var body: some View {
+        let path = video.url.path
+        let cuts = libraryStore.sceneCutsByVideoPath[path] ?? []
+
+        VStack(alignment: .leading, spacing: 8) {
+            if cuts.isEmpty && libraryStore.sceneDetectionProgress[path] == nil {
+                Text("点击「识别场景」按钮开始自动分析")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
+            } else {
+                let columns = [GridItem(.adaptive(minimum: 100), spacing: 8)]
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(cuts) { cut in
+                            SceneCutTile(
+                                cut: cut,
+                                timeLabel: formatDuration(cut.time)
+                            ) {
+                                // 直接传时间（秒），controller 内部处理 duration 换算
+                                controller.seekToSeconds(cut.time)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+            }
+        }
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        let h = s / 3600; let m = (s % 3600) / 60; let sec = s % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, sec)
+            : String(format: "%d:%02d", m, sec)
+    }
+}
+
+// MARK: - PreviewPanelView
+/// 预览面板：使用 @StateObject controller 驱动播放，
+/// 场景网格由 ScenePanelView（Equatable）单独渲染，与 Timer 完全解耦。
+private struct PreviewPanelView: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @StateObject private var controller = PreviewController()
+    @Namespace private var tabNamespace
+    @State private var activePreviewTab: PreviewTab = .frames
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack {
+                Text("预览")
+                    .font(.title2.bold())
+                Spacer()
+                if let selectedVideo = libraryStore.selectedVideo {
+                    sceneDetectionControls(for: selectedVideo)
+                }
+            }
+
+            if let selectedVideo = libraryStore.selectedVideo {
+                // 视频画面
+                PreviewPlayerView(
+                    player: controller.player,
+                    statusMessage: controller.playbackMessage
+                )
+
+                // Tab 切换栏（液态玻璃胶囊，在时间线上方）
+                previewTabSwitcher
+
+                // 动态时间线（随 Tab 变化）
+                previewTimeline(for: selectedVideo)
+
+                // Tab 内容区
+                previewTabContent(for: selectedVideo)
+
+                // 视频信息
+                Text(selectedVideo.name)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 2)
+
+                Spacer(minLength: 0)
+            } else {
+                ContentUnavailableView(
+                    "选择一个视频",
+                    systemImage: "play.rectangle",
+                    description: Text("点击左侧视频后，会在这里直接播放。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(16)
+        .contentPanel()
+        .background {
+            PreviewKeyboardHandler(handle: handlePreviewKeyboardCommand)
+        }
+        // ── Lifecycle & state reactions ──────────────────────────────
+        .onAppear {
+            controller.libraryStore = libraryStore
+            controller.loadVideo(libraryStore.selectedVideo)
+        }
+        .onChange(of: libraryStore.selectedVideo) { _, newVideo in
+            controller.libraryStore = libraryStore
+            controller.loadVideo(newVideo)
+        }
+        .onChange(of: libraryStore.playbackSupportByVideoPath) { _, _ in
+            controller.applyPlaybackSupportIfNeeded()
+        }
+    }
+
+    // MARK: – Custom liquid-glass tab switcher
+
+    private var previewTabSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach(PreviewTab.allCases, id: \.self) { tab in
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+                        activePreviewTab = tab
+                    }
+                } label: {
+                    Text(tab.rawValue)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(activePreviewTab == tab ? .white : .white.opacity(0.45))
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 7)
+                        .background {
+                            if activePreviewTab == tab {
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                .white.opacity(0.22),
+                                                .white.opacity(0.12)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .overlay {
+                                        Capsule()
+                                            .stroke(.white.opacity(0.28), lineWidth: 0.5)
+                                    }
+                                    .shadow(color: .black.opacity(0.30), radius: 6, y: 2)
+                                    .matchedGeometryEffect(id: "tabHighlight", in: tabNamespace)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(
+            Capsule()
+                .fill(.black.opacity(0.32))
+                .overlay {
+                    Capsule()
+                        .stroke(.white.opacity(0.10), lineWidth: 0.5)
+                }
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: – Timeline & content areas
+
+    @ViewBuilder
+    private func previewTimeline(for video: VideoItem) -> some View {
+        switch activePreviewTab {
+        case .frames:
+            FrameScrubberView(
+                frames: frameStripImages(for: video),
+                progress: controller.progress,
+                timecodeText: previewTimecodeText,
+                sceneCuts: normalizedSceneCuts(for: video),
+                isPlaying: controller.isPlaying,
+                togglePlayback: { controller.togglePlayback() },
+                seek: { controller.seekToProgress($0) }
+            )
+        case .audio:
+            WaveformControlBar(
+                samples: libraryStore.waveformSamplesByVideoPath[video.url.path],
+                progress: controller.progress,
+                timecodeText: previewTimecodeText,
+                isPlaying: controller.isPlaying,
+                togglePlayback: { controller.togglePlayback() },
+                seek: { controller.seekToProgress($0) },
+                sceneCuts: normalizedSceneCuts(for: video)
+            )
+        case .content:
+            SimpleProgressBar(
+                progress: controller.progress,
+                timecodeText: previewTimecodeText,
+                isPlaying: controller.isPlaying,
+                togglePlayback: { controller.togglePlayback() },
+                seek: { controller.seekToProgress($0) }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func previewTabContent(for video: VideoItem) -> some View {
+        switch activePreviewTab {
+        case .frames:
+            ScenePanelView(video: video, controller: controller).equatable()
+        case .audio:
+            EmptyView()
+        case .content:
+            Text("AI 内容提取功能正在开发中")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 8)
+        }
+    }
+
+    // MARK: – Scene detection controls
 
     @ViewBuilder
     private func sceneDetectionControls(for video: VideoItem) -> some View {
@@ -1747,122 +1879,81 @@ struct ContentView: View {
         }
     }
 
-    private func updatePreviewProgress() {
-        guard previewPlayer.currentItem != nil else {
-            if isPreviewPlaying { isPreviewPlaying = false }
-            if previewElapsed != 0 { previewElapsed = 0 }
-            if previewProgress != 0 { previewProgress = 0 }
-            return
-        }
+    // MARK: – Helper views / computed properties
 
-        if let item = previewPlayer.currentItem, item.status == .failed {
-            if isPreviewPlaying { isPreviewPlaying = false }
-            let msg = item.error?.localizedDescription ?? "这个视频无法播放"
-            if previewPlaybackMessage != msg { previewPlaybackMessage = msg }
-            if previewElapsed != 0 { previewElapsed = 0 }
-            if previewProgress != 0 { previewProgress = 0 }
-            return
-        }
-
-        if previewPlayer.currentItem?.status == .readyToPlay, previewPlaybackMessage != nil {
-            previewPlaybackMessage = nil
-        }
-
-        if let duration = currentPlayerDuration() {
-            assignIfChanged(&previewDuration, duration, tolerance: 0.001)
-        }
-
-        let elapsed = previewPlayer.currentTime().seconds
-        if elapsed.isFinite, previewDuration > 0 {
-            let nextElapsed = min(max(0, elapsed), previewDuration)
-            assignIfChanged(&previewElapsed, nextElapsed, tolerance: 0.001)
-            assignIfChanged(&previewProgress, min(1, max(0, nextElapsed / previewDuration)), tolerance: 0.0001)
-        }
-
-        let nextRate = Double(previewPlayer.rate)
-        assignIfChanged(&previewPlaybackRate, nextRate, tolerance: 0.0001)
-        let nextPlaying = abs(nextRate) > 0.001
-        if isPreviewPlaying != nextPlaying {
-            isPreviewPlaying = nextPlaying
-        }
+    private func frameStripImages(for video: VideoItem) -> [NSImage]? {
+        guard let images = libraryStore.frameStripImagesByVideoPath[video.url.path],
+              !images.isEmpty else { return nil }
+        return images
     }
 
-    private func assignIfChanged(_ value: inout Double, _ nextValue: Double, tolerance: Double) {
-        guard abs(value - nextValue) > tolerance else { return }
-        value = nextValue
+    private var previewTimecodeText: String {
+        formatTimecode(controller.elapsed, frameRate: controller.frameRate)
     }
 
-    private func currentPlayerDuration() -> Double? {
+    private func formatDuration(_ seconds: Double) -> String {
+        let totalSeconds = max(0, Int(seconds.rounded()))
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let secs = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%d:%02d", minutes, secs)
+    }
+
+    private func formatTimecode(_ seconds: Double, frameRate: Double) -> String {
+        let fps = max(1, Int(frameRate.rounded()))
+        let clampedSeconds = max(0, seconds)
+        let totalFrames = Int((clampedSeconds * Double(fps)).rounded(.down))
+        let frames = totalFrames % fps
+        let totalWholeSeconds = totalFrames / fps
+        let hours = totalWholeSeconds / 3600
+        let minutes = (totalWholeSeconds % 3600) / 60
+        let wholeSeconds = totalWholeSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d:%02d", hours, minutes, wholeSeconds, frames)
+        }
+        return String(format: "%02d:%02d:%02d", minutes, wholeSeconds, frames)
+    }
+
+    private func normalizedSceneCuts(for video: VideoItem) -> [Double] {
         guard
-            let seconds = previewPlayer.currentItem?.duration.seconds,
-            seconds.isFinite,
-            seconds > 0
-        else {
-            return nil
-        }
-
-        return seconds
+            let cuts = libraryStore.sceneCutsByVideoPath[video.url.path],
+            controller.duration > 0
+        else { return [] }
+        return cuts.map { min(1, max(0, $0.time / controller.duration)) }
     }
 
-    private func tagEditor(for video: VideoItem) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("标签")
-                .font(.headline)
+    // MARK: – Keyboard control
 
-            tagChips(for: video)
+    private func handlePreviewKeyboardCommand(_ command: PreviewKeyboardCommand) -> Bool {
+        guard libraryStore.selectedVideo != nil else { return false }
 
-            HStack {
-                TextField("添加标签", text: $libraryStore.tagInput)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        libraryStore.addTag(to: video)
-                    }
-
-                Button {
-                    libraryStore.addTag(to: video)
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .disabled(libraryStore.tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+        switch command {
+        case .togglePlayback:
+            controller.togglePlayback()
+        case .pause:
+            controller.pause()
+        case .shuttleForward:
+            let nextRate = controller.playbackRate > 0 ? min(controller.playbackRate * 2, 8) : 1
+            controller.setRate(nextRate)
+        case .shuttleBackward:
+            let nextRate = controller.playbackRate < 0 ? max(controller.playbackRate * 2, -8) : -1
+            controller.setRate(nextRate)
+        case .stepForward:
+            controller.stepFrame(by: 1)
+        case .stepBackward:
+            controller.stepFrame(by: -1)
         }
-    }
 
-    private func tagChips(for video: VideoItem) -> some View {
-        let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
-
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                if tags.isEmpty {
-                    Text("未分类")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(tags, id: \.self) { tag in
-                        HStack(spacing: 4) {
-                            Text(tag)
-                                .font(.caption.weight(.medium))
-                            Button {
-                                libraryStore.removeTag(tag, from: video)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("删除标签")
-                        }
-                        .padding(.leading, 8)
-                        .padding(.trailing, 6)
-                        .padding(.vertical, 4)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
-                    }
-                }
-            }
-        }
+        return true
     }
 }
+
+// MARK: - View extensions
 
 private extension View {
     func contentPanel() -> some View {
