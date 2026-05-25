@@ -11,9 +11,9 @@ import Combine
 import Foundation
 
 struct SceneCut: Identifiable {
-    let id = UUID()
+    let id: String
     let time: Double
-    let thumbnailData: Data
+    let thumbnailImage: NSImage
 }
 
 struct VideoItem: Identifiable, Hashable {
@@ -31,6 +31,123 @@ struct VideoItem: Identifiable, Hashable {
     var fileExtension: String {
         url.pathExtension.uppercased()
     }
+}
+
+enum VideoSortOption: String, CaseIterable, Identifiable, Codable {
+    case name
+    case importDate
+    case duration
+    case fileSize
+    case resolution
+    case tags
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name: return "名称"
+        case .importDate: return "导入时间"
+        case .duration: return "片长"
+        case .fileSize: return "文件大小"
+        case .resolution: return "分辨率"
+        case .tags: return "标签"
+        }
+    }
+}
+
+enum VideoSortDirection: String, CaseIterable, Identifiable, Codable {
+    case ascending
+    case descending
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ascending: return "升序"
+        case .descending: return "降序"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .ascending: return "arrow.up"
+        case .descending: return "arrow.down"
+        }
+    }
+}
+
+struct VideoMetadata: Codable, Equatable {
+    var duration: Double?
+    var frameRate: Double?
+    var pixelWidth: Int?
+    var pixelHeight: Int?
+    var fileSize: Int64?
+    var createdAt: Date?
+    var modifiedAt: Date?
+
+    var resolutionText: String? {
+        guard let pixelWidth, let pixelHeight, pixelWidth > 0, pixelHeight > 0 else { return nil }
+        return "\(pixelWidth)x\(pixelHeight)"
+    }
+
+    var frameRateText: String? {
+        guard let frameRate, frameRate.isFinite, frameRate > 0 else { return nil }
+        return "\(Int(frameRate.rounded())) 帧"
+    }
+}
+
+struct SampledFrame: Identifiable, Codable, Equatable {
+    enum Kind: String, Codable {
+        case sceneRepresentative
+        case screenshot
+    }
+
+    var id: UUID = UUID()
+    var videoPath: String
+    var videoName: String
+    var time: Double
+    var sceneIndex: Int?
+    var kind: Kind
+    var isExported: Bool
+    var note: String
+    var tags: [String]
+    var thumbnailData: Data
+    var createdAt: Date = Date()
+}
+
+struct AnnotationItem: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var videoPath: String
+    var videoName: String
+    var time: Double
+    var text: String
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+}
+
+struct AudioClipItem: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var videoPath: String
+    var videoName: String
+    var inTime: Double
+    var outTime: Double
+    var filePath: String?
+    var note: String = ""
+    var createdAt: Date = Date()
+}
+
+struct TranscriptSegment: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var videoPath: String
+    var start: Double
+    var end: Double
+    var text: String
+}
+
+enum TranscriptJobStatus: Equatable {
+    case idle
+    case running(String)
+    case failed(String)
 }
 
 enum VideoPlaybackSupport: Equatable {
@@ -97,12 +214,25 @@ final class LibraryStore: ObservableObject {
     @Published var thumbnailDataByVideoPath: [String: Data] = [:]
     @Published var thumbnailImageByVideoPath: [String: NSImage] = [:]
     @Published var durationByVideoPath: [String: Double] = [:]
+    @Published var metadataByVideoPath: [String: VideoMetadata] = [:]
     @Published var playbackSupportByVideoPath: [String: VideoPlaybackSupport] = [:]
     @Published var waveformSamplesByVideoPath: [String: [Double]] = [:]
     @Published var frameStripByVideoPath: [String: [Data]] = [:]
     @Published var frameStripImagesByVideoPath: [String: [NSImage]] = [:]
     @Published var sceneCutsByVideoPath: [String: [SceneCut]] = [:]
+    @Published var sceneCutProgressesByVideoPath: [String: [Double]] = [:]
     @Published var sceneDetectionProgress: [String: Double] = [:]
+    @Published var sampledFrames: [SampledFrame] = []
+    @Published var annotations: [AnnotationItem] = []
+    @Published var audioClips: [AudioClipItem] = []
+    @Published var transcriptSegmentsByVideoPath: [String: [TranscriptSegment]] = [:]
+    @Published var transcriptStatusByVideoPath: [String: TranscriptJobStatus] = [:]
+    @Published var sortOption: VideoSortOption = VideoSortOption(rawValue: UserDefaults.standard.string(forKey: "videoSortOption") ?? "") ?? .name {
+        didSet { UserDefaults.standard.set(sortOption.rawValue, forKey: "videoSortOption") }
+    }
+    @Published var sortDirection: VideoSortDirection = VideoSortDirection(rawValue: UserDefaults.standard.string(forKey: "videoSortDirection") ?? "") ?? .ascending {
+        didSet { UserDefaults.standard.set(sortDirection.rawValue, forKey: "videoSortDirection") }
+    }
     @Published var remoteImportJob: RemoteImportJob?
     @Published var instagramImportEndpoint = UserDefaults.standard.string(forKey: "instagramImportEndpoint") ?? ""
 
@@ -128,6 +258,13 @@ final class LibraryStore: ObservableObject {
         var generatedAt: Date
     }
 
+    private struct ProjectDataFile: Codable {
+        var sampledFrames: [SampledFrame]
+        var annotations: [AnnotationItem]
+        var audioClips: [AudioClipItem]
+        var transcripts: [String: [TranscriptSegment]]
+    }
+
     private var thumbnailTasks: [String: Task<Void, Never>] = [:]
     private var waveformTasks: [String: Task<Void, Never>] = [:]
     private var frameStripTasks: [String: Task<Void, Never>] = [:]
@@ -145,11 +282,107 @@ final class LibraryStore: ObservableObject {
     }
 
     var filteredVideos: [VideoItem] {
-        guard !selectedTags.isEmpty else { return videos }
-        return videos.filter { video in
-            let videoTags = tagsByVideoPath[video.url.path, default: []]
-            return selectedTags.allSatisfy { videoTags.contains($0) }
+        let scopedVideos: [VideoItem]
+        if selectedTags.isEmpty {
+            scopedVideos = videos
+        } else {
+            scopedVideos = videos.filter { video in
+                let videoTags = tagsByVideoPath[video.url.path, default: []]
+                return selectedTags.allSatisfy { videoTags.contains($0) }
+            }
         }
+
+        return scopedVideos.sorted { lhs, rhs in
+            let result: ComparisonResult
+            switch sortOption {
+            case .name:
+                result = lhs.name.localizedStandardCompare(rhs.name)
+            case .importDate:
+                result = compareDates(metadataByVideoPath[lhs.url.path]?.createdAt, metadataByVideoPath[rhs.url.path]?.createdAt)
+            case .duration:
+                result = compareNumbers(metadataByVideoPath[lhs.url.path]?.duration, metadataByVideoPath[rhs.url.path]?.duration)
+            case .fileSize:
+                result = compareNumbers(metadataByVideoPath[lhs.url.path]?.fileSize, metadataByVideoPath[rhs.url.path]?.fileSize)
+            case .resolution:
+                let leftPixels = (metadataByVideoPath[lhs.url.path]?.pixelWidth ?? 0) * (metadataByVideoPath[lhs.url.path]?.pixelHeight ?? 0)
+                let rightPixels = (metadataByVideoPath[rhs.url.path]?.pixelWidth ?? 0) * (metadataByVideoPath[rhs.url.path]?.pixelHeight ?? 0)
+                result = compareNumbers(leftPixels, rightPixels)
+            case .tags:
+                let leftTags = tagsByVideoPath[lhs.url.path, default: []].joined(separator: " ")
+                let rightTags = tagsByVideoPath[rhs.url.path, default: []].joined(separator: " ")
+                result = leftTags.localizedStandardCompare(rightTags)
+            }
+
+            if result == .orderedSame {
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+            return sortDirection == .ascending ? result == .orderedAscending : result == .orderedDescending
+        }
+    }
+
+    private func compareDates(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
+        compareNumbers(lhs?.timeIntervalSince1970, rhs?.timeIntervalSince1970)
+    }
+
+    private func compareNumbers<T: BinaryInteger>(_ lhs: T?, _ rhs: T?) -> ComparisonResult {
+        compareNumbers(lhs.map(Double.init), rhs.map(Double.init))
+    }
+
+    private func compareNumbers(_ lhs: Double?, _ rhs: Double?) -> ComparisonResult {
+        switch (lhs, rhs) {
+        case let (left?, right?):
+            if left < right { return .orderedAscending }
+            if left > right { return .orderedDescending }
+            return .orderedSame
+        case (_?, nil):
+            return .orderedAscending
+        case (nil, _?):
+            return .orderedDescending
+        case (nil, nil):
+            return .orderedSame
+        }
+    }
+
+    var collectedFrames: [SampledFrame] {
+        sampledFrames.sorted {
+            if $0.videoName == $1.videoName { return $0.time < $1.time }
+            return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+        }
+    }
+
+    func sampledFrames(for video: VideoItem) -> [SampledFrame] {
+        sampledFrames
+            .filter { $0.videoPath == video.url.path }
+            .sorted { $0.time < $1.time }
+    }
+
+    func annotations(for video: VideoItem) -> [AnnotationItem] {
+        annotations
+            .filter { $0.videoPath == video.url.path }
+            .sorted { $0.time < $1.time }
+    }
+
+    func audioClips(for video: VideoItem) -> [AudioClipItem] {
+        audioClips
+            .filter { $0.videoPath == video.url.path }
+            .sorted { $0.inTime < $1.inTime }
+    }
+
+    func selectedVideo(for path: String) -> VideoItem? {
+        videos.first { $0.url.path == path }
+    }
+
+    func selectVideo(path: String) {
+        guard let video = selectedVideo(for: path) else { return }
+        selectedVideo = video
+    }
+
+    func setSort(option: VideoSortOption) {
+        sortOption = option
+    }
+
+    func setSort(direction: VideoSortDirection) {
+        sortDirection = direction
     }
 
     func loadLastLibrary() {
@@ -386,9 +619,11 @@ final class LibraryStore: ObservableObject {
         tagsByVideoPath = [:]
         frameStripByVideoPath = [:]
         frameStripImagesByVideoPath = [:]
+        sceneCutProgressesByVideoPath = [:]
         frameStripTasks.values.forEach { $0.cancel() }
         frameStripTasks.removeAll()
         loadTagsJSON()
+        loadProjectData()
         loadThumbnails(for: videos)
         loadSceneCutCache()
     }
@@ -466,6 +701,47 @@ final class LibraryStore: ObservableObject {
         if let data = try? JSONEncoder().encode(relative) {
             try? data.write(to: url, options: .atomic)
         }
+    }
+
+    private func projectDataURL() -> URL? {
+        libraryURL?.appendingPathComponent(".lapianbao_project.json")
+    }
+
+    private func saveProjectData() {
+        guard let url = projectDataURL() else { return }
+        let dataFile = ProjectDataFile(
+            sampledFrames: sampledFrames,
+            annotations: annotations,
+            audioClips: audioClips,
+            transcripts: transcriptSegmentsByVideoPath
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(dataFile) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func loadProjectData() {
+        guard
+            let url = projectDataURL(),
+            let data = try? Data(contentsOf: url)
+        else {
+            sampledFrames = []
+            annotations = []
+            audioClips = []
+            transcriptSegmentsByVideoPath = [:]
+            return
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let decoded = try? decoder.decode(ProjectDataFile.self, from: data) else { return }
+        sampledFrames = decoded.sampledFrames
+        annotations = decoded.annotations
+        audioClips = decoded.audioClips
+        transcriptSegmentsByVideoPath = decoded.transcripts
     }
 
     func loadTagsJSON() {
@@ -570,7 +846,7 @@ final class LibraryStore: ObservableObject {
                 return
             }
 
-            self?.sceneCutsByVideoPath[path] = cuts
+            self?.setSceneCuts(cuts, for: path)
             self?.storeSceneCutCache(for: video, cuts: cuts)
             self?.sceneDetectionProgress[path] = nil
             self?.sceneDetectionTasks[path] = nil
@@ -592,9 +868,147 @@ final class LibraryStore: ObservableObject {
                 return
             }
 
-            self?.sceneCutsByVideoPath[path] = cuts
+            self?.setSceneCuts(cuts, for: path)
             self?.sceneDetectionTasks[path] = nil
         }
+    }
+
+    private func setSceneCuts(_ cuts: [SceneCut], for path: String) {
+        sceneCutsByVideoPath[path] = cuts
+        sceneCutProgressesByVideoPath[path] = Self.normalizedSceneCutProgresses(
+            from: cuts.map(\.time),
+            duration: durationByVideoPath[path] ?? 0
+        )
+    }
+
+    func addAnnotation(video: VideoItem, time: Double, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        annotations.append(AnnotationItem(
+            videoPath: video.url.path,
+            videoName: video.name,
+            time: max(0, time),
+            text: trimmed
+        ))
+        saveProjectData()
+    }
+
+    func updateAnnotation(_ annotation: AnnotationItem, text: String) {
+        guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
+        annotations[index].text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        annotations[index].updatedAt = Date()
+        saveProjectData()
+    }
+
+    func deleteAnnotation(_ annotation: AnnotationItem) {
+        annotations.removeAll { $0.id == annotation.id }
+        saveProjectData()
+    }
+
+    func markSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) {
+        if let index = sampledFrames.firstIndex(where: {
+            $0.videoPath == video.url.path &&
+            abs($0.time - cut.time) < 0.02 &&
+            $0.kind == .sceneRepresentative
+        }) {
+            sampledFrames[index].isExported = true
+        } else {
+            sampledFrames.append(SampledFrame(
+                videoPath: video.url.path,
+                videoName: video.name,
+                time: cut.time,
+                sceneIndex: sceneIndex,
+                kind: .sceneRepresentative,
+                isExported: true,
+                note: "",
+                tags: [],
+                thumbnailData: Self.jpegData(from: cut.thumbnailImage) ?? Data()
+            ))
+        }
+        sampledFrames.sort { $0.time < $1.time }
+        if let data = Self.jpegData(from: cut.thumbnailImage) {
+            saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg")
+        }
+        saveProjectData()
+    }
+
+    func captureCurrentFrame(video: VideoItem, time: Double) {
+        Task { [weak self] in
+            guard let data = await Self.renderFrameData(for: video.url, at: time) else { return }
+            self?.sampledFrames.append(SampledFrame(
+                videoPath: video.url.path,
+                videoName: video.name,
+                time: max(0, time),
+                sceneIndex: self?.sceneIndex(for: video, at: time),
+                kind: .screenshot,
+                isExported: true,
+                note: "",
+                tags: [],
+                thumbnailData: data
+            ))
+            self?.sampledFrames.sort {
+                if $0.videoPath == $1.videoPath { return $0.time < $1.time }
+                return $0.videoName < $1.videoName
+            }
+            self?.saveImageExport(data: data, video: video, time: time, preferredExtension: "jpg")
+            self?.saveProjectData()
+        }
+    }
+
+    func exportAudioClip(video: VideoItem, inTime: Double, outTime: Double) {
+        let start = max(0, min(inTime, outTime))
+        let end = max(inTime, outTime)
+        guard end - start > 0.05 else { return }
+        let videoName = video.name
+
+        Task { [weak self] in
+            let outputURL = await Self.exportAudioClipFile(video: video, videoName: videoName, start: start, end: end, libraryURL: self?.libraryURL)
+            self?.audioClips.append(AudioClipItem(
+                videoPath: video.url.path,
+                videoName: videoName,
+                inTime: start,
+                outTime: end,
+                filePath: outputURL?.path
+            ))
+            self?.saveProjectData()
+        }
+    }
+
+    func transcribe(video: VideoItem) {
+        let path = video.url.path
+        if case .running = transcriptStatusByVideoPath[path] { return }
+        transcriptStatusByVideoPath[path] = .running("提取音频并本地转写")
+        let videoName = video.name
+
+        Task { [weak self] in
+            do {
+                let segments = try await Self.runWhisperTranscription(video: video, videoName: videoName, libraryURL: self?.libraryURL)
+                self?.transcriptSegmentsByVideoPath[path] = segments
+                self?.transcriptStatusByVideoPath[path] = .idle
+                self?.saveProjectData()
+            } catch {
+                self?.transcriptStatusByVideoPath[path] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func exportTranscriptMarkdown(video: VideoItem) {
+        guard let libraryURL else { return }
+        let segments = transcriptSegmentsByVideoPath[video.url.path, default: []]
+        guard !segments.isEmpty else { return }
+        let folder = libraryURL
+            .appendingPathComponent("LapianBaoExports", isDirectory: true)
+            .appendingPathComponent("Transcripts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("\(Self.safeFileStem(video.name))-transcript.md")
+        let body = segments.map { "[\(Self.clockText($0.start))] \($0.text)" }.joined(separator: "\n")
+        let md = "# \(video.name)\n\n## 原脚本\n\n\(body)\n"
+        try? md.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func sceneIndex(for video: VideoItem, at time: Double) -> Int? {
+        guard let cuts = sceneCutsByVideoPath[video.url.path], !cuts.isEmpty else { return nil }
+        return cuts.lastIndex { $0.time <= time }
     }
 
     private func sceneCutCacheURL() -> URL? {
@@ -746,6 +1160,7 @@ final class LibraryStore: ObservableObject {
 
             var previousFingerprint: SceneFingerprint?
             var changes: [SceneChange] = []
+            var lastReportedProgress = 0.03
 
             while reader.status == .reading {
                 guard let sampleBuffer = output.copyNextSampleBuffer() else { break }
@@ -768,7 +1183,10 @@ final class LibraryStore: ObservableObject {
                 previousFingerprint = fingerprint
 
                 let progress = min(1.0, timestamp / totalSeconds)
-                progressCallback(progress)
+                if progress - lastReportedProgress >= 0.01 || progress >= 0.995 {
+                    progressCallback(progress)
+                    lastReportedProgress = progress
+                }
             }
 
             let cutTimes = selectSceneCutTimes(from: changes, minimumSceneLength: minimumSceneLength)
@@ -795,6 +1213,7 @@ final class LibraryStore: ObservableObject {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: transNetPythonPath)
+        process.qualityOfService = .utility
         process.arguments = [
             transNetScriptPath,
             url.path,
@@ -803,6 +1222,13 @@ final class LibraryStore: ObservableObject {
             "--device",
             "cpu"
         ]
+        var environment = ProcessInfo.processInfo.environment
+        environment["OMP_NUM_THREADS"] = "2"
+        environment["OPENBLAS_NUM_THREADS"] = "2"
+        environment["MKL_NUM_THREADS"] = "2"
+        environment["VECLIB_MAXIMUM_THREADS"] = "2"
+        environment["NUMEXPR_NUM_THREADS"] = "2"
+        process.environment = environment
 
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -840,16 +1266,25 @@ final class LibraryStore: ObservableObject {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
 
+        let orderedCutTimes = stableSceneCutTimes(from: cutTimes)
         var cuts: [SceneCut] = []
-        for time in cutTimes {
+        cuts.reserveCapacity(orderedCutTimes.count)
+
+        for (index, time) in orderedCutTimes.enumerated() {
             // 切点时刻 + 80ms，确保落在新场景内
             let targetTime = CMTime(seconds: max(0, time + 0.08), preferredTimescale: 600)
-            let image = await thumbnailImage(from: generator, at: targetTime)
-            guard let imageData = image else { continue }
-            cuts.append(SceneCut(time: time, thumbnailData: imageData))
+            guard let image = await sceneThumbnailImage(from: generator, at: targetTime) else {
+                continue
+            }
+
+            cuts.append(SceneCut(
+                id: sceneCutID(index: index, time: time),
+                time: time,
+                thumbnailImage: image
+            ))
         }
 
-        return cuts.sorted { $0.time < $1.time }
+        return cuts
     }
 
     nonisolated private static func sceneCuts(from cutTimes: [Double], for url: URL) async -> [SceneCut] {
@@ -864,6 +1299,11 @@ final class LibraryStore: ObservableObject {
             hash = hash &* 0x100000001b3
         }
         return String(format: "%016llx", hash)
+    }
+
+    nonisolated private static func normalizedSceneCutProgresses(from cutTimes: [Double], duration: Double) -> [Double] {
+        guard duration.isFinite, duration > 0 else { return [] }
+        return cutTimes.map { min(1, max(0, $0 / duration)) }
     }
 
     private struct SceneFingerprint {
@@ -1035,16 +1475,35 @@ final class LibraryStore: ObservableObject {
         return values[lowerIndex] * (1 - fraction) + values[upperIndex] * fraction
     }
 
-    nonisolated private static func thumbnailImage(from generator: AVAssetImageGenerator, at time: CMTime) async -> Data? {
+    nonisolated private static func stableSceneCutTimes(from cutTimes: [Double]) -> [Double] {
+        var result: [Double] = []
+        var previous: Double?
+
+        for time in cutTimes.map({ max(0, ($0 * 1000).rounded() / 1000) }).sorted() {
+            guard previous.map({ abs(time - $0) > 0.001 }) ?? true else { continue }
+            result.append(time)
+            previous = time
+        }
+
+        return result
+    }
+
+    nonisolated private static func sceneCutID(index: Int, time: Double) -> String {
+        let milliseconds = Int((time * 1000).rounded())
+        return "scene-\(String(format: "%04d", index + 1))-\(milliseconds)"
+    }
+
+    nonisolated private static func sceneThumbnailImage(from generator: AVAssetImageGenerator, at time: CMTime) async -> NSImage? {
         await withCheckedContinuation { continuation in
             generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, result, _ in
                 guard result == .succeeded, let image else {
                     continuation.resume(returning: nil)
                     return
                 }
-                let bitmap = NSBitmapImageRep(cgImage: image)
-                let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.78])
-                continuation.resume(returning: data)
+                continuation.resume(returning: NSImage(
+                    cgImage: image,
+                    size: NSSize(width: image.width, height: image.height)
+                ))
             }
         }
     }
@@ -1603,11 +2062,13 @@ final class LibraryStore: ObservableObject {
         thumbnailDataByVideoPath.removeAll()
         thumbnailImageByVideoPath.removeAll()
         durationByVideoPath.removeAll()
+        metadataByVideoPath.removeAll()
         playbackSupportByVideoPath.removeAll()
         waveformSamplesByVideoPath.removeAll()
         frameStripByVideoPath.removeAll()
         frameStripImagesByVideoPath.removeAll()
         sceneCutsByVideoPath.removeAll()
+        sceneCutProgressesByVideoPath.removeAll()
         sceneDetectionProgress.removeAll()
 
         for video in videos {
@@ -1625,8 +2086,15 @@ final class LibraryStore: ObservableObject {
 
                 if let duration = videoMetadata.duration {
                     self?.durationByVideoPath[path] = duration
+                    if let cuts = self?.sceneCutsByVideoPath[path] {
+                        self?.sceneCutProgressesByVideoPath[path] = Self.normalizedSceneCutProgresses(
+                            from: cuts.map(\.time),
+                            duration: duration
+                        )
+                    }
                 }
 
+                self?.metadataByVideoPath[path] = videoMetadata.metadata
                 self?.playbackSupportByVideoPath[path] = await playbackSupport
                 self?.thumbnailTasks[path] = nil
             }
@@ -1654,14 +2122,32 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    nonisolated private static func makeVideoMetadata(for url: URL) async -> (thumbnailData: Data?, duration: Double?) {
+    nonisolated private static func makeVideoMetadata(for url: URL) async -> (thumbnailData: Data?, duration: Double?, metadata: VideoMetadata) {
         await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             async let duration = durationSeconds(for: asset)
+            let specs = await videoSpecs(for: asset)
+            let resourceValues = try? url.resourceValues(forKeys: [
+                .fileSizeKey,
+                .creationDateKey,
+                .contentModificationDateKey
+            ])
 
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: 640, height: 360)
+
+            func metadata(with durationValue: Double?) -> VideoMetadata {
+                return VideoMetadata(
+                    duration: durationValue,
+                    frameRate: specs.frameRate,
+                    pixelWidth: specs.pixelWidth,
+                    pixelHeight: specs.pixelHeight,
+                    fileSize: resourceValues?.fileSize.map(Int64.init),
+                    createdAt: resourceValues?.creationDate,
+                    modifiedAt: resourceValues?.contentModificationDate
+                )
+            }
 
             var bestCandidate: (data: Data, score: Double)?
             for seconds in [1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 0.5, 0.1, 0.0] {
@@ -1673,11 +2159,13 @@ final class LibraryStore: ObservableObject {
                 }
 
                 if candidate.score > 0.18 {
-                    return (candidate.data, await duration)
+                    let durationValue = await duration
+                    return (candidate.data, durationValue, metadata(with: durationValue))
                 }
             }
 
-            return (bestCandidate?.data, await duration)
+            let durationValue = await duration
+            return (bestCandidate?.data, durationValue, metadata(with: durationValue))
         }.value
     }
 
@@ -1685,6 +2173,21 @@ final class LibraryStore: ObservableObject {
         guard let duration = try? await asset.load(.duration) else { return nil }
         let seconds = CMTimeGetSeconds(duration)
         return seconds.isFinite && seconds > 0 ? seconds : nil
+    }
+
+    nonisolated private static func videoSpecs(for asset: AVURLAsset) async -> (frameRate: Double?, pixelWidth: Int?, pixelHeight: Int?) {
+        guard
+            let tracks = try? await asset.loadTracks(withMediaType: .video),
+            let track = tracks.first
+        else { return (nil, nil, nil) }
+
+        let frameRate = (try? await track.load(.nominalFrameRate)).map(Double.init)
+        let naturalSize = (try? await track.load(.naturalSize)) ?? .zero
+        let transform = (try? await track.load(.preferredTransform)) ?? .identity
+        let transformed = naturalSize.applying(transform)
+        let width = Int(abs(transformed.width).rounded())
+        let height = Int(abs(transformed.height).rounded())
+        return (frameRate, width > 0 ? width : nil, height > 0 ? height : nil)
     }
 
     nonisolated private static func thumbnailCandidate(
@@ -1755,6 +2258,175 @@ final class LibraryStore: ObservableObject {
             let visibleRatio = Double(brightPixels) / Double(count)
             return average * 0.48 + sqrt(variance) * 0.32 + visibleRatio * 0.20
         }
+    }
+
+    nonisolated private static func renderFrameData(for url: URL, at seconds: Double) async -> Data? {
+        await Task.detached(priority: .utility) {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 1280, height: 720)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 0.08, preferredTimescale: 600)
+            guard let image = await sceneThumbnailImage(from: generator, at: CMTime(seconds: max(0, seconds), preferredTimescale: 600)) else { return nil }
+            return jpegData(from: image)
+        }.value
+    }
+
+    nonisolated private static func jpegData(from image: NSImage) -> Data? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.82])
+    }
+
+    private func saveImageExport(data: Data, video: VideoItem, time: Double, preferredExtension: String) {
+        guard let libraryURL else { return }
+        let folder = libraryURL
+            .appendingPathComponent("LapianBaoExports", isDirectory: true)
+            .appendingPathComponent(Self.safeFileStem(video.name), isDirectory: true)
+            .appendingPathComponent("selected-frames", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let existingCount = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?.count ?? 0
+        let filename = String(format: "%03d_%@.%@", existingCount + 1, Self.fileTimecode(time), preferredExtension)
+        try? data.write(to: folder.appendingPathComponent(filename), options: .atomic)
+        writeFrameIndex(in: folder, video: video)
+    }
+
+    private func writeFrameIndex(in folder: URL, video: VideoItem) {
+        let frames = sampledFrames(for: video)
+        let lines = frames.enumerated().map { index, frame in
+            "\(index + 1). \(Self.clockText(frame.time)) · \(frame.kind == .screenshot ? "截图" : "场景代表帧")"
+        }
+        let md = "# \(video.name)\n\n" + lines.joined(separator: "\n") + "\n"
+        try? md.write(to: folder.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
+    }
+
+    nonisolated private static func exportAudioClipFile(video: VideoItem, videoName: String, start: Double, end: Double, libraryURL: URL?) async -> URL? {
+        await Task.detached(priority: .utility) {
+            guard let libraryURL else { return nil }
+            let folder = libraryURL
+                .appendingPathComponent("LapianBaoExports", isDirectory: true)
+                .appendingPathComponent("Audio", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+            let outputURL = folder.appendingPathComponent("\(safeFileStem(videoName))_\(fileTimecode(start))-\(fileTimecode(end)).m4a")
+            try? FileManager.default.removeItem(at: outputURL)
+
+            let asset = AVURLAsset(url: video.url)
+            guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else { return nil }
+            session.outputURL = outputURL
+            session.outputFileType = .m4a
+            session.timeRange = CMTimeRange(
+                start: CMTime(seconds: start, preferredTimescale: 600),
+                end: CMTime(seconds: end, preferredTimescale: 600)
+            )
+
+            await session.export()
+            return session.status == .completed ? outputURL : nil
+        }.value
+    }
+
+    nonisolated private static func runWhisperTranscription(video: VideoItem, videoName: String, libraryURL: URL?) async throws -> [TranscriptSegment] {
+        try await Task.detached(priority: .utility) {
+            let scriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/transcribe_with_whisper.sh"
+            guard FileManager.default.isExecutableFile(atPath: scriptPath) else {
+                throw NSError(domain: "LapianBao", code: 1, userInfo: [NSLocalizedDescriptionKey: "找不到本地 Whisper 转写脚本"])
+            }
+
+            let baseFolder = (libraryURL ?? video.url.deletingLastPathComponent())
+                .appendingPathComponent("LapianBaoExports", isDirectory: true)
+                .appendingPathComponent("Transcripts", isDirectory: true)
+            try FileManager.default.createDirectory(at: baseFolder, withIntermediateDirectories: true)
+            let outputBase = baseFolder.appendingPathComponent(safeFileStem(videoName))
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: scriptPath)
+            process.arguments = [video.url.path, outputBase.path, "auto"]
+            process.standardOutput = Pipe()
+            let errorPipe = Pipe()
+            process.standardError = errorPipe
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                let message = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "本地转写失败"
+                throw NSError(domain: "LapianBao", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
+            }
+
+            let jsonURL = outputBase.appendingPathExtension("json")
+            let data = try Data(contentsOf: jsonURL)
+            return try parseWhisperSegments(data: data, videoPath: video.url.path)
+        }.value
+    }
+
+    nonisolated private struct WhisperOutput: Decodable {
+        let transcription: [WhisperSegment]?
+        let segments: [WhisperSegment]?
+    }
+
+    nonisolated private struct WhisperSegment: Decodable {
+        let timestamps: WhisperTimestamps?
+        let offsets: WhisperOffsets?
+        let text: String?
+        let start: Double?
+        let end: Double?
+    }
+
+    nonisolated private struct WhisperTimestamps: Decodable {
+        let from: String?
+        let to: String?
+    }
+
+    nonisolated private struct WhisperOffsets: Decodable {
+        let from: Int?
+        let to: Int?
+    }
+
+    nonisolated private static func parseWhisperSegments(data: Data, videoPath: String) throws -> [TranscriptSegment] {
+        let output = try JSONDecoder().decode(WhisperOutput.self, from: data)
+        let rawSegments = output.transcription ?? output.segments ?? []
+        return rawSegments.compactMap { segment in
+            let start = segment.start
+                ?? segment.offsets?.from.map { Double($0) / 1000.0 }
+                ?? segment.timestamps?.from.flatMap(parseTimestamp)
+                ?? 0
+            let end = segment.end
+                ?? segment.offsets?.to.map { Double($0) / 1000.0 }
+                ?? segment.timestamps?.to.flatMap(parseTimestamp)
+                ?? start
+            let text = segment.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else { return nil }
+            return TranscriptSegment(videoPath: videoPath, start: start, end: end, text: text)
+        }
+    }
+
+    nonisolated private static func parseTimestamp(_ text: String) -> Double? {
+        let parts = text.split(separator: ":").map(String.init)
+        guard parts.count >= 2 else { return nil }
+        let seconds = Double(parts.last ?? "") ?? 0
+        let minutes = Double(parts.dropLast().last ?? "") ?? 0
+        let hours = parts.count > 2 ? (Double(parts.first ?? "") ?? 0) : 0
+        return hours * 3600 + minutes * 60 + seconds
+    }
+
+    nonisolated private static func safeFileStem(_ name: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:")
+        let sanitized = name.components(separatedBy: forbidden).joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? "video" : sanitized
+    }
+
+    nonisolated private static func fileTimecode(_ seconds: Double) -> String {
+        clockText(seconds).replacingOccurrences(of: ":", with: "-")
+    }
+
+    nonisolated private static func clockText(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded(.down)))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        return h > 0 ? String(format: "%02d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 
     nonisolated private static func makeWaveformSamples(for url: URL, sampleCount: Int) async -> [Double]? {
