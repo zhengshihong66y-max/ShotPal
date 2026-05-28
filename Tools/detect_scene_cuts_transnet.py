@@ -8,11 +8,39 @@ import numpy as np
 from transnetv2_pytorch import TransNetV2
 
 
-def extract_lowres_frames(video_path: str, width: int = 48, height: int = 27) -> np.ndarray:
-    video_stream, _ = ffmpeg.input(video_path).output(
-        "pipe:", format="rawvideo", pix_fmt="rgb24", s=f"{width}x{height}"
-    ).run(capture_stdout=True, capture_stderr=True, quiet=True)
-    return np.frombuffer(video_stream, np.uint8).reshape([-1, height, width, 3])
+def iter_lowres_frame_chunks(video_path: str, width: int = 48, height: int = 27, chunk_size: int = 512):
+    frame_size = width * height * 3
+    process = (
+        ffmpeg
+        .input(video_path)
+        .output("pipe:", format="rawvideo", pix_fmt="rgb24", s=f"{width}x{height}", threads=2)
+        .global_args("-nostdin", "-loglevel", "error")
+        .run_async(pipe_stdout=True, pipe_stderr=True)
+    )
+
+    try:
+        pending = b""
+        read_size = frame_size * max(1, chunk_size)
+        while True:
+            chunk = process.stdout.read(read_size)
+            if not chunk:
+                break
+
+            pending += chunk
+            frame_count = len(pending) // frame_size
+            if frame_count == 0:
+                continue
+
+            usable = frame_count * frame_size
+            yield np.frombuffer(pending[:usable], np.uint8).reshape((frame_count, height, width, 3))
+            pending = pending[usable:]
+    finally:
+        if process.stdout:
+            process.stdout.close()
+        stderr = process.stderr.read() if process.stderr else b""
+        returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(stderr.decode("utf-8", errors="ignore"))
 
 
 def frame_fingerprints(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -36,24 +64,47 @@ def frame_fingerprints(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     return luma, histograms, edges, contrast
 
 
-def rescue_hard_cut_times(video_path: str, fps: float) -> list[dict]:
-    if fps <= 0:
-        return []
+def frame_change_scores(
+    luma: np.ndarray,
+    histograms: np.ndarray,
+    edges: np.ndarray,
+    contrast: np.ndarray,
+) -> np.ndarray:
+    if len(luma) < 2:
+        return np.empty(0, dtype=np.float32)
 
-    try:
-        frames = extract_lowres_frames(video_path)
-    except Exception:
-        return []
-
-    if len(frames) < 3:
-        return []
-
-    luma, histograms, edges, contrast = frame_fingerprints(frames)
     luma_diff = np.mean(np.abs(luma[1:] - luma[:-1]), axis=(1, 2))
     histogram_diff = np.sum(np.abs(histograms[1:] - histograms[:-1]), axis=1) * 0.5
     edge_diff = np.mean(np.abs(edges[1:] - edges[:-1]), axis=(1, 2))
     contrast_diff = np.abs(contrast[1:] - contrast[:-1])
-    scores = luma_diff * 0.38 + histogram_diff * 0.32 + edge_diff * 0.22 + contrast_diff * 0.08
+    return luma_diff * 0.38 + histogram_diff * 0.32 + edge_diff * 0.22 + contrast_diff * 0.08
+
+
+def rescue_hard_cut_times(video_path: str, fps: float) -> list[dict]:
+    if fps <= 0:
+        return []
+
+    previous = None
+    scores = []
+    try:
+        for frames in iter_lowres_frame_chunks(video_path):
+            luma, histograms, edges, contrast = frame_fingerprints(frames)
+            if previous is not None:
+                previous_luma, previous_histogram, previous_edges, previous_contrast = previous
+                luma = np.concatenate([previous_luma[np.newaxis, ...], luma], axis=0)
+                histograms = np.concatenate([previous_histogram[np.newaxis, ...], histograms], axis=0)
+                edges = np.concatenate([previous_edges[np.newaxis, ...], edges], axis=0)
+                contrast = np.concatenate([np.asarray([previous_contrast], dtype=np.float32), contrast], axis=0)
+
+            scores.extend(frame_change_scores(luma, histograms, edges, contrast).tolist())
+            previous = (luma[-1].copy(), histograms[-1].copy(), edges[-1].copy(), float(contrast[-1]))
+    except Exception:
+        return []
+
+    if len(scores) < 2:
+        return []
+
+    scores = np.asarray(scores, dtype=np.float32)
 
     median = float(np.median(scores))
     mad = float(np.median(np.abs(scores - median)))
@@ -75,6 +126,25 @@ def rescue_hard_cut_times(video_path: str, fps: float) -> list[dict]:
         })
 
     return candidates
+
+
+def filter_short_scenes(candidates: list[dict], fps: float) -> list[dict]:
+    """Remove cuts that create scenes shorter than the minimum duration."""
+    if len(candidates) < 2:
+        return candidates
+
+    min_duration = max(0.3, 8.0 / max(fps, 1.0))
+    filtered = [candidates[0]]
+    for candidate in candidates[1:]:
+        if candidate["time"] - filtered[-1]["time"] >= min_duration:
+            filtered.append(candidate)
+        else:
+            prev = filtered[-1]
+            prev_rank = (2 if prev.get("source") == "transnetv2" else 1, prev.get("score", 0.0))
+            curr_rank = (2 if candidate.get("source") == "transnetv2" else 1, candidate.get("score", 0.0))
+            if curr_rank > prev_rank:
+                filtered[-1] = candidate
+    return filtered
 
 
 def merge_cut_candidates(candidates: list[dict], fps: float) -> list[dict]:
@@ -126,8 +196,11 @@ def main() -> int:
         })
 
     fps = float(results.get("fps", 0.0))
-    rescue_candidates = rescue_hard_cut_times(args.video_path, fps)
+    rescue_candidates = []
+    if len(candidates) < 2:
+        rescue_candidates = rescue_hard_cut_times(args.video_path, fps)
     merged_candidates = merge_cut_candidates(candidates + rescue_candidates, fps)
+    merged_candidates = filter_short_scenes(merged_candidates, fps)
 
     payload = {
         "engine": "transnetv2+hard_cut_rescue",

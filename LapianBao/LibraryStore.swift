@@ -9,6 +9,7 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
+import UniformTypeIdentifiers
 
 struct SceneCut: Identifiable {
     let id: String
@@ -51,6 +52,15 @@ enum VideoSortOption: String, CaseIterable, Identifiable, Codable {
         case .fileSize: return "文件大小"
         case .resolution: return "分辨率"
         case .tags: return "标签"
+        }
+    }
+
+    var dependsOnMetadata: Bool {
+        switch self {
+        case .importDate, .duration, .fileSize, .resolution:
+            return true
+        case .name, .tags:
+            return false
         }
     }
 }
@@ -126,12 +136,16 @@ struct AnnotationItem: Identifiable, Codable, Equatable {
 }
 
 struct AudioClipItem: Identifiable, Codable, Equatable {
+    nonisolated static let currentWaveformVersion = 2
+
     var id: UUID = UUID()
     var videoPath: String
     var videoName: String
     var inTime: Double
     var outTime: Double
     var filePath: String?
+    var waveformSamples: [Double]?
+    var waveformVersion: Int?
     var note: String = ""
     var createdAt: Date = Date()
 }
@@ -147,7 +161,43 @@ struct TranscriptSegment: Identifiable, Codable, Equatable {
 enum TranscriptJobStatus: Equatable {
     case idle
     case running(String)
+    case completed
     case failed(String)
+}
+
+struct MusicRecognitionItem: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var title: String
+    var artist: String
+    var artworkURL: String
+    var appleMusicURL: String
+    var detectedAt: Double  // seconds into the video where this song was found
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, artist
+        case artworkURL = "artwork_url"
+        case appleMusicURL = "apple_music_url"
+        case detectedAt = "detected_at"
+    }
+}
+
+struct MusicDownloadJob: Identifiable, Equatable {
+    enum DownloadType: String, CaseIterable, Equatable {
+        case original
+        case instrumental
+
+        var label: String { self == .original ? "原曲" : "伴奏" }
+        var searchSuffix: String { self == .original ? "" : " instrumental" }
+    }
+
+    var id = UUID()
+    var songKey: String
+    var type: DownloadType
+    var status: RemoteImportJob.Status
+    var downloadProgress: Double?
+    var filePath: String?
+    var waveformSamples: [Double]?
+    var isPreparingWaveform = false
 }
 
 enum VideoPlaybackSupport: Equatable {
@@ -202,20 +252,68 @@ nonisolated private final class SceneDetectionProcessRegistry: @unchecked Sendab
     }
 }
 
+nonisolated private final class ToolProcessRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+
+    func set(_ process: Process?) {
+        lock.lock()
+        self.process = process
+        lock.unlock()
+    }
+
+    func cancelRunningProcess() {
+        lock.lock()
+        let process = process
+        self.process = nil
+        lock.unlock()
+
+        if process?.isRunning == true {
+            process?.terminate()
+        }
+    }
+}
+
+nonisolated private final class PipeDataCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+
+    func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        lock.lock()
+        buffer.append(data)
+        lock.unlock()
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffer
+    }
+}
+
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published var libraryURL: URL?
-    @Published var videos: [VideoItem] = []
+    @Published var videos: [VideoItem] = [] {
+        didSet { refreshFilteredVideos() }
+    }
     @Published var selectedVideo: VideoItem?
-    @Published var selectedTags: Set<String> = []
+    @Published var selectedVideoSelectionID = UUID()
+    var shouldAutoplaySelectedVideo = false
+    @Published var selectedTags: Set<String> = [] {
+        didSet { refreshFilteredVideos() }
+    }
     @Published var tagInput = ""
-    @Published var tagsByVideoPath: [String: [String]] = [:]
+    @Published var tagsByVideoPath: [String: [String]] = [:] {
+        didSet { refreshFilteredVideos() }
+    }
     @Published var isSidebarVisible = true
-    @Published var thumbnailDataByVideoPath: [String: Data] = [:]
-    @Published var thumbnailImageByVideoPath: [String: NSImage] = [:]
-    @Published var durationByVideoPath: [String: Double] = [:]
-    @Published var metadataByVideoPath: [String: VideoMetadata] = [:]
-    @Published var playbackSupportByVideoPath: [String: VideoPlaybackSupport] = [:]
+    var thumbnailDataByVideoPath: [String: Data] = [:]
+    var thumbnailImageByVideoPath: [String: NSImage] = [:]
+    var durationByVideoPath: [String: Double] = [:]
+    var metadataByVideoPath: [String: VideoMetadata] = [:]
+    var playbackSupportByVideoPath: [String: VideoPlaybackSupport] = [:]
     @Published var waveformSamplesByVideoPath: [String: [Double]] = [:]
     @Published var frameStripByVideoPath: [String: [Data]] = [:]
     @Published var frameStripImagesByVideoPath: [String: [NSImage]] = [:]
@@ -225,15 +323,26 @@ final class LibraryStore: ObservableObject {
     @Published var sampledFrames: [SampledFrame] = []
     @Published var annotations: [AnnotationItem] = []
     @Published var audioClips: [AudioClipItem] = []
+    @Published var audioClipExportProgressByVideoPath: [String: Double] = [:]
     @Published var transcriptSegmentsByVideoPath: [String: [TranscriptSegment]] = [:]
     @Published var transcriptStatusByVideoPath: [String: TranscriptJobStatus] = [:]
+    @Published var musicsByVideoPath: [String: [MusicRecognitionItem]] = [:]
+    @Published var musicDetectionStatusByVideoPath: [String: TranscriptJobStatus] = [:]
+    @Published var musicDownloadJobs: [MusicDownloadJob] = []
     @Published var sortOption: VideoSortOption = VideoSortOption(rawValue: UserDefaults.standard.string(forKey: "videoSortOption") ?? "") ?? .name {
-        didSet { UserDefaults.standard.set(sortOption.rawValue, forKey: "videoSortOption") }
+        didSet {
+            UserDefaults.standard.set(sortOption.rawValue, forKey: "videoSortOption")
+            refreshFilteredVideos()
+        }
     }
     @Published var sortDirection: VideoSortDirection = VideoSortDirection(rawValue: UserDefaults.standard.string(forKey: "videoSortDirection") ?? "") ?? .ascending {
-        didSet { UserDefaults.standard.set(sortDirection.rawValue, forKey: "videoSortDirection") }
+        didSet {
+            UserDefaults.standard.set(sortDirection.rawValue, forKey: "videoSortDirection")
+            refreshFilteredVideos()
+        }
     }
-    @Published var remoteImportJob: RemoteImportJob?
+    @Published var remoteImportJobs: [RemoteImportJob] = []
+    var remoteImportJob: RemoteImportJob? { remoteImportJobs.last }
     @Published var instagramImportEndpoint = UserDefaults.standard.string(forKey: "instagramImportEndpoint") ?? ""
 
     private let lastLibraryPathKey = "lastLibraryPath"
@@ -263,25 +372,85 @@ final class LibraryStore: ObservableObject {
         var annotations: [AnnotationItem]
         var audioClips: [AudioClipItem]
         var transcripts: [String: [TranscriptSegment]]
+        var musicsByVideoPath: [String: [MusicRecognitionItem]]? // optional for backward compat
     }
 
     private var thumbnailTasks: [String: Task<Void, Never>] = [:]
     private var waveformTasks: [String: Task<Void, Never>] = [:]
+    private var audioClipWaveformTasks: [UUID: Task<Void, Never>] = [:]
     private var frameStripTasks: [String: Task<Void, Never>] = [:]
     private var sceneDetectionTasks: [String: Task<Void, Never>] = [:]
+    private var musicDetectionTasks: [String: Task<Void, Never>] = [:]
     private var scopedLibraryURL: URL?
     private var sceneCutCache: [String: SceneCutCacheEntry] = [:]
+    private(set) var filteredVideos: [VideoItem] = []
 
     nonisolated private static let transNetPythonPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/transnet-env/bin/python"
     nonisolated private static let transNetScriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/detect_scene_cuts_transnet.py"
-    nonisolated private static let sceneDetectorVersion = "transnetv2+hardcut-rescue@2026-05-24.2"
+    nonisolated private static let sceneDetectorVersion = "transnetv2+hardcut-rescue@2026-05-25.1"
+    nonisolated private static let waveformSampleCount = 4096
+    nonisolated private static let audioClipWaveformSampleCount = 96
+    nonisolated private static let audioClipWaveformVersion = AudioClipItem.currentWaveformVersion
+    nonisolated private static let musicWaveformSampleCount = 180
+
+    nonisolated private static let musicPythonPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/music-env/bin/python3"
+    nonisolated private static let musicScriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/detect_music.py"
+    nonisolated private static let exportRootFolderName = "LapianBaoExports"
+    nonisolated private static let imageExportFolderName = "图片"
+    nonisolated private static let soundEffectExportFolderName = "音效"
+    nonisolated private static let musicExportFolderName = "音乐"
+
+    nonisolated private static func exportFolder(in libraryURL: URL, named folderName: String) -> URL {
+        libraryURL
+            .appendingPathComponent(exportRootFolderName, isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true)
+    }
+
+    nonisolated private static func ensureExportFolders(in libraryURL: URL) {
+        for folderName in [imageExportFolderName, soundEffectExportFolderName, musicExportFolderName] {
+            try? FileManager.default.createDirectory(
+                at: exportFolder(in: libraryURL, named: folderName),
+                withIntermediateDirectories: true
+            )
+        }
+    }
+
+    nonisolated private static func localToolURL(
+        relativePath: String,
+        fallbackPath: String,
+        mustBeExecutable: Bool = false,
+        sourceFilePath: String = #filePath
+    ) -> URL? {
+        let fm = FileManager.default
+        let sourceRoot = URL(fileURLWithPath: sourceFilePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let currentDirectory = URL(fileURLWithPath: fm.currentDirectoryPath, isDirectory: true)
+
+        let candidates = [
+            URL(fileURLWithPath: fallbackPath),
+            sourceRoot.appendingPathComponent(relativePath),
+            currentDirectory.appendingPathComponent(relativePath)
+        ]
+
+        var checkedPaths = Set<String>()
+        for url in candidates where checkedPaths.insert(url.path).inserted {
+            if mustBeExecutable {
+                if fm.isExecutableFile(atPath: url.path) { return url }
+            } else if fm.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+
+        return nil
+    }
 
     var allTags: [String] {
         let tags = tagsByVideoPath.values.flatMap { $0 }
         return Array(Set(tags)).sorted()
     }
 
-    var filteredVideos: [VideoItem] {
+    private func refreshFilteredVideos() {
         let scopedVideos: [VideoItem]
         if selectedTags.isEmpty {
             scopedVideos = videos
@@ -292,7 +461,7 @@ final class LibraryStore: ObservableObject {
             }
         }
 
-        return scopedVideos.sorted { lhs, rhs in
+        filteredVideos = scopedVideos.sorted { lhs, rhs in
             let result: ComparisonResult
             switch sortOption {
             case .name:
@@ -356,6 +525,31 @@ final class LibraryStore: ObservableObject {
             .sorted { $0.time < $1.time }
     }
 
+    func fullResolutionFrameProvider(for frame: SampledFrame) -> NSItemProvider {
+        Self.frameDragItemProvider(
+            videoURL: URL(fileURLWithPath: frame.videoPath),
+            videoName: frame.videoName,
+            time: frame.time,
+            kind: frame.kind,
+            fallbackData: frame.thumbnailData.isEmpty ? nil : frame.thumbnailData
+        )
+    }
+
+    func fullResolutionFrameProvider(
+        video: VideoItem,
+        time: Double,
+        kind: SampledFrame.Kind? = nil,
+        fallbackImage: NSImage? = nil
+    ) -> NSItemProvider {
+        Self.frameDragItemProvider(
+            videoURL: video.url,
+            videoName: video.name,
+            time: time,
+            kind: kind,
+            fallbackData: fallbackImage.flatMap(Self.jpegData(from:))
+        )
+    }
+
     func annotations(for video: VideoItem) -> [AnnotationItem] {
         annotations
             .filter { $0.videoPath == video.url.path }
@@ -372,9 +566,15 @@ final class LibraryStore: ObservableObject {
         videos.first { $0.url.path == path }
     }
 
-    func selectVideo(path: String) {
-        guard let video = selectedVideo(for: path) else { return }
+    func selectVideo(_ video: VideoItem, autoplay: Bool) {
+        shouldAutoplaySelectedVideo = autoplay
         selectedVideo = video
+        selectedVideoSelectionID = UUID()
+    }
+
+    func selectVideo(path: String, autoplay: Bool = false) {
+        guard let video = selectedVideo(for: path) else { return }
+        selectVideo(video, autoplay: autoplay)
     }
 
     func setSort(option: VideoSortOption) {
@@ -437,49 +637,86 @@ final class LibraryStore: ObservableObject {
     }
 
     func importRemoteVideo(from rawURL: String) {
+        importRemoteVideos(from: rawURL)
+    }
+
+    func clearFinishedRemoteImports() {
+        remoteImportJobs.removeAll { job in
+            switch job.status {
+            case .succeeded, .failed:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    func importRemoteVideos(from rawText: String) {
+        let inputs = Self.remoteImportURLs(from: rawText)
+        guard !inputs.isEmpty else {
+            remoteImportJobs.append(RemoteImportJob(
+                sourceURL: URL(string: "https://example.com")!,
+                platform: "未知平台",
+                status: .failed("请输入至少一个有效链接")
+            ))
+            return
+        }
+
+        for rawURL in inputs {
+            enqueueRemoteImport(from: rawURL)
+        }
+    }
+
+    private func enqueueRemoteImport(from rawURL: String) {
         let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sourceURL = URL(string: trimmed) else {
-            remoteImportJob = RemoteImportJob(
+            remoteImportJobs.append(RemoteImportJob(
                 sourceURL: URL(string: "https://example.com")!,
                 platform: "未知平台",
                 status: .failed("请输入有效链接")
-            )
+            ))
             return
         }
 
         guard let platform = Self.platformName(for: sourceURL) else {
-            remoteImportJob = RemoteImportJob(
+            remoteImportJobs.append(RemoteImportJob(
                 sourceURL: sourceURL,
                 platform: "未知平台",
                 status: .failed("暂不支持该平台，目前支持 Instagram、YouTube、小红书、Bilibili 和抖音")
-            )
+            ))
             return
         }
 
         guard let libraryURL else {
-            remoteImportJob = RemoteImportJob(
+            remoteImportJobs.append(RemoteImportJob(
                 sourceURL: sourceURL,
                 platform: platform,
                 status: .failed("请先打开一个素材库文件夹")
-            )
+            ))
             return
         }
 
         let endpoint = instagramImportEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        remoteImportJob = RemoteImportJob(sourceURL: sourceURL, platform: platform, status: .importing)
+        let job = RemoteImportJob(sourceURL: sourceURL, platform: platform, status: .importing)
+        remoteImportJobs.append(job)
+        let jobID = job.id
 
         // 进度回调：yt-dlp 每行输出一次，跳回主线程更新 UI
         let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
-                guard case .importing = self?.remoteImportJob?.status else { return }
-                self?.remoteImportJob?.downloadProgress = progress
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    guard case .importing = job.status else { return }
+                    job.downloadProgress = progress
+                }
             }
         }
         // 转码回调：下载结束、VP9→H.264 转码即将开始时触发
         let transcodingCallback: @Sendable () -> Void = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.remoteImportJob?.status = .transcoding
-                self?.remoteImportJob?.downloadProgress = nil
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    job.status = .transcoding
+                    job.downloadProgress = nil
+                }
             }
         }
 
@@ -495,24 +732,37 @@ final class LibraryStore: ObservableObject {
                 )
 
                 guard !Task.isCancelled else { return }
-                self?.remoteImportJob = RemoteImportJob(
-                    sourceURL: sourceURL,
-                    platform: platform,
-                    status: .succeeded(outputURL.lastPathComponent)
-                )
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    job.status = .succeeded(outputURL.lastPathComponent)
+                    job.downloadProgress = 1
+                }
                 self?.scanVideos(in: libraryURL)
                 if let importedVideo = self?.videos.first(where: { $0.url.path == outputURL.path }) {
-                    self?.selectedVideo = importedVideo
+                    self?.selectVideo(importedVideo, autoplay: false)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.remoteImportJob = RemoteImportJob(
-                    sourceURL: sourceURL,
-                    platform: platform,
-                    status: .failed(error.localizedDescription)
-                )
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    job.status = .failed(error.localizedDescription)
+                    job.downloadProgress = nil
+                }
             }
         }
+    }
+
+    private func updateRemoteImportJob(id: UUID, mutate: (inout RemoteImportJob) -> Void) {
+        guard let index = remoteImportJobs.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&remoteImportJobs[index])
+    }
+
+    nonisolated private static func remoteImportURLs(from text: String) -> [String] {
+        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",，"))
+        var seen = Set<String>()
+        return text
+            .components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasPrefix("http://") || $0.hasPrefix("https://") }
+            .filter { seen.insert($0).inserted }
     }
 
     static func platformName(for url: URL) -> String? {
@@ -608,13 +858,20 @@ final class LibraryStore: ObservableObject {
 
         libraryURL = folder
         UserDefaults.standard.set(folder.path, forKey: lastLibraryPathKey)
+        Self.ensureExportFolders(in: folder)
 
         videos = urls
             .filter { videoExtensions.contains($0.pathExtension.lowercased()) }
             .map(VideoItem.init(url:))
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 
-        selectedVideo = videos.first
+        if let firstVideo = videos.first {
+            selectVideo(firstVideo, autoplay: false)
+        } else {
+            selectedVideo = nil
+            shouldAutoplaySelectedVideo = false
+            selectedVideoSelectionID = UUID()
+        }
         selectedTags = []
         tagsByVideoPath = [:]
         frameStripByVideoPath = [:]
@@ -628,17 +885,35 @@ final class LibraryStore: ObservableObject {
         loadSceneCutCache()
     }
 
-    func addTag(to video: VideoItem) {
-        let tag = tagInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tag.isEmpty else { return }
+    func removeVideo(_ video: VideoItem) {
+        let path = video.url.path
+        videos.removeAll { $0.url.path == path }
+        if selectedVideo?.url.path == path {
+            selectedVideo = nil
+            shouldAutoplaySelectedVideo = false
+            selectedVideoSelectionID = UUID()
+        }
+        tagsByVideoPath.removeValue(forKey: path)
+        sceneCutsByVideoPath.removeValue(forKey: path)
+        sceneDetectionProgress.removeValue(forKey: path)
+        saveTagsJSON()
+        saveSceneCutCache()
+    }
 
+    func addTag(to video: VideoItem) {
+        addTag(tagInput, to: video)
+        tagInput = ""
+    }
+
+    func addTag(_ rawTag: String, to video: VideoItem) {
+        let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty else { return }
         var tags = tagsByVideoPath[video.url.path, default: []]
         if !tags.contains(tag) {
             tags.append(tag)
             tagsByVideoPath[video.url.path] = tags.sorted()
         }
 
-        tagInput = ""
         saveTagsJSON()
     }
 
@@ -662,11 +937,13 @@ final class LibraryStore: ObservableObject {
         let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != old else { return }
 
-        for (path, tags) in tagsByVideoPath where tags.contains(old) {
+        var updatedTagsByVideoPath = tagsByVideoPath
+        for (path, tags) in updatedTagsByVideoPath where tags.contains(old) {
             var updated = tags.filter { $0 != old }
             if !updated.contains(trimmed) { updated.append(trimmed) }
-            tagsByVideoPath[path] = updated.sorted()
+            updatedTagsByVideoPath[path] = updated.sorted()
         }
+        tagsByVideoPath = updatedTagsByVideoPath
 
         if selectedTags.contains(old) {
             selectedTags.remove(old)
@@ -676,9 +953,11 @@ final class LibraryStore: ObservableObject {
     }
 
     func removeGlobalTag(_ tag: String) {
-        for (path, tags) in tagsByVideoPath where tags.contains(tag) {
-            tagsByVideoPath[path] = tags.filter { $0 != tag }
+        var updatedTagsByVideoPath = tagsByVideoPath
+        for (path, tags) in updatedTagsByVideoPath where tags.contains(tag) {
+            updatedTagsByVideoPath[path] = tags.filter { $0 != tag }
         }
+        tagsByVideoPath = updatedTagsByVideoPath
         selectedTags.remove(tag)
         saveTagsJSON()
     }
@@ -713,7 +992,8 @@ final class LibraryStore: ObservableObject {
             sampledFrames: sampledFrames,
             annotations: annotations,
             audioClips: audioClips,
-            transcripts: transcriptSegmentsByVideoPath
+            transcripts: transcriptSegmentsByVideoPath,
+            musicsByVideoPath: musicsByVideoPath.isEmpty ? nil : musicsByVideoPath
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -742,6 +1022,7 @@ final class LibraryStore: ObservableObject {
         annotations = decoded.annotations
         audioClips = decoded.audioClips
         transcriptSegmentsByVideoPath = decoded.transcripts
+        musicsByVideoPath = decoded.musicsByVideoPath ?? [:]
     }
 
     func loadTagsJSON() {
@@ -752,10 +1033,12 @@ final class LibraryStore: ObservableObject {
         else { return }
 
         let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
+        var loadedTagsByVideoPath = tagsByVideoPath
         for (key, tags) in decoded where !tags.isEmpty {
             let absPath = key.hasPrefix("/") ? key : base + key
-            tagsByVideoPath[absPath] = tags
+            loadedTagsByVideoPath[absPath] = tags
         }
+        tagsByVideoPath = loadedTagsByVideoPath
     }
 
     func toggleSidebar() {
@@ -764,15 +1047,49 @@ final class LibraryStore: ObservableObject {
 
     func loadWaveform(for video: VideoItem) {
         let path = video.url.path
-        guard waveformSamplesByVideoPath[path] == nil, waveformTasks[path] == nil else { return }
+        guard waveformTasks[path] == nil else { return }
+        if let samples = waveformSamplesByVideoPath[path], samples.count >= Self.waveformSampleCount {
+            return
+        }
 
         waveformTasks[path] = Task { [weak self] in
-            let samples = await Self.makeWaveformSamples(for: video.url, sampleCount: 180) ?? []
+            let samples = await Self.makeWaveformSamples(for: video.url, sampleCount: Self.waveformSampleCount) ?? []
             guard !Task.isCancelled else { return }
 
             self?.waveformSamplesByVideoPath[path] = samples
             self?.waveformTasks[path] = nil
         }
+    }
+
+    func loadAudioClipWaveformIfNeeded(_ clip: AudioClipItem) {
+        let hasCurrentWaveform = clip.waveformVersion == Self.audioClipWaveformVersion
+            && clip.waveformSamples?.isEmpty == false
+        guard !hasCurrentWaveform,
+              audioClipWaveformTasks[clip.id] == nil
+        else { return }
+
+        let clipID = clip.id
+        let url = URL(fileURLWithPath: clip.videoPath)
+        audioClipWaveformTasks[clipID] = Task { [weak self] in
+            let samples = await Self.makeWaveformSamples(
+                for: url,
+                sampleCount: Self.audioClipWaveformSampleCount,
+                start: clip.inTime,
+                end: clip.outTime
+            ) ?? []
+            guard !Task.isCancelled else { return }
+
+            self?.setAudioClipWaveform(id: clipID, samples: samples)
+            self?.audioClipWaveformTasks[clipID] = nil
+        }
+    }
+
+    private func setAudioClipWaveform(id: UUID, samples: [Double]) {
+        guard let index = audioClips.firstIndex(where: { $0.id == id }) else { return }
+        objectWillChange.send()
+        audioClips[index].waveformSamples = samples
+        audioClips[index].waveformVersion = Self.audioClipWaveformVersion
+        saveProjectData()
     }
 
     func loadFrameStrip(for video: VideoItem) {
@@ -905,6 +1222,18 @@ final class LibraryStore: ObservableObject {
         saveProjectData()
     }
 
+    func deleteSampledFrame(_ frame: SampledFrame) {
+        sampledFrames.removeAll { $0.id == frame.id }
+        saveProjectData()
+    }
+
+    func deleteAudioClip(_ clip: AudioClipItem) {
+        audioClipWaveformTasks[clip.id]?.cancel()
+        audioClipWaveformTasks[clip.id] = nil
+        audioClips.removeAll { $0.id == clip.id }
+        saveProjectData()
+    }
+
     func markSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) {
         if let index = sampledFrames.firstIndex(where: {
             $0.videoPath == video.url.path &&
@@ -959,18 +1288,36 @@ final class LibraryStore: ObservableObject {
         let start = max(0, min(inTime, outTime))
         let end = max(inTime, outTime)
         guard end - start > 0.05 else { return }
+        let path = video.url.path
         let videoName = video.name
+        audioClipExportProgressByVideoPath[path] = 0.05
 
         Task { [weak self] in
+            self?.audioClipExportProgressByVideoPath[path] = 0.18
             let outputURL = await Self.exportAudioClipFile(video: video, videoName: videoName, start: start, end: end, libraryURL: self?.libraryURL)
-            self?.audioClips.append(AudioClipItem(
+            self?.audioClipExportProgressByVideoPath[path] = 0.62
+
+            let clip = AudioClipItem(
                 videoPath: video.url.path,
                 videoName: videoName,
                 inTime: start,
                 outTime: end,
                 filePath: outputURL?.path
-            ))
+            )
+            self?.audioClips.append(clip)
             self?.saveProjectData()
+            self?.audioClipExportProgressByVideoPath[path] = 0.74
+
+            let samples = await Self.makeWaveformSamples(
+                for: video.url,
+                sampleCount: Self.audioClipWaveformSampleCount,
+                start: start,
+                end: end
+            ) ?? []
+            self?.setAudioClipWaveform(id: clip.id, samples: samples)
+            self?.audioClipExportProgressByVideoPath[path] = 1.0
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            self?.audioClipExportProgressByVideoPath[path] = nil
         }
     }
 
@@ -988,6 +1335,620 @@ final class LibraryStore: ObservableObject {
                 self?.saveProjectData()
             } catch {
                 self?.transcriptStatusByVideoPath[path] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func detectMusic(for video: VideoItem) {
+        let path = video.url.path
+        if case .running = musicDetectionStatusByVideoPath[path] { return }
+        musicDetectionStatusByVideoPath[path] = .running("准备中…")
+        musicsByVideoPath[path] = []
+
+        musicDetectionTasks[path]?.cancel()
+        weak let weakSelf = self
+        musicDetectionTasks[path] = Task {
+            defer {
+                Task { @MainActor in
+                    weakSelf?.musicDetectionTasks[path] = nil
+                }
+            }
+            do {
+                let songs = try await Self.runMusicDetection(
+                    videoPath: path,
+                    onEvent: { event in
+                        await MainActor.run {
+                            switch event {
+                            case .progress(let msg):
+                                weakSelf?.musicDetectionStatusByVideoPath[path] = .running(msg)
+                            case .found(let song):
+                                var current = weakSelf?.musicsByVideoPath[path] ?? []
+                                if !current.contains(where: { $0.title == song.title && $0.artist == song.artist }) {
+                                    current.append(song)
+                                    weakSelf?.musicsByVideoPath[path] = current
+                                }
+                            }
+                        }
+                    }
+                )
+                weakSelf?.musicsByVideoPath[path] = songs
+                weakSelf?.musicDetectionStatusByVideoPath[path] = .completed
+                weakSelf?.saveProjectData()
+            } catch is CancellationError {
+                weakSelf?.musicDetectionStatusByVideoPath[path] = .idle
+            } catch {
+                weakSelf?.musicsByVideoPath[path] = []
+                weakSelf?.musicDetectionStatusByVideoPath[path] = .completed
+            }
+        }
+    }
+
+    func cancelMusicDetection(for video: VideoItem) {
+        let path = video.url.path
+        musicDetectionTasks[path]?.cancel()
+        musicDetectionTasks[path] = nil
+        musicDetectionStatusByVideoPath[path] = .idle
+    }
+
+    func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) {
+        guard let libraryURL else {
+            let key = "\(song.title)|\(song.artist)"
+            musicDownloadJobs.append(MusicDownloadJob(
+                songKey: key, type: type,
+                status: .failed("请先打开一个素材库文件夹")
+            ))
+            return
+        }
+
+        let songKey = "\(song.title)|\(song.artist)"
+        let query = "\(song.artist.isEmpty ? "" : song.artist + " ")\(song.title)\(type.searchSuffix)"
+        let job = MusicDownloadJob(songKey: songKey, type: type, status: .importing)
+        musicDownloadJobs.append(job)
+        let jobID = job.id
+
+        let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.updateMusicDownloadJob(id: jobID) { j in j.downloadProgress = progress }
+            }
+        }
+
+        Task { [weak self] in
+            do {
+                let destinationDirectory = libraryURL
+                    .appendingPathComponent(Self.exportRootFolderName, isDirectory: true)
+                    .appendingPathComponent(Self.musicExportFolderName, isDirectory: true)
+                try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+                let outputURL = try await Self.downloadMusicFromYouTube(
+                    query: query,
+                    into: destinationDirectory,
+                    progressCallback: progressCallback
+                )
+                self?.updateMusicDownloadJob(id: jobID) { j in
+                    j.status = .succeeded(outputURL.lastPathComponent)
+                    j.downloadProgress = 1
+                    j.filePath = outputURL.path
+                    j.waveformSamples = nil
+                    j.isPreparingWaveform = true
+                }
+
+                let samples = await Self.makeWaveformSamples(
+                    for: outputURL,
+                    sampleCount: Self.musicWaveformSampleCount
+                )
+                self?.updateMusicDownloadJob(id: jobID) { j in
+                    j.waveformSamples = samples ?? []
+                    j.isPreparingWaveform = false
+                }
+            } catch {
+                self?.updateMusicDownloadJob(id: jobID) { j in
+                    j.status = .failed(error.localizedDescription)
+                    j.downloadProgress = nil
+                    j.isPreparingWaveform = false
+                }
+            }
+        }
+    }
+
+    private func updateMusicDownloadJob(id: UUID, mutate: (inout MusicDownloadJob) -> Void) {
+        guard let index = musicDownloadJobs.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&musicDownloadJobs[index])
+    }
+
+    nonisolated private struct MusicDownloadSource: Sendable {
+        let name: String
+        let target: String
+    }
+
+    nonisolated private static func downloadMusicFromYouTube(
+        query: String,
+        into destinationDirectory: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        let processRegistry = ToolProcessRegistry()
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: URL.self) { group in
+                group.addTask {
+                    try await downloadMusicFromYouTubeSearch(
+                        query: query,
+                        into: destinationDirectory,
+                        processRegistry: processRegistry,
+                        progressCallback: progressCallback
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 240_000_000_000)
+                    processRegistry.cancelRunningProcess()
+                    throw RemoteImportError.downloaderFailed("YouTube 音乐下载超时。通常是网络不可达、YouTube 限速，或当前地区无法访问 YouTube 搜索。")
+                }
+
+                guard let result = try await group.next() else {
+                    throw RemoteImportError.downloaderFailed("YouTube 音乐下载失败")
+                }
+                group.cancelAll()
+                return result
+            }
+        } onCancel: {
+            processRegistry.cancelRunningProcess()
+        }
+    }
+
+    nonisolated private static func downloadMusicFromYouTubeSearch(
+        query: String,
+        into destinationDirectory: URL,
+        processRegistry: ToolProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        let sources = musicDownloadSources(for: query)
+        var failures: [String] = []
+
+        for (index, source) in sources.enumerated() {
+            let sourceStart = Double(index) / Double(max(sources.count, 1))
+            let sourceSpan = 1.0 / Double(max(sources.count, 1))
+            progressCallback?(min(0.98, max(0.02, sourceStart + 0.02 * sourceSpan)))
+
+            do {
+                return try await runMusicYTDLPDownloadWithTimeout(
+                    source: source,
+                    into: destinationDirectory,
+                    processRegistry: processRegistry,
+                    progressCallback: { progress in
+                        progressCallback?(min(0.98, sourceStart + progress * sourceSpan))
+                    }
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append("\(source.name)：\(error.localizedDescription)")
+                progressCallback?(min(0.98, sourceStart + sourceSpan))
+            }
+        }
+
+        throw RemoteImportError.downloaderFailed(
+            failures.isEmpty ? "YouTube 搜索下载失败" : failures.suffix(3).joined(separator: "\n")
+        )
+    }
+
+    nonisolated private static func musicDownloadSources(for query: String) -> [MusicDownloadSource] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return [] }
+
+        return [MusicDownloadSource(name: "YouTube 搜索", target: "ytsearch1:\(trimmedQuery)")]
+    }
+
+    nonisolated private static func runMusicYTDLPDownloadWithTimeout(
+        source: MusicDownloadSource,
+        into destinationDirectory: URL,
+        processRegistry: ToolProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask {
+                try await runMusicYTDLPDownload(
+                    source: source,
+                    into: destinationDirectory,
+                    processRegistry: processRegistry,
+                    progressCallback: progressCallback
+                )
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 55_000_000_000)
+                processRegistry.cancelRunningProcess()
+                throw RemoteImportError.downloaderFailed("\(source.name) 下载超时")
+            }
+
+            guard let result = try await group.next() else {
+                throw RemoteImportError.downloaderFailed("\(source.name) 下载失败")
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    nonisolated private static func runMusicYTDLPDownload(
+        source: MusicDownloadSource,
+        into destinationDirectory: URL,
+        processRegistry: ToolProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            guard let ytdlp = localYTDLPURL() else {
+                throw RemoteImportError.downloaderFailed("未找到 yt-dlp。请先安装 yt-dlp 和 ffmpeg，用于从 YouTube 搜索视频并抽取音频。")
+            }
+
+            let startedAt = Date()
+            let process = Process()
+            process.executableURL = ytdlp
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            env["PYTHONUNBUFFERED"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
+            process.environment = env
+
+            var arguments = [
+                "--no-playlist",
+                "-x",
+                "--audio-format", "m4a",
+                "--audio-quality", "0",
+                "-f", "ba/bestaudio/best",
+                "--socket-timeout", "20",
+                "--retries", "2",
+                "--fragment-retries", "2",
+                "--progress",
+                "--newline",
+                "--no-colors",
+                "--default-search", "ytsearch",
+                "--paths", destinationDirectory.path,
+                "-o", "%(title).160B-%(id)s.%(ext)s",
+                "--print", "after_move:filepath",
+                source.target
+            ]
+            if let ffmpegDirectoryPath = localFFmpegDirectoryPath() {
+                arguments.insert(contentsOf: ["--ffmpeg-location", ffmpegDirectoryPath], at: 6)
+            }
+            process.arguments = arguments
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            let outputCollector = PipeDataCollector()
+            let errorCollector = PipeDataCollector()
+
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                outputCollector.append(handle.availableData)
+            }
+
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else { return }
+                errorCollector.append(chunk)
+                if let text = String(data: chunk, encoding: .utf8) {
+                    for line in text.components(separatedBy: .newlines) {
+                        if let p = parseYTDLPProgressLine(line) { progressCallback?(p) }
+                    }
+                }
+            }
+
+            try process.run()
+            processRegistry.set(process)
+            defer {
+                processRegistry.set(nil)
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+                errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+                if Task.isCancelled, process.isRunning {
+                    process.terminate()
+                }
+            }
+
+            process.waitUntilExit()
+
+            if Task.isCancelled {
+                processRegistry.cancelRunningProcess()
+                throw CancellationError()
+            }
+
+            let output = String(data: outputCollector.data, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errorCollector.data, encoding: .utf8) ?? ""
+
+            guard process.terminationStatus == 0 else {
+                throw RemoteImportError.downloaderFailed(
+                    conciseYTDLPError(
+                        errorOutput,
+                        fallback: "\(source.name) 下载失败，请确认网络可访问 YouTube，且已安装 yt-dlp 和 ffmpeg"
+                    )
+                )
+            }
+
+            guard let downloadedURL = downloadedMusicFileURL(
+                fromYTDLPOutput: output,
+                destinationDirectory: destinationDirectory,
+                startedAt: startedAt
+            ) else {
+                throw RemoteImportError.downloaderFailed(
+                    conciseYTDLPError(errorOutput, fallback: "找不到已下载的音频文件")
+                )
+            }
+
+            return downloadedURL
+        }.value
+    }
+
+    nonisolated private static func localFFmpegDirectoryPath() -> String? {
+        [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg"
+        ]
+        .first { FileManager.default.isExecutableFile(atPath: $0) }
+        .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+    }
+
+    nonisolated private static func downloadedMusicFileURL(
+        fromYTDLPOutput output: String,
+        destinationDirectory: URL,
+        startedAt: Date
+    ) -> URL? {
+        let fm = FileManager.default
+        for line in output.split(whereSeparator: \.isNewline).reversed() {
+            let path = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else { continue }
+            if fm.fileExists(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+
+        let audioExtensions = Set(["m4a", "mp3", "wav", "aac", "opus", "webm"])
+        let urls = (try? fm.contentsOfDirectory(
+            at: destinationDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return urls
+            .filter { audioExtensions.contains($0.pathExtension.lowercased()) }
+            .compactMap { url -> (URL, Date)? in
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile == true,
+                      let modifiedAt = values?.contentModificationDate,
+                      modifiedAt >= startedAt.addingTimeInterval(-2) else { return nil }
+                return (url, modifiedAt)
+            }
+            .sorted { $0.1 > $1.1 }
+            .first?
+            .0
+    }
+
+    nonisolated private static func conciseYTDLPError(_ message: String, fallback: String) -> String {
+        let lines = message
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return fallback }
+        return lines.suffix(6).joined(separator: "\n")
+    }
+
+    // MARK: – Music detection helpers
+
+    private enum MusicDetectionEvent: Sendable {
+        case progress(String)
+        case found(MusicRecognitionItem)
+    }
+
+    nonisolated private static func runMusicDetection(
+        videoPath: String,
+        onEvent: @Sendable @escaping (MusicDetectionEvent) async -> Void
+    ) async throws -> [MusicRecognitionItem] {
+        let processRegistry = ToolProcessRegistry()
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: [MusicRecognitionItem].self) { group in
+                group.addTask {
+                    try await runMusicDetectionProcess(
+                        videoPath: videoPath,
+                        onEvent: onEvent,
+                        processRegistry: processRegistry
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 130_000_000_000)
+                    processRegistry.cancelRunningProcess()
+                    throw MusicDetectionError.timeout
+                }
+
+                guard let result = try await group.next() else { return [] }
+                group.cancelAll()
+                return result
+            }
+        } onCancel: {
+            processRegistry.cancelRunningProcess()
+        }
+    }
+
+    nonisolated private static func runMusicDetectionProcess(
+        videoPath: String,
+        onEvent: @Sendable @escaping (MusicDetectionEvent) async -> Void,
+        processRegistry: ToolProcessRegistry
+    ) async throws -> [MusicRecognitionItem] {
+        guard let pythonURL = localToolURL(
+            relativePath: "Tools/music-env/bin/python3",
+            fallbackPath: musicPythonPath,
+            mustBeExecutable: true
+        ) else {
+            throw MusicDetectionError.envNotSetup
+        }
+        guard let scriptURL = localToolURL(
+            relativePath: "Tools/detect_music.py",
+            fallbackPath: musicScriptPath
+        ) else {
+            throw MusicDetectionError.scriptMissing
+        }
+        guard FileManager.default.fileExists(atPath: videoPath) else {
+            throw MusicDetectionError.videoMissing(videoPath)
+        }
+        guard FileManager.default.isReadableFile(atPath: videoPath) else {
+            throw MusicDetectionError.videoUnreadable(videoPath)
+        }
+
+        let process = Process()
+        process.executableURL = pythonURL
+        process.arguments = [scriptURL.path, videoPath]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/opt/miniconda3/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] = env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] ?? "12"
+        env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] = env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] ?? "10"
+        env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] = env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] ?? "3"
+        env["LAPIANBAO_MUSIC_FFPROBE_TIMEOUT"] = env["LAPIANBAO_MUSIC_FFPROBE_TIMEOUT"] ?? "12"
+        env["LAPIANBAO_MUSIC_FFMPEG_TIMEOUT"] = env["LAPIANBAO_MUSIC_FFMPEG_TIMEOUT"] ?? "12"
+        env["LAPIANBAO_MUSIC_TOTAL_TIMEOUT"] = env["LAPIANBAO_MUSIC_TOTAL_TIMEOUT"] ?? "120"
+        process.environment = env
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+
+        let errorCollector = PipeDataCollector()
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            errorCollector.append(handle.availableData)
+        }
+
+        try process.run()
+        processRegistry.set(process)
+        defer {
+            processRegistry.set(nil)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            if Task.isCancelled, process.isRunning {
+                process.terminate()
+            }
+        }
+
+        var songs: [MusicRecognitionItem] = []
+        let stream = Self.makeLineStream(pipe: outputPipe)
+
+        for await line in stream {
+            if Task.isCancelled {
+                processRegistry.cancelRunningProcess()
+                throw CancellationError()
+            }
+
+            guard
+                let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                let type = json["type"] as? String
+            else { continue }
+
+            switch type {
+            case "progress":
+                let msg = json["message"] as? String ?? ""
+                let val = json["value"] as? Double ?? 0
+                await onEvent(.progress("识别中 \(Int(val * 100))% · \(msg)"))
+
+            case "found":
+                if let songDict = json["song"] as? [String: Any],
+                   let song = parseMusicItem(from: songDict) {
+                    songs.append(song)
+                    await onEvent(.found(song))
+                }
+
+            case "done":
+                if let arr = json["songs"] as? [[String: Any]] {
+                    songs = arr.compactMap { parseMusicItem(from: $0) }
+                }
+
+            case "error":
+                let msg = json["message"] as? String ?? "识别失败"
+                processRegistry.cancelRunningProcess()
+                throw MusicDetectionError.scriptError(msg)
+
+            default:
+                break
+            }
+        }
+
+        process.waitUntilExit()
+        if Task.isCancelled {
+            processRegistry.cancelRunningProcess()
+            throw CancellationError()
+        }
+        if process.terminationStatus != 0 {
+            let err = String(data: errorCollector.data, encoding: .utf8) ?? ""
+            throw MusicDetectionError.scriptError(err.isEmpty ? "音乐识别脚本退出失败" : err)
+        }
+        return songs
+    }
+
+    nonisolated private static func makeLineStream(pipe: Pipe) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            let handle = pipe.fileHandleForReading
+            final class Buf: @unchecked Sendable { var data = Data() }
+            let buf = Buf()
+
+            handle.readabilityHandler = { h in
+                let chunk = h.availableData
+                guard !chunk.isEmpty else {
+                    if !buf.data.isEmpty,
+                       let line = String(data: buf.data, encoding: .utf8),
+                       !line.isEmpty {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                    h.readabilityHandler = nil
+                    return
+                }
+                buf.data.append(chunk)
+                while let nlIdx = buf.data.firstIndex(of: UInt8(ascii: "\n")) {
+                    let lineSlice = buf.data[buf.data.startIndex..<nlIdx]
+                    buf.data.removeSubrange(buf.data.startIndex...nlIdx)
+                    if let line = String(data: lineSlice, encoding: .utf8), !line.isEmpty {
+                        continuation.yield(line)
+                    }
+                }
+            }
+
+            continuation.onTermination = { _ in
+                handle.readabilityHandler = nil
+            }
+        }
+    }
+
+    nonisolated private static func parseMusicItem(from dict: [String: Any]) -> MusicRecognitionItem? {
+        guard let title = dict["title"] as? String, !title.isEmpty else { return nil }
+        return MusicRecognitionItem(
+            title: title,
+            artist: dict["artist"] as? String ?? "",
+            artworkURL: dict["artwork_url"] as? String ?? "",
+            appleMusicURL: dict["apple_music_url"] as? String ?? "",
+            detectedAt: dict["detected_at"] as? Double ?? 0
+        )
+    }
+
+    enum MusicDetectionError: LocalizedError {
+        case envNotSetup
+        case scriptMissing
+        case videoMissing(String)
+        case videoUnreadable(String)
+        case timeout
+        case scriptError(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .envNotSetup:
+                return "未检测到音乐识别环境。请在项目目录运行：bash Tools/setup_music_env.sh"
+            case .scriptMissing:
+                return "未找到音乐识别脚本：Tools/detect_music.py"
+            case .videoMissing(let path):
+                return "视频文件不存在或无法访问：\(path)"
+            case .videoUnreadable(let path):
+                return "当前运行环境无法读取视频文件：\(path)。如果这是 Xcode 预览，请重新打开素材库或使用真实 App 运行一次授权。"
+            case .timeout:
+                return "音乐识别超时，已停止本次识别。可以稍后重试，或换一个更短的视频片段。"
+            case .scriptError(let msg):
+                return msg
             }
         }
     }
@@ -1263,8 +2224,8 @@ final class LibraryStore: ObservableObject {
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 200, height: 113)
         // 从切点之后取帧，保证拿到新场景的首帧而非旧场景末帧
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.06, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.12, preferredTimescale: 600)
 
         let orderedCutTimes = stableSceneCutTimes(from: cutTimes)
         var cuts: [SceneCut] = []
@@ -1284,7 +2245,47 @@ final class LibraryStore: ObservableObject {
             ))
         }
 
-        return cuts
+        return removeDuplicateThumbnailCuts(cuts)
+    }
+
+    nonisolated private static func removeDuplicateThumbnailCuts(_ cuts: [SceneCut]) -> [SceneCut] {
+        guard cuts.count > 1 else { return cuts }
+        var result: [SceneCut] = [cuts[0]]
+        for cut in cuts.dropFirst() {
+            if !thumbnailsAreSimilar(result.last!.thumbnailImage, cut.thumbnailImage) {
+                result.append(cut)
+            }
+        }
+        return result
+    }
+
+    nonisolated private static func thumbnailsAreSimilar(_ a: NSImage, _ b: NSImage) -> Bool {
+        let compareSize = CGSize(width: 16, height: 9)
+        guard let lumaA = imageLuma(a, size: compareSize),
+              let lumaB = imageLuma(b, size: compareSize) else { return false }
+        let diff = zip(lumaA, lumaB).reduce(0.0) { $0 + abs($1.0 - $1.1) } / Double(lumaA.count)
+        return diff < 0.03
+    }
+
+    nonisolated private static func imageLuma(_ image: NSImage, size: CGSize) -> [Double]? {
+        let w = Int(size.width), h = Int(size.height)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        guard let context = CGContext(
+            data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: colorSpace, bitmapInfo: bitmapInfo.rawValue
+        ) else { return nil }
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        context.draw(cgImage, in: CGRect(origin: .zero, size: size))
+        guard let data = context.data else { return nil }
+        let ptr = data.assumingMemoryBound(to: UInt8.self)
+        return (0..<w * h).map { i in
+            let r = Double(ptr[i * 4]) / 255.0
+            let g = Double(ptr[i * 4 + 1]) / 255.0
+            let b = Double(ptr[i * 4 + 2]) / 255.0
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        }
     }
 
     nonisolated private static func sceneCuts(from cutTimes: [Double], for url: URL) async -> [SceneCut] {
@@ -1480,7 +2481,7 @@ final class LibraryStore: ObservableObject {
         var previous: Double?
 
         for time in cutTimes.map({ max(0, ($0 * 1000).rounded() / 1000) }).sorted() {
-            guard previous.map({ abs(time - $0) > 0.001 }) ?? true else { continue }
+            guard previous.map({ time - $0 >= 0.3 }) ?? true else { continue }
             result.append(time)
             previous = time
         }
@@ -1528,6 +2529,109 @@ final class LibraryStore: ObservableObject {
             case .downloadFailed:
                 return "下载远程视频文件失败"
             }
+        }
+    }
+
+    nonisolated private final class RemoteFileDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let destinationURL: URL
+        private let progressCallback: (@Sendable (Double) -> Void)?
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<URL, Error>?
+        private var session: URLSession?
+
+        init(destinationURL: URL, progressCallback: (@Sendable (Double) -> Void)?) {
+            self.destinationURL = destinationURL
+            self.progressCallback = progressCallback
+        }
+
+        func download(request: URLRequest) async throws -> URL {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                    lock.lock()
+                    self.continuation = continuation
+                    let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+                    self.session = session
+                    let task = session.downloadTask(with: request)
+                    lock.unlock()
+                    task.resume()
+                }
+            } onCancel: {
+                cancel()
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didWriteData bytesWritten: Int64,
+            totalBytesWritten: Int64,
+            totalBytesExpectedToWrite: Int64
+        ) {
+            guard totalBytesExpectedToWrite > 0 else { return }
+            let progress = min(1, max(0, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+            progressCallback?(progress)
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didFinishDownloadingTo location: URL
+        ) {
+            guard
+                let response = downloadTask.response as? HTTPURLResponse,
+                (200 ..< 300).contains(response.statusCode)
+            else {
+                resume(with: .failure(RemoteImportError.downloadFailed))
+                return
+            }
+
+            let fileSize = ((try? FileManager.default.attributesOfItem(atPath: location.path)[.size]) as? NSNumber)?.int64Value ?? 0
+            guard fileSize > 0 else {
+                resume(with: .failure(RemoteImportError.downloadFailed))
+                return
+            }
+
+            do {
+                try FileManager.default.createDirectory(
+                    at: destinationURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try? FileManager.default.removeItem(at: destinationURL)
+                try FileManager.default.moveItem(at: location, to: destinationURL)
+                progressCallback?(1)
+                resume(with: .success(destinationURL))
+            } catch {
+                resume(with: .failure(error))
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            didCompleteWithError error: Error?
+        ) {
+            if let error {
+                resume(with: .failure(error))
+            }
+        }
+
+        private func cancel() {
+            lock.lock()
+            let session = self.session
+            lock.unlock()
+            session?.invalidateAndCancel()
+        }
+
+        private func resume(with result: Result<URL, Error>) {
+            lock.lock()
+            let continuation = self.continuation
+            self.continuation = nil
+            let session = self.session
+            self.session = nil
+            lock.unlock()
+
+            session?.finishTasksAndInvalidate()
+            continuation?.resume(with: result)
         }
     }
 
@@ -1579,7 +2683,8 @@ final class LibraryStore: ObservableObject {
         if rawURL == nil, platform == "小红书",
            let result = try? await downloadXiaoHongShuNative(
                from: sourceURL,
-               destinationDirectory: destinationDirectory
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
            ) {
             rawURL = result
         }
@@ -1589,14 +2694,19 @@ final class LibraryStore: ObservableObject {
            let result = try? await importViaConfiguredAPI(
                sourceURL: sourceURL,
                endpoint: endpoint,
-               destinationDirectory: destinationDirectory
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
            ) {
             rawURL = result
         }
 
         // 4. cobalt.tools 兜底（对 Instagram / YouTube 有效，需要服务可用）
         if rawURL == nil,
-           let result = try? await importViaCobalt(sourceURL: sourceURL, destinationDirectory: destinationDirectory) {
+           let result = try? await importViaCobalt(
+               sourceURL: sourceURL,
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
+           ) {
             rawURL = result
         }
 
@@ -1699,9 +2809,20 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - 小红书原生解析器
 
+    nonisolated private static func downloadRemoteFile(
+        request: URLRequest,
+        to outputURL: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        progressCallback?(0.02)
+        let downloader = RemoteFileDownloader(destinationURL: outputURL, progressCallback: progressCallback)
+        return try await downloader.download(request: request)
+    }
+
     nonisolated private static func downloadXiaoHongShuNative(
         from sourceURL: URL,
-        destinationDirectory: URL
+        destinationDirectory: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         // 解析 note ID（去掉 query string）
         let noteId = sourceURL.lastPathComponent.components(separatedBy: "?").first
@@ -1779,18 +2900,12 @@ final class LibraryStore: ObservableObject {
         dlReq.setValue("https://www.xiaohongshu.com", forHTTPHeaderField: "Referer")
         dlReq.timeoutInterval = 180
 
-        let (videoData, videoResp) = try await URLSession.shared.data(for: dlReq)
-        guard
-            let http = videoResp as? HTTPURLResponse,
-            (200..<300).contains(http.statusCode),
-            !videoData.isEmpty
-        else {
-            throw RemoteImportError.downloadFailed
-        }
-
         let outputURL = destinationDirectory.appendingPathComponent("xiaohongshu-\(noteId).mp4")
-        try videoData.write(to: outputURL, options: .atomic)
-        return outputURL
+        return try await downloadRemoteFile(
+            request: dlReq,
+            to: outputURL,
+            progressCallback: progressCallback
+        )
     }
 
     nonisolated private static func localYTDLPURL() -> URL? {
@@ -1824,14 +2939,18 @@ final class LibraryStore: ObservableObject {
 
             process.arguments = [
                 "--no-playlist",
-                "-f", "bestvideo+bestaudio/best",
+                "-f", "bv*[vcodec^=avc1]+ba/b[ext=mp4]/bestvideo+bestaudio/best",
+                "-S", "res,codec:h264:m4a",
                 "--merge-output-format", "mp4",
                 "--ffmpeg-location", "/opt/homebrew/bin",
                 "--progress",   // 非 TTY 环境也强制输出进度
                 "--newline",    // 每次进度更新输出新行，便于实时解析
                 "--no-colors",  // 去掉 ANSI 转义码，方便文本解析
+                "--referer", "https://www.bilibili.com/",
+                "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "--extractor-args", "bilibili:prefer_multi_flv=False",
                 "--paths", destinationDirectory.path,
-                "-o", "%(uploader|instagram)s-%(id)s.%(ext)s",
+                "-o", "%(extractor)s-%(uploader|channel|creator|instagram)s-%(id)s.%(ext)s",
                 "--print", "after_move:filepath",
                 sourceURL.absoluteString
             ]
@@ -1924,7 +3043,8 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func importViaConfiguredAPI(
         sourceURL: URL,
         endpoint: String,
-        destinationDirectory: URL
+        destinationDirectory: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         guard let endpointURL = URL(string: endpoint) else {
             throw RemoteImportError.invalidAPIEndpoint
@@ -1953,17 +3073,13 @@ final class LibraryStore: ObservableObject {
         let filename = sanitizedFilename(remoteFilename?.isEmpty == false ? remoteFilename! : fallbackName)
         let outputURL = destinationDirectory.appendingPathComponent(filename)
 
-        let (videoData, videoResponse) = try await URLSession.shared.data(from: resolved.downloadURL)
-        guard
-            let httpResponse = videoResponse as? HTTPURLResponse,
-            (200..<300).contains(httpResponse.statusCode),
-            !videoData.isEmpty
-        else {
-            throw RemoteImportError.downloadFailed
-        }
-
-        try videoData.write(to: outputURL, options: .atomic)
-        return outputURL
+        var downloadRequest = URLRequest(url: resolved.downloadURL)
+        downloadRequest.timeoutInterval = 180
+        return try await downloadRemoteFile(
+            request: downloadRequest,
+            to: outputURL,
+            progressCallback: progressCallback
+        )
     }
 
     // MARK: - cobalt.tools 内置备用下载
@@ -1986,7 +3102,8 @@ final class LibraryStore: ObservableObject {
 
     nonisolated private static func importViaCobalt(
         sourceURL: URL,
-        destinationDirectory: URL
+        destinationDirectory: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         guard let cobaltEndpoint = URL(string: "https://api.cobalt.tools/") else {
             throw RemoteImportError.downloaderMissing
@@ -2032,15 +3149,13 @@ final class LibraryStore: ObservableObject {
         let filename = sanitizedFilename(cobalt.filename ?? fallbackName)
         let outputURL = destinationDirectory.appendingPathComponent(filename)
 
-        let (videoData, videoResp) = try await URLSession.shared.data(from: downloadURL)
-        guard
-            let vResp = videoResp as? HTTPURLResponse,
-            (200..<300).contains(vResp.statusCode),
-            !videoData.isEmpty
-        else { throw RemoteImportError.downloadFailed }
-
-        try videoData.write(to: outputURL, options: .atomic)
-        return outputURL
+        var downloadRequest = URLRequest(url: downloadURL)
+        downloadRequest.timeoutInterval = 180
+        return try await downloadRemoteFile(
+            request: downloadRequest,
+            to: outputURL,
+            progressCallback: progressCallback
+        )
     }
 
     nonisolated private static func sanitizedFilename(_ name: String) -> String {
@@ -2055,10 +3170,14 @@ final class LibraryStore: ObservableObject {
         thumbnailTasks.removeAll()
         waveformTasks.values.forEach { $0.cancel() }
         waveformTasks.removeAll()
+        audioClipWaveformTasks.values.forEach { $0.cancel() }
+        audioClipWaveformTasks.removeAll()
         frameStripTasks.values.forEach { $0.cancel() }
         frameStripTasks.removeAll()
         sceneDetectionTasks.values.forEach { $0.cancel() }
         sceneDetectionTasks.removeAll()
+
+        objectWillChange.send()
         thumbnailDataByVideoPath.removeAll()
         thumbnailImageByVideoPath.removeAll()
         durationByVideoPath.removeAll()
@@ -2078,26 +3197,43 @@ final class LibraryStore: ObservableObject {
                 async let playbackSupport = Self.playbackSupport(for: video.url)
                 let videoMetadata = await metadata
                 guard !Task.isCancelled else { return }
-
-                if let data = videoMetadata.thumbnailData {
-                    self?.thumbnailDataByVideoPath[path] = data
-                    self?.thumbnailImageByVideoPath[path] = NSImage(data: data)
-                }
-
-                if let duration = videoMetadata.duration {
-                    self?.durationByVideoPath[path] = duration
-                    if let cuts = self?.sceneCutsByVideoPath[path] {
-                        self?.sceneCutProgressesByVideoPath[path] = Self.normalizedSceneCutProgresses(
-                            from: cuts.map(\.time),
-                            duration: duration
-                        )
-                    }
-                }
-
-                self?.metadataByVideoPath[path] = videoMetadata.metadata
-                self?.playbackSupportByVideoPath[path] = await playbackSupport
-                self?.thumbnailTasks[path] = nil
+                self?.applyVideoMetadata(
+                    videoMetadata,
+                    playbackSupport: await playbackSupport,
+                    for: path
+                )
             }
+        }
+    }
+
+    private func applyVideoMetadata(
+        _ videoMetadata: (thumbnailData: Data?, duration: Double?, metadata: VideoMetadata),
+        playbackSupport: VideoPlaybackSupport,
+        for path: String
+    ) {
+        objectWillChange.send()
+
+        if let data = videoMetadata.thumbnailData {
+            thumbnailDataByVideoPath[path] = data
+            thumbnailImageByVideoPath[path] = NSImage(data: data)
+        }
+
+        if let duration = videoMetadata.duration {
+            durationByVideoPath[path] = duration
+            if let cuts = sceneCutsByVideoPath[path] {
+                sceneCutProgressesByVideoPath[path] = Self.normalizedSceneCutProgresses(
+                    from: cuts.map(\.time),
+                    duration: duration
+                )
+            }
+        }
+
+        metadataByVideoPath[path] = videoMetadata.metadata
+        playbackSupportByVideoPath[path] = playbackSupport
+        thumbnailTasks[path] = nil
+
+        if sortOption.dependsOnMetadata {
+            refreshFilteredVideos()
         }
     }
 
@@ -2279,15 +3415,147 @@ final class LibraryStore: ObservableObject {
         return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.82])
     }
 
+    nonisolated private static func frameDragItemProvider(
+        videoURL: URL,
+        videoName: String,
+        time: Double,
+        kind: SampledFrame.Kind?,
+        fallbackData: Data?
+    ) -> NSItemProvider {
+        let provider = NSItemProvider()
+        let filename = frameDragFilename(videoName: videoName, time: time, kind: kind)
+        provider.suggestedName = filename
+
+        provider.registerFileRepresentation(
+            forTypeIdentifier: UTType.jpeg.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let fileURL = try Self.renderFrameDragFile(
+                        videoURL: videoURL,
+                        videoName: videoName,
+                        time: time,
+                        kind: kind,
+                        fallbackData: fallbackData
+                    )
+                    progress.completedUnitCount = 1
+                    completion(fileURL, false, nil)
+                } catch {
+                    completion(nil, false, error)
+                }
+            }
+            return progress
+        }
+
+        provider.registerDataRepresentation(
+            forTypeIdentifier: UTType.jpeg.identifier,
+            visibility: .all
+        ) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            Task.detached(priority: .userInitiated) {
+                guard let data = Self.fullResolutionJPEGData(for: videoURL, at: time) ?? fallbackData else {
+                    completion(nil, Self.frameDragError())
+                    return
+                }
+                progress.completedUnitCount = 1
+                completion(data, nil)
+            }
+            return progress
+        }
+
+        return provider
+    }
+
+    nonisolated private static func renderFrameDragFile(
+        videoURL: URL,
+        videoName: String,
+        time: Double,
+        kind: SampledFrame.Kind?,
+        fallbackData: Data?
+    ) throws -> URL {
+        let folderURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LapianBaoDragExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        Self.cleanOldFrameDragExports(in: folderURL)
+
+        let fileURL = folderURL.appendingPathComponent(Self.frameDragFilename(videoName: videoName, time: time, kind: kind))
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+
+        guard let data = Self.fullResolutionJPEGData(for: videoURL, at: time) ?? fallbackData else {
+            throw Self.frameDragError()
+        }
+
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
+
+    nonisolated private static func fullResolutionJPEGData(for url: URL, at seconds: Double) -> Data? {
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 0.08, preferredTimescale: 600)
+
+        let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
+        guard let image = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
+
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.96])
+    }
+
+    nonisolated private static func frameDragFilename(videoName: String, time: Double, kind: SampledFrame.Kind?) -> String {
+        let suffix: String
+        switch kind {
+        case .screenshot:
+            suffix = "screenshot"
+        case .sceneRepresentative:
+            suffix = "scene"
+        case nil:
+            suffix = "frame"
+        }
+
+        let milliseconds = Int((max(0, time) * 1000).rounded()) % 1000
+        return "\(safeFileStem(videoName))_\(fileTimecode(time))-\(String(format: "%03d", milliseconds))_\(suffix)_fullres.jpg"
+    }
+
+    nonisolated private static func cleanOldFrameDragExports(in folderURL: URL) {
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        let fileURLs = (try? FileManager.default.contentsOfDirectory(
+            at: folderURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        for fileURL in fileURLs {
+            let modifiedAt = (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture
+            if modifiedAt < cutoff {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
+        }
+    }
+
+    nonisolated private static func frameDragError() -> NSError {
+        NSError(
+            domain: "LapianBao.FrameDragExport",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "无法导出这张画面"]
+        )
+    }
+
     private func saveImageExport(data: Data, video: VideoItem, time: Double, preferredExtension: String) {
         guard let libraryURL else { return }
-        let folder = libraryURL
-            .appendingPathComponent("LapianBaoExports", isDirectory: true)
+        let folder = Self.exportFolder(in: libraryURL, named: Self.imageExportFolderName)
             .appendingPathComponent(Self.safeFileStem(video.name), isDirectory: true)
-            .appendingPathComponent("selected-frames", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
-        let existingCount = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?.count ?? 0
+        let existingCount = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?
+            .filter { $0.pathExtension.localizedCaseInsensitiveCompare(preferredExtension) == .orderedSame }
+            .count ?? 0
         let filename = String(format: "%03d_%@.%@", existingCount + 1, Self.fileTimecode(time), preferredExtension)
         try? data.write(to: folder.appendingPathComponent(filename), options: .atomic)
         writeFrameIndex(in: folder, video: video)
@@ -2305,9 +3573,7 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func exportAudioClipFile(video: VideoItem, videoName: String, start: Double, end: Double, libraryURL: URL?) async -> URL? {
         await Task.detached(priority: .utility) {
             guard let libraryURL else { return nil }
-            let folder = libraryURL
-                .appendingPathComponent("LapianBaoExports", isDirectory: true)
-                .appendingPathComponent("Audio", isDirectory: true)
+            let folder = exportFolder(in: libraryURL, named: soundEffectExportFolderName)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
             let outputURL = folder.appendingPathComponent("\(safeFileStem(videoName))_\(fileTimecode(start))-\(fileTimecode(end)).m4a")
@@ -2315,15 +3581,17 @@ final class LibraryStore: ObservableObject {
 
             let asset = AVURLAsset(url: video.url)
             guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else { return nil }
-            session.outputURL = outputURL
-            session.outputFileType = .m4a
             session.timeRange = CMTimeRange(
                 start: CMTime(seconds: start, preferredTimescale: 600),
                 end: CMTime(seconds: end, preferredTimescale: 600)
             )
 
-            await session.export()
-            return session.status == .completed ? outputURL : nil
+            do {
+                try await session.export(to: outputURL, as: .m4a)
+                return outputURL
+            } catch {
+                return nil
+            }
         }.value
     }
 
@@ -2429,7 +3697,12 @@ final class LibraryStore: ObservableObject {
         return h > 0 ? String(format: "%02d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 
-    nonisolated private static func makeWaveformSamples(for url: URL, sampleCount: Int) async -> [Double]? {
+    nonisolated private static func makeWaveformSamples(
+        for url: URL,
+        sampleCount: Int,
+        start: Double? = nil,
+        end: Double? = nil
+    ) async -> [Double]? {
         await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             guard
@@ -2452,12 +3725,20 @@ final class LibraryStore: ObservableObject {
 
             guard reader.canAdd(output) else { return nil }
             reader.add(output)
+
+            if let start, let end, end > start {
+                reader.timeRange = CMTimeRange(
+                    start: CMTime(seconds: max(0, start), preferredTimescale: 600),
+                    duration: CMTime(seconds: max(0.01, end - start), preferredTimescale: 600)
+                )
+            }
+
             guard reader.startReading() else { return nil }
 
             var peaks: [Double] = []
             var currentPeak = 0.0
             var samplesInWindow = 0
-            let windowSize = 2048
+            let windowSize = 512
 
             while reader.status == .reading, let sampleBuffer = output.copyNextSampleBuffer() {
                 guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
