@@ -1422,7 +1422,7 @@ final class LibraryStore: ObservableObject {
         guard sceneBatchTask == nil else { return }
         let queue = videos.filter { video in
             if onlyMissing {
-                return sceneCutsByVideoPath[video.url.path, default: []].isEmpty
+                return sceneCutsByVideoPath[video.url.path] == nil
             }
             return true
         }
@@ -1512,6 +1512,11 @@ final class LibraryStore: ObservableObject {
             let cachedEntry = validCachedSceneCutEntry(for: video)
         else { return }
 
+        if cachedEntry.cutTimes.isEmpty {
+            setSceneCuts([], for: path)
+            return
+        }
+
         sceneDetectionTasks[path] = Task { [weak self] in
             let cuts = await Self.sceneCuts(from: cachedEntry.cutTimes, for: video.url)
             guard !Task.isCancelled else {
@@ -1526,10 +1531,15 @@ final class LibraryStore: ObservableObject {
 
     private func setSceneCuts(_ cuts: [SceneCut], for path: String) {
         sceneCutsByVideoPath[path] = cuts
-        sceneCutProgressesByVideoPath[path] = Self.normalizedSceneCutProgresses(
+        let progresses = Self.normalizedSceneCutProgresses(
             from: cuts.map(\.time),
             duration: durationByVideoPath[path] ?? 0
         )
+        if cuts.isEmpty || !progresses.isEmpty {
+            sceneCutProgressesByVideoPath[path] = progresses
+        } else {
+            sceneCutProgressesByVideoPath.removeValue(forKey: path)
+        }
     }
 
     func addAnnotation(video: VideoItem, time: Double, text: String) {
@@ -1558,6 +1568,7 @@ final class LibraryStore: ObservableObject {
 
     func deleteSampledFrame(_ frame: SampledFrame) {
         sampledFrames.removeAll { $0.id == frame.id }
+        writeFrameIndex()
         saveProjectData()
     }
 
@@ -1569,6 +1580,11 @@ final class LibraryStore: ObservableObject {
     }
 
     func markSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) {
+        guard
+            let data = Self.jpegData(from: cut.thumbnailImage),
+            saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg") != nil
+        else { return }
+
         if let index = sampledFrames.firstIndex(where: {
             $0.videoPath == video.url.path &&
             abs($0.time - cut.time) < 0.02 &&
@@ -1585,19 +1601,19 @@ final class LibraryStore: ObservableObject {
                 isExported: true,
                 note: "",
                 tags: [],
-                thumbnailData: Self.jpegData(from: cut.thumbnailImage) ?? Data()
+                thumbnailData: data
             ))
         }
         sampledFrames.sort { $0.time < $1.time }
-        if let data = Self.jpegData(from: cut.thumbnailImage) {
-            saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg")
-        }
+        writeFrameIndex()
         saveProjectData()
     }
 
     func captureCurrentFrame(video: VideoItem, time: Double) {
         Task { [weak self] in
             guard let data = await Self.renderFrameData(for: video.url, at: time) else { return }
+            guard self?.saveImageExport(data: data, video: video, time: time, preferredExtension: "jpg") != nil else { return }
+
             self?.sampledFrames.append(SampledFrame(
                 videoPath: video.url.path,
                 videoName: video.name,
@@ -1613,7 +1629,7 @@ final class LibraryStore: ObservableObject {
                 if $0.videoPath == $1.videoPath { return $0.time < $1.time }
                 return $0.videoName < $1.videoName
             }
-            self?.saveImageExport(data: data, video: video, time: time, preferredExtension: "jpg")
+            self?.writeFrameIndex()
             self?.saveProjectData()
         }
     }
@@ -2190,8 +2206,7 @@ final class LibraryStore: ObservableObject {
             let startedAt = Date()
             let process = Process()
             process.executableURL = ytdlp
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            var env = downloaderProcessEnvironment()
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
             process.environment = env
@@ -2209,6 +2224,7 @@ final class LibraryStore: ObservableObject {
                 "--newline",
                 "--no-colors",
                 "--default-search", "ytsearch",
+                "--remote-components", "ejs:github",
                 "--paths", destinationDirectory.path,
                 "-o", "%(title).160B-%(id)s.%(ext)s",
                 "--print", "after_move:filepath",
@@ -2626,7 +2642,6 @@ final class LibraryStore: ObservableObject {
             let entry = sceneCutCache[key],
             entry.detectorVersion == Self.sceneDetectorVersion,
             entry.relativePath == key,
-            entry.cutTimes.isEmpty == false,
             let signature = videoFileSignature(for: video.url)
         else { return nil }
 
@@ -2639,7 +2654,7 @@ final class LibraryStore: ObservableObject {
     }
 
     private func storeSceneCutCache(for video: VideoItem, cuts: [SceneCut]) {
-        guard let signature = videoFileSignature(for: video.url), !cuts.isEmpty else { return }
+        guard let signature = videoFileSignature(for: video.url) else { return }
 
         let relativePath = relativeVideoPath(for: video.url)
         let cutTimes = cuts
@@ -3285,6 +3300,25 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - 统一下载入口
 
+    nonisolated private struct YTDLPVideoInfo: Decodable {
+        var id: String?
+        var title: String?
+        var description: String?
+        var uploader: String?
+        var channel: String?
+        var creator: String?
+
+        var bestUploader: String? {
+            uploader ?? channel ?? creator
+        }
+    }
+
+    nonisolated private static let genericImportHashtags: Set<String> = [
+        "foryou", "fyp", "viral", "edit", "edits", "sfx", "cinematic", "cinematography",
+        "filmmaking", "filmmaker", "photography", "videography", "video", "reels", "reel",
+        "colorgrading", "colourgrading", "sounddesign"
+    ]
+
     nonisolated private static func downloadVideo(
         from sourceURL: URL,
         into libraryURL: URL,
@@ -3303,16 +3337,33 @@ final class LibraryStore: ObservableObject {
 
         var rawURL: URL?
 
+        var ytdlpFailure: Error?
+
         // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
         if rawURL == nil, let ytdlp = localYTDLPURL(),
-           let result = try? await runYTDLPOnce(
-               executableURL: ytdlp,
-               sourceURL: sourceURL,
-               destinationDirectory: destinationDirectory,
-               progressCallback: progressCallback,
-               processCallback: processCallback
-           ) {
-            rawURL = result
+           !Task.isCancelled {
+            let attempts = ytdlpArgumentAttempts(for: sourceURL)
+            for attempt in attempts {
+                do {
+                    rawURL = try await runYTDLPOnce(
+                        executableURL: ytdlp,
+                        sourceURL: sourceURL,
+                        destinationDirectory: destinationDirectory,
+                        extraArguments: attempt.arguments,
+                        destinationProgressFloor: attempt.progressFloor,
+                        progressCallback: progressCallback,
+                        processCallback: processCallback
+                    )
+                    break
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    ytdlpFailure = error
+                }
+            }
+            if rawURL == nil, let ytdlpFailure, isHardYouTubeYTDLPFailure(ytdlpFailure) {
+                throw ytdlpFailure
+            }
         }
 
         // 2. 小红书：原生页面解析（yt-dlp 对需要登录的内容失效时接手）
@@ -3347,6 +3398,9 @@ final class LibraryStore: ObservableObject {
         }
 
         guard let downloadedURL = rawURL else {
+            if isYouTubeURL(sourceURL), let ytdlpFailure {
+                throw ytdlpFailure
+            }
             throw RemoteImportError.downloaderFailed("所有下载方式均失败，请确认链接是否可公开访问")
         }
 
@@ -3558,7 +3612,14 @@ final class LibraryStore: ObservableObject {
         dlReq.setValue("https://www.xiaohongshu.com", forHTTPHeaderField: "Referer")
         dlReq.timeoutInterval = 180
 
-        let outputURL = destinationDirectory.appendingPathComponent("xiaohongshu-\(noteId).mp4")
+        let outputURL = cleanedImportVideoURL(
+            in: destinationDirectory,
+            sourceURL: sourceURL,
+            rawTitle: noteObj["title"] as? String,
+            description: noteObj["desc"] as? String,
+            uploader: nil,
+            preferredExtension: "mp4"
+        )
         return try await downloadRemoteFile(
             request: dlReq,
             to: outputURL,
@@ -3568,11 +3629,11 @@ final class LibraryStore: ObservableObject {
 
     nonisolated private static func localYTDLPURL() -> URL? {
         [
-            // miniconda 版优先：Python 3.13，pyexpat 正常，Instagram/YouTube 均可用
+            // Homebrew 版当前包含 yt-dlp 的 YouTube JS challenge solver 组件。
+            "/opt/homebrew/bin/yt-dlp",
+            // Conda 版保留为回退，适合 Homebrew Python 兼容性异常的机器。
             "/opt/miniconda3/bin/yt-dlp",
             "/opt/anaconda3/bin/yt-dlp",
-            // Homebrew 版（Python 3.14 在部分 macOS 上 pyexpat 有兼容问题，作为备选）
-            "/opt/homebrew/bin/yt-dlp",
             "/usr/local/bin/yt-dlp",
             "/usr/bin/yt-dlp"
         ]
@@ -3584,6 +3645,8 @@ final class LibraryStore: ObservableObject {
         executableURL: URL,
         sourceURL: URL,
         destinationDirectory: URL,
+        extraArguments: [String] = [],
+        destinationProgressFloor: Double = 0.01,
         progressCallback: (@Sendable (Double, String?) -> Void)? = nil,
         processCallback: (@Sendable (Process?) -> Void)? = nil
     ) async throws -> URL {
@@ -3592,28 +3655,56 @@ final class LibraryStore: ObservableObject {
             defer { processCallback?(nil) }
             process.executableURL = executableURL
 
-            // 确保 yt-dlp 能找到 ffmpeg（App 启动时没有完整 PATH）
-            var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            // 确保 yt-dlp 能找到 ffmpeg（App 启动时 PATH 不完整）
+            let env = downloaderProcessEnvironment()
             process.environment = env
 
-            process.arguments = [
+            progressCallback?(destinationProgressFloor, nil)
+
+            let videoInfo = fetchYTDLPVideoInfo(
+                executableURL: executableURL,
+                sourceURL: sourceURL,
+                environment: env
+            )
+            let outputURL = cleanedImportVideoURL(
+                in: destinationDirectory,
+                sourceURL: sourceURL,
+                rawTitle: videoInfo?.title,
+                description: videoInfo?.description,
+                uploader: videoInfo?.bestUploader,
+                preferredExtension: "mp4"
+            )
+            let outputTemplate = "\(outputURL.deletingPathExtension().lastPathComponent).%(ext)s"
+
+            var arguments = [
                 "--no-playlist",
                 "-f", "bv*[vcodec^=avc1]+ba/b[ext=mp4]/bestvideo+bestaudio/best",
                 "-S", "res,codec:h264:m4a",
                 "--merge-output-format", "mp4",
                 "--ffmpeg-location", "/opt/homebrew/bin",
+                "--socket-timeout", "20",
+                "--retries", "2",
+                "--fragment-retries", "2",
                 "--progress",   // 非 TTY 环境也强制输出进度
                 "--newline",    // 每次进度更新输出新行，便于实时解析
                 "--no-colors",  // 去掉 ANSI 转义码，方便文本解析
-                "--referer", "https://www.bilibili.com/",
                 "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "--extractor-args", "bilibili:prefer_multi_flv=False",
+            ]
+            arguments += extraArguments
+            arguments += ytdlpRemoteComponentArguments(for: sourceURL)
+            if isBilibiliURL(sourceURL) {
+                arguments += [
+                    "--referer", "https://www.bilibili.com/",
+                    "--extractor-args", "bilibili:prefer_multi_flv=False"
+                ]
+            }
+            arguments += [
                 "--paths", destinationDirectory.path,
-                "-o", "%(extractor)s-%(uploader|channel|creator|instagram)s-%(id)s.%(ext)s",
+                "-o", outputTemplate,
                 "--print", "after_move:filepath",
                 sourceURL.absoluteString
             ]
+            process.arguments = arguments
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -3629,8 +3720,6 @@ final class LibraryStore: ObservableObject {
                     }
                 }
             }
-
-            progressCallback?(0.01, nil)
 
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 handleProgressLines(outputCollector.append(handle.availableData))
@@ -3678,19 +3767,121 @@ final class LibraryStore: ObservableObject {
         }.value
     }
 
+    nonisolated private static func downloaderProcessEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/opt/miniconda3/bin:/opt/anaconda3/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        return env
+    }
+
+    nonisolated private static func fetchYTDLPVideoInfo(
+        executableURL: URL,
+        sourceURL: URL,
+        environment: [String: String]
+    ) -> YTDLPVideoInfo? {
+        let process = Process()
+        process.executableURL = executableURL
+        process.environment = environment
+        var arguments = [
+            "--no-playlist",
+            "--skip-download",
+            "--dump-single-json",
+            "--no-warnings",
+        ]
+        arguments += ytdlpRemoteComponentArguments(for: sourceURL)
+        arguments += [
+            sourceURL.absoluteString
+        ]
+        process.arguments = arguments
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            semaphore.signal()
+        }
+
+        if semaphore.wait(timeout: .now() + 12) == .timedOut {
+            if process.isRunning {
+                process.terminate()
+            }
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else { return nil }
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        return try? JSONDecoder().decode(YTDLPVideoInfo.self, from: data)
+    }
+
+    nonisolated private struct YTDLPArgumentAttempt: Sendable {
+        var arguments: [String]
+        var progressFloor: Double
+    }
+
+    nonisolated private static func ytdlpArgumentAttempts(for sourceURL: URL) -> [YTDLPArgumentAttempt] {
+        guard isYouTubeURL(sourceURL) else {
+            return [YTDLPArgumentAttempt(arguments: [], progressFloor: 0.01)]
+        }
+
+        return [
+            YTDLPArgumentAttempt(arguments: [], progressFloor: 0.01),
+            YTDLPArgumentAttempt(arguments: ["--proxy", "http://127.0.0.1:1082"], progressFloor: 0.03),
+            YTDLPArgumentAttempt(arguments: ["--cookies-from-browser", "safari"], progressFloor: 0.05),
+            YTDLPArgumentAttempt(arguments: ["--proxy", "http://127.0.0.1:1082", "--cookies-from-browser", "safari"], progressFloor: 0.07)
+        ]
+    }
+
+    nonisolated private static func isHardYouTubeYTDLPFailure(_ error: Error) -> Bool {
+        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        let lowercased = message.lowercased()
+        return lowercased.contains("video unavailable")
+            || lowercased.contains("private video")
+            || lowercased.contains("this video is unavailable")
+            || lowercased.contains("not available in your country")
+    }
+
+    nonisolated private static func ytdlpRemoteComponentArguments(for sourceURL: URL) -> [String] {
+        isYouTubeURL(sourceURL) ? ["--remote-components", "ejs:github"] : []
+    }
+
+    nonisolated private static func isYouTubeURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "youtube.com" || host == "www.youtube.com"
+            || host == "m.youtube.com" || host == "youtu.be"
+            || host == "music.youtube.com"
+    }
+
+    nonisolated private static func isBilibiliURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host.contains("bilibili.com") || host == "b23.tv"
+    }
+
     nonisolated private static func remoteThumbnailData(for sourceURL: URL) async -> Data? {
         guard let ytdlp = localYTDLPURL() else { return nil }
 
         return await Task.detached(priority: .utility) {
             let process = Process()
             process.executableURL = ytdlp
-            process.arguments = [
+            process.environment = downloaderProcessEnvironment()
+            var arguments = [
                 "--no-playlist",
                 "--skip-download",
                 "--print", "thumbnail",
                 "--no-warnings",
+            ]
+            arguments += ytdlpRemoteComponentArguments(for: sourceURL)
+            arguments += [
                 sourceURL.absoluteString
             ]
+            process.arguments = arguments
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -3783,8 +3974,15 @@ final class LibraryStore: ObservableObject {
         let fallbackName = resolved.downloadURL.lastPathComponent.isEmpty
             ? "instagram-\(UUID().uuidString).mp4"
             : resolved.downloadURL.lastPathComponent
-        let filename = sanitizedFilename(remoteFilename?.isEmpty == false ? remoteFilename! : fallbackName)
-        let outputURL = destinationDirectory.appendingPathComponent(filename)
+        let sourceFilename = remoteFilename?.isEmpty == false ? remoteFilename! : fallbackName
+        let outputURL = cleanedImportVideoURL(
+            in: destinationDirectory,
+            sourceURL: sourceURL,
+            rawTitle: fileStem(from: sourceFilename),
+            description: nil,
+            uploader: nil,
+            preferredExtension: fileExtension(from: sourceFilename, fallback: "mp4")
+        )
 
         var downloadRequest = URLRequest(url: resolved.downloadURL)
         downloadRequest.timeoutInterval = 180
@@ -3859,8 +4057,15 @@ final class LibraryStore: ObservableObject {
         let fallbackName = downloadURL.lastPathComponent.isEmpty
             ? "instagram-\(UUID().uuidString).mp4"
             : downloadURL.lastPathComponent
-        let filename = sanitizedFilename(cobalt.filename ?? fallbackName)
-        let outputURL = destinationDirectory.appendingPathComponent(filename)
+        let sourceFilename = cobalt.filename ?? fallbackName
+        let outputURL = cleanedImportVideoURL(
+            in: destinationDirectory,
+            sourceURL: sourceURL,
+            rawTitle: fileStem(from: sourceFilename),
+            description: nil,
+            uploader: nil,
+            preferredExtension: fileExtension(from: sourceFilename, fallback: "mp4")
+        )
 
         var downloadRequest = URLRequest(url: downloadURL)
         downloadRequest.timeoutInterval = 180
@@ -3876,6 +4081,181 @@ final class LibraryStore: ObservableObject {
         let components = name.components(separatedBy: forbidden)
         let sanitized = components.joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
         return sanitized.isEmpty ? "instagram-\(UUID().uuidString).mp4" : sanitized
+    }
+
+    nonisolated private static func cleanedImportVideoURL(
+        in directory: URL,
+        sourceURL: URL,
+        rawTitle: String?,
+        description: String?,
+        uploader: String?,
+        preferredExtension: String
+    ) -> URL {
+        let stem = cleanImportVideoStem(
+            rawTitle: rawTitle,
+            description: description,
+            uploader: uploader,
+            sourceURL: sourceURL
+        )
+        return uniqueImportVideoURL(in: directory, stem: stem, preferredExtension: preferredExtension)
+    }
+
+    nonisolated private static func cleanImportVideoStem(
+        rawTitle: String?,
+        description: String?,
+        uploader: String?,
+        sourceURL: URL
+    ) -> String {
+        let title = stripTrailingSourceID(normalizedSpaces(rawTitle ?? ""))
+        var candidate = isGenericImportTitle(title) ? "" : title
+
+        if candidate.isEmpty {
+            candidate = cleanImportDescription(description ?? "")
+        }
+        if candidate.isEmpty {
+            candidate = stripTrailingSourceID(normalizedSpaces(uploader ?? ""))
+        }
+        if candidate.isEmpty {
+            candidate = sourceURL.host?.replacingOccurrences(of: #"^www\."#, with: "", options: .regularExpression) ?? "Imported Video"
+        }
+
+        return compactImportFileStem(sanitizeImportFileStem(candidate), maxLength: 118)
+    }
+
+    nonisolated private static func cleanImportDescription(_ rawValue: String) -> String {
+        let normalized = normalizedSpaces(rawValue)
+        guard !normalized.isEmpty else { return "" }
+
+        let markerPatterns = [
+            #"\bcomment\s+[“"']?"#,
+            #"\bkomen\s+[“"']?"#,
+            #"\bdm\s+"#,
+            #"\bif you don"#,
+            #"\blink in (my )?bio"#,
+            #"\bfollow for\b"#
+        ]
+        var cutIndex = normalized.endIndex
+        for pattern in markerPatterns {
+            if let range = normalized.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                if range.lowerBound < cutIndex {
+                    cutIndex = range.lowerBound
+                }
+            }
+        }
+
+        var cleaned = String(normalized[..<cutIndex])
+            .replacingOccurrences(of: #"@[A-Za-z0-9_.]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"#[^\s#]+"#, with: " ", options: .regularExpression)
+        cleaned = normalizedSpaces(cleaned).trimmingCharacters(in: CharacterSet(charactersIn: " .-_"))
+
+        if cleaned.count < 8 {
+            cleaned = usefulHashtagImportTitle(from: rawValue)
+        }
+        if cleaned.count > 96,
+           let sentenceRange = cleaned.range(of: #"^.{12,90}?[。.!?！？]"#, options: .regularExpression) {
+            cleaned = String(cleaned[sentenceRange])
+        }
+
+        return stripTrailingSourceID(String(cleaned.prefix(96))).trimmingCharacters(in: CharacterSet(charactersIn: " .-_"))
+    }
+
+    nonisolated private static func usefulHashtagImportTitle(from text: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"#([^\s#]+)"#) else { return "" }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        var seen = Set<String>()
+        var values: [String] = []
+
+        for match in regex.matches(in: text, range: range) {
+            guard let tagRange = Range(match.range(at: 1), in: text) else { continue }
+            let rawTag = String(text[tagRange]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?，。；：！？、)]}）】》>\"'“”‘’"))
+            let lowercased = rawTag.lowercased()
+            guard !rawTag.isEmpty,
+                  !genericImportHashtags.contains(lowercased),
+                  seen.insert(lowercased).inserted
+            else { continue }
+            values.append(titleCasedImportTag(rawTag))
+        }
+
+        return values.prefix(3).joined(separator: " ")
+    }
+
+    nonisolated private static func titleCasedImportTag(_ tag: String) -> String {
+        tag
+            .replacingOccurrences(of: #"[_-]+"#, with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .map { word in
+                guard let first = word.first else { return "" }
+                return String(first).uppercased() + String(word.dropFirst())
+            }
+            .joined(separator: " ")
+    }
+
+    nonisolated private static func isGenericImportTitle(_ title: String) -> Bool {
+        let lowercased = title.lowercased()
+        return title.isEmpty
+            || lowercased == "video"
+            || lowercased == "untitled"
+            || lowercased.hasPrefix("video by ")
+            || lowercased.hasPrefix("instagram reel")
+    }
+
+    nonisolated private static func sanitizeImportFileStem(_ name: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "/\\?%*|\"<>:\n\r\t")
+        let sanitized = stripTrailingSourceID(name)
+            .components(separatedBy: forbidden)
+            .joined(separator: "-")
+            .replacingOccurrences(of: "｜", with: "-")
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(of: #"[\s]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .-_"))
+        return sanitized.isEmpty ? "Imported Video" : sanitized
+    }
+
+    nonisolated private static func stripTrailingSourceID(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"\s+\[(?:BV[0-9A-Za-z]+|[A-Za-z0-9_-]{11})\]\s*$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func normalizedSpaces(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func compactImportFileStem(_ stem: String, maxLength: Int) -> String {
+        guard stem.count > maxLength else { return stem }
+        let suffix = stem.suffix(12)
+        let prefixCount = max(1, maxLength - suffix.count - 3)
+        let prefix = String(stem.prefix(prefixCount)).trimmingCharacters(in: CharacterSet(charactersIn: " .-_"))
+        return "\(prefix) - \(suffix)"
+    }
+
+    nonisolated private static func uniqueImportVideoURL(in directory: URL, stem: String, preferredExtension: String) -> URL {
+        let cleanExtension = preferredExtension.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        let fileExtension = cleanExtension.isEmpty ? "mp4" : cleanExtension
+        var candidate = directory.appendingPathComponent("\(stem).\(fileExtension)")
+        var suffix = 2
+
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory.appendingPathComponent("\(stem) - \(String(format: "%02d", suffix)).\(fileExtension)")
+            suffix += 1
+        }
+
+        return candidate
+    }
+
+    nonisolated private static func fileStem(from filename: String) -> String {
+        let lastComponent = filename.components(separatedBy: CharacterSet(charactersIn: "/\\")).last ?? filename
+        return URL(fileURLWithPath: lastComponent).deletingPathExtension().lastPathComponent
+    }
+
+    nonisolated private static func fileExtension(from filename: String, fallback: String) -> String {
+        let lastComponent = filename.components(separatedBy: CharacterSet(charactersIn: "/\\")).last ?? filename
+        let ext = URL(fileURLWithPath: lastComponent).pathExtension
+        return ext.isEmpty ? fallback : ext
     }
 
     private func loadThumbnails(for videos: [VideoItem]) {
@@ -3958,7 +4338,7 @@ final class LibraryStore: ObservableObject {
             async let videoTracks = asset.loadTracks(withMediaType: .video)
 
             guard try await !videoTracks.isEmpty else {
-                return .unsupported("这个文件没有可播放的视频轨道")
+                return .unsupported("这个文件暂无可播放的视频轨道")
             }
 
             guard try await isPlayable else {
@@ -4260,27 +4640,67 @@ final class LibraryStore: ObservableObject {
         )
     }
 
-    private func saveImageExport(data: Data, video: VideoItem, time: Double, preferredExtension: String) {
-        guard let libraryURL else { return }
-        let folder = Self.exportFolder(in: libraryURL, named: Self.imageExportFolderName)
-            .appendingPathComponent(Self.safeFileStem(video.name), isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-
-        let existingCount = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension.localizedCaseInsensitiveCompare(preferredExtension) == .orderedSame }
-            .count ?? 0
-        let filename = String(format: "%03d_%@.%@", existingCount + 1, Self.fileTimecode(time), preferredExtension)
-        try? data.write(to: folder.appendingPathComponent(filename), options: .atomic)
-        writeFrameIndex(in: folder, video: video)
+    private func saveImageExport(data: Data, video: VideoItem, time: Double, preferredExtension: String) -> URL? {
+        let folder = imageExportDestination(for: video)
+        let baseName = "\(Self.compactFileStem(video.name, maxLength: 96))_\(Self.fileTimecode(time))"
+        let outputURL = Self.uniqueExportURL(
+            in: folder,
+            baseName: baseName,
+            preferredExtension: preferredExtension
+        )
+        do {
+            try data.write(to: outputURL, options: .atomic)
+            return outputURL
+        } catch {
+            NSLog("LapianBao image export failed: %@ -> %@", outputURL.path, String(describing: error))
+            return nil
+        }
     }
 
-    private func writeFrameIndex(in folder: URL, video: VideoItem) {
-        let frames = sampledFrames(for: video)
-        let lines = frames.enumerated().map { index, frame in
-            "\(index + 1). \(Self.clockText(frame.time)) · \(frame.kind == .screenshot ? "截图" : "场景代表帧")"
+    private func imageExportDestination(for video: VideoItem) -> URL {
+        let folder = libraryURL.map {
+            Self.exportFolder(in: $0, named: Self.imageExportFolderName)
+        } ?? video.url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    nonisolated private static func uniqueExportURL(in folder: URL, baseName: String, preferredExtension: String) -> URL {
+        let cleanExtension = preferredExtension.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let fileExtension = cleanExtension.isEmpty ? "jpg" : cleanExtension
+        var candidate = folder.appendingPathComponent("\(baseName).\(fileExtension)")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = folder.appendingPathComponent("\(baseName)-\(suffix).\(fileExtension)")
+            suffix += 1
         }
-        let md = "# \(video.name)\n\n" + lines.joined(separator: "\n") + "\n"
-        try? md.write(to: folder.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
+        return candidate
+    }
+
+    nonisolated private static func compactFileStem(_ name: String, maxLength: Int) -> String {
+        let stem = safeFileStem(name)
+        guard stem.count > maxLength else { return stem }
+        let end = stem.suffix(12)
+        let prefixCount = max(1, maxLength - end.count - 1)
+        return "\(stem.prefix(prefixCount))-\(end)"
+    }
+
+    private func writeFrameIndex() {
+        guard let libraryURL else { return }
+        let folder = Self.exportFolder(in: libraryURL, named: Self.imageExportFolderName)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let frames = sampledFrames.sorted {
+            if $0.videoName == $1.videoName { return $0.time < $1.time }
+            return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+        }
+        let lines = frames.enumerated().map { index, frame in
+            let kind = frame.kind == .screenshot ? "截图" : "场景代表帧"
+            return "\(index + 1). \(frame.videoName) · \(Self.clockText(frame.time)) · \(kind)"
+        }
+        let body = lines.isEmpty ? "暂无导出图片。\n" : lines.joined(separator: "\n") + "\n"
+        let markdown = "# 拉片宝图片导出索引\n\n" + body
+        try? markdown.write(to: folder.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
     }
 
     nonisolated private static func exportAudioClipFile(video: VideoItem, videoName: String, start: Double, end: Double, libraryURL: URL?) async -> URL? {

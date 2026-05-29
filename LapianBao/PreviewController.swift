@@ -150,7 +150,14 @@ final class PreviewController: ObservableObject {
     // MARK: – 播放控制
 
     func togglePlayback() {
-        if isPlaying || abs(playbackRate) > 0.001 { pause() } else { setRate(1) }
+        if isPlaying || abs(playbackRate) > 0.001 {
+            pause()
+        } else {
+            if isAtPlaybackEnd {
+                seekToSeconds(0, snapToFrame: false)
+            }
+            setRate(1)
+        }
     }
 
     func pause(snapToFrame: Bool = false) {
@@ -491,6 +498,11 @@ final class PreviewController: ObservableObject {
 
     private var frameDuration: Double {
         1 / max(frameRate, 1)
+    }
+
+    private var isAtPlaybackEnd: Bool {
+        guard let d = effectiveDuration, d > 0 else { return false }
+        return progress >= 0.999 || elapsed >= d - max(frameDuration, 0.05)
     }
 
     private var frameTimeScale: CMTimeScale {

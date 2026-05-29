@@ -13,6 +13,7 @@ enum PreviewKeyboardCommand {
     case setAudioIn
     case setAudioOut
     case clearAudioSelection
+    case captureCurrentFrame
     case exportAudioSelection
 }
 
@@ -39,6 +40,7 @@ enum PreviewKeyboardEventRouter {
         static let space: UInt16 = 49
         static let i: UInt16 = 34
         static let o: UInt16 = 31
+        static let e: UInt16 = 14
         static let u: UInt16 = 32
         static let p: UInt16 = 35
         static let j: UInt16 = 38
@@ -48,7 +50,7 @@ enum PreviewKeyboardEventRouter {
         static let rightArrow: UInt16 = 124
 
         static let handled: Set<UInt16> = [
-            space, i, o, u, p, j, k, l, leftArrow, rightArrow
+            space, i, o, e, u, p, j, k, l, leftArrow, rightArrow
         ]
     }
 
@@ -80,6 +82,8 @@ enum PreviewKeyboardEventRouter {
             return .setAudioOut
         case KeyCode.u:
             return .clearAudioSelection
+        case KeyCode.e:
+            return .captureCurrentFrame
         case KeyCode.p:
             return .exportAudioSelection
         case KeyCode.l:
@@ -444,37 +448,278 @@ private final class KeyboardCaptureNSView: NSView {
 }
 
 struct NativeWindowTrafficLights: NSViewRepresentable {
+    let buttonSize: CGFloat
+    let buttonGap: CGFloat
+
     func makeNSView(context: Context) -> TrafficLightContainerView {
-        TrafficLightContainerView()
+        TrafficLightContainerView(buttonSize: buttonSize, buttonGap: buttonGap)
     }
-    func updateNSView(_ nsView: TrafficLightContainerView, context: Context) {}
+
+    func updateNSView(_ nsView: TrafficLightContainerView, context: Context) {
+        nsView.configure(buttonSize: buttonSize, buttonGap: buttonGap)
+    }
 }
 
 final class TrafficLightContainerView: NSView {
+    private var buttonSize: CGFloat
+    private var buttonGap: CGFloat
+    private let closeButton = TrafficLightButton(kind: .close)
+    private let miniaturizeButton = TrafficLightButton(kind: .miniaturize)
+    private let zoomButton = TrafficLightButton(kind: .zoom)
+    private var windowObservers: [NSObjectProtocol] = []
+
+    init(buttonSize: CGFloat, buttonGap: CGFloat) {
+        self.buttonSize = buttonSize
+        self.buttonGap = buttonGap
+        super.init(frame: NSRect(x: 0, y: 0, width: buttonSize * 3 + buttonGap * 2, height: buttonSize))
+        [closeButton, miniaturizeButton, zoomButton].forEach { button in
+            button.target = self
+            button.action = #selector(performWindowButtonAction(_:))
+            addSubview(button)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: buttonSize * 3 + buttonGap * 2, height: buttonSize)
+    }
+
+    func configure(buttonSize: CGFloat, buttonGap: CGFloat) {
+        guard self.buttonSize != buttonSize || self.buttonGap != buttonGap else { return }
+        self.buttonSize = buttonSize
+        self.buttonGap = buttonGap
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { needsLayout = true }
+        updateWindowObservers()
+        applyFixedButtonFrames()
+        DispatchQueue.main.async { [weak self] in
+            self?.hideSystemWindowButtons()
+            self?.applyFixedButtonFrames()
+        }
     }
 
     override func layout() {
         super.layout()
-        guard let window,
-              let close = window.standardWindowButton(.closeButton),
-              let mini  = window.standardWindowButton(.miniaturizeButton),
-              let zoom  = window.standardWindowButton(.zoomButton) else { return }
+        hideSystemWindowButtons()
+        applyFixedButtonFrames()
+    }
 
-        if close.superview !== self {
-            [close, mini, zoom].forEach { btn in
-                btn.removeFromSuperview()
-                addSubview(btn)
+    deinit {
+        windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    private func applyFixedButtonFrames() {
+        closeButton.frame = CGRect(x: 0, y: 0, width: buttonSize, height: buttonSize)
+        miniaturizeButton.frame = CGRect(x: buttonSize + buttonGap, y: 0, width: buttonSize, height: buttonSize)
+        zoomButton.frame = CGRect(x: (buttonSize + buttonGap) * 2, y: 0, width: buttonSize, height: buttonSize)
+    }
+
+    private func hideSystemWindowButtons() {
+        guard let window else { return }
+        [
+            window.standardWindowButton(.closeButton),
+            window.standardWindowButton(.miniaturizeButton),
+            window.standardWindowButton(.zoomButton)
+        ].forEach { button in
+            button?.isHidden = true
+        }
+    }
+
+    private func updateWindowObservers() {
+        windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowObservers.removeAll()
+
+        guard let window else { return }
+        hideSystemWindowButtons()
+        updateButtonActivity()
+
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didResignKeyNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification
+        ]
+        windowObservers = names.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                self?.hideSystemWindowButtons()
+                self?.updateButtonActivity()
             }
         }
+    }
 
-        let size: CGFloat = 12
-        let gap:  CGFloat = 6
-        let midY = (bounds.height - size) / 2
-        close.frame = CGRect(x: 0,              y: midY, width: size, height: size)
-        mini.frame  = CGRect(x: size + gap,     y: midY, width: size, height: size)
-        zoom.frame  = CGRect(x: (size + gap) * 2, y: midY, width: size, height: size)
+    private func updateButtonActivity() {
+        let isActive = window?.isKeyWindow ?? false
+        [closeButton, miniaturizeButton, zoomButton].forEach { $0.isWindowActive = isActive }
+    }
+
+    @objc private func performWindowButtonAction(_ sender: TrafficLightButton) {
+        guard let window else { return }
+        switch sender.kind {
+        case .close:
+            window.performClose(sender)
+        case .miniaturize:
+            window.performMiniaturize(sender)
+        case .zoom:
+            window.toggleFullScreen(sender)
+        }
+    }
+}
+
+private final class TrafficLightButton: NSButton {
+    enum Kind {
+        case close
+        case miniaturize
+        case zoom
+    }
+
+    let kind: Kind
+    var isWindowActive = false { didSet { needsDisplay = true } }
+
+    private var isHovering = false { didSet { needsDisplay = true } }
+    private var trackingArea: NSTrackingArea?
+
+    init(kind: Kind) {
+        self.kind = kind
+        super.init(frame: .zero)
+        isBordered = false
+        focusRingType = .none
+        setButtonType(.momentaryChange)
+        imagePosition = .imageOnly
+        bezelStyle = .regularSquare
+        setAccessibilityLabel(kind.accessibilityLabel)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let circleRect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let circlePath = NSBezierPath(ovalIn: circleRect)
+        fillColor.setFill()
+        circlePath.fill()
+
+        strokeColor.setStroke()
+        circlePath.lineWidth = 0.5
+        circlePath.stroke()
+
+        guard isHovering, isWindowActive else { return }
+        symbolColor.setStroke()
+        let symbol = symbolPath(in: bounds.insetBy(dx: 3.25, dy: 3.25))
+        symbol.lineWidth = 1.1
+        symbol.lineCapStyle = .round
+        symbol.lineJoinStyle = .round
+        symbol.stroke()
+    }
+
+    private var fillColor: NSColor {
+        guard isWindowActive else { return NSColor(calibratedWhite: 0.42, alpha: 1) }
+        switch kind {
+        case .close:
+            return NSColor(calibratedRed: 1.00, green: 0.37, blue: 0.33, alpha: 1)
+        case .miniaturize:
+            return NSColor(calibratedRed: 1.00, green: 0.73, blue: 0.24, alpha: 1)
+        case .zoom:
+            return NSColor(calibratedRed: 0.24, green: 0.80, blue: 0.33, alpha: 1)
+        }
+    }
+
+    private var strokeColor: NSColor {
+        guard isWindowActive else { return NSColor(calibratedWhite: 0.36, alpha: 1) }
+        switch kind {
+        case .close:
+            return NSColor(calibratedRed: 0.82, green: 0.22, blue: 0.20, alpha: 1)
+        case .miniaturize:
+            return NSColor(calibratedRed: 0.78, green: 0.50, blue: 0.13, alpha: 1)
+        case .zoom:
+            return NSColor(calibratedRed: 0.16, green: 0.60, blue: 0.22, alpha: 1)
+        }
+    }
+
+    private var symbolColor: NSColor {
+        guard isWindowActive else { return NSColor(calibratedWhite: 0.20, alpha: 0.70) }
+        switch kind {
+        case .close:
+            return NSColor(calibratedRed: 0.46, green: 0.06, blue: 0.05, alpha: 0.70)
+        case .miniaturize:
+            return NSColor(calibratedRed: 0.48, green: 0.29, blue: 0.02, alpha: 0.70)
+        case .zoom:
+            return NSColor(calibratedRed: 0.04, green: 0.34, blue: 0.09, alpha: 0.70)
+        }
+    }
+
+    private func symbolPath(in rect: NSRect) -> NSBezierPath {
+        let path = NSBezierPath()
+        switch kind {
+        case .close:
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.line(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.line(to: CGPoint(x: rect.minX, y: rect.maxY))
+        case .miniaturize:
+            path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            path.line(to: CGPoint(x: rect.maxX, y: rect.midY))
+        case .zoom:
+            path.move(to: CGPoint(x: rect.minX + 0.4, y: rect.midY))
+            path.line(to: CGPoint(x: rect.midX, y: rect.midY))
+            path.line(to: CGPoint(x: rect.midX, y: rect.maxY - 0.4))
+            path.move(to: CGPoint(x: rect.maxX - 0.4, y: rect.midY))
+            path.line(to: CGPoint(x: rect.midX, y: rect.midY))
+            path.line(to: CGPoint(x: rect.midX, y: rect.minY + 0.4))
+        }
+        return path
+    }
+}
+
+private extension TrafficLightButton.Kind {
+    var accessibilityLabel: String {
+        switch self {
+        case .close:
+            return "关闭"
+        case .miniaturize:
+            return "最小化"
+        case .zoom:
+            return "全屏"
+        }
     }
 }

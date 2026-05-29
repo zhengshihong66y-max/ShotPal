@@ -15,12 +15,13 @@
 - Preview keyboard shortcuts must be silent. Any handled keyDown/keyUp event must be consumed in every keyboard handling path so macOS never plays the system beep.
 - Keep shortcut semantics strict:
   - `Space`: toggle playback.
-  - `J`: shuttle/drag backward while pressed.
-  - `L`: shuttle/drag forward while pressed. It must not start normal forward playback or call `setRate`.
+  - `J`: tap once to step one frame backward; hold to shuttle/drag backward.
+  - `L`: tap once to step one frame forward; hold to shuttle/drag forward. It must not start normal forward playback or call `setRate`.
   - Releasing `J` or `L`: stop shuttle/drag.
   - `K`: toggle playback normally; while shuttling with `J` or `L`, increase shuttle speed.
   - Left/Right arrows: step one frame backward/forward.
   - `I`/`O`: set audio in/out.
+  - `E`: export current frame image.
   - `U`: clear audio selection.
   - `P`: export audio selection.
 - Keyboard command execution has one owner: the app-level `NSEvent` local monitor parses shortcut events and dispatches through `PreviewKeyboardCommandDispatcher`.

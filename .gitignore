@@ -1,0 +1,8 @@
+# macOS local files
+.DS_Store
+
+# Xcode local user state
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+DerivedData/

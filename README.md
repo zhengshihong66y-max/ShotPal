@@ -1,6 +1,6 @@
 # 拉片宝 AI 接手手册
 
-最后更新：2026-05-28
+最后更新：2026-05-29
 
 本文是拉片宝项目的唯一权威 Markdown。后续 AI 或开发者接手时，先读本文，再按需读源码。本文同时记录产品结构、工程结构、设计原则、已经定下来的 UI 数值和可恢复的设计基线。
 
@@ -30,16 +30,17 @@
 左侧 icon rail + 素材区 | 主工作区
 ```
 
-普通宽度下，素材区和主工作区左右排列；宽度小于 `900pt` 时，素材区在上、工作区在下。窗口默认尺寸是 `1280 x 800`，最小尺寸是 `720 x 500`。
+普通宽度下，素材区和主工作区左右排列；宽度小于 `900pt` 时，素材区在上、工作区在下。窗口默认尺寸是 `1280 x 800`，最小内容尺寸是 `960 x 720`。
 
 ### 3.1 左侧 rail
 
-左侧 rail 是工作区入口，不是标签栏。宽度固定 `56pt`，包含 macOS 原生红黄绿窗口按钮和四个工作区入口：
+左侧 rail 是工作区入口，不是标签栏。宽度固定 `56pt`，包含 macOS 原生红黄绿窗口按钮和五个工作区入口：
 
 - `主页`：看片、时间线、场景识别、截图、批注、声音采样、转写摘要、音乐识别。
 - `画面`：已收集画面的网格、预览、亮度直方图、色卡、本地视觉模型分析。
 - `声音`：已导出的声音片段列表、播放、定位回原视频、音乐识别和下载。
 - `内容`：Whisper 字幕、内容节点时间线、本地文本模型整理。
+- `设置`：批量识别管理、API 服务配置、本机模型配置。
 
 对应源码是 `AppWorkspace`。
 
@@ -62,6 +63,7 @@
 - `FramesWorkspaceView`：画面工作区。
 - `AudioWorkspaceView`：声音工作区。
 - `ContentWorkspaceView`：内容工作区。
+- `SettingsWorkspaceView`：设置工作区。
 
 工作区之间跳转时通过 `jumpToVideo(path:time:)` 选中视频，并发出 `.lapianBaoSeekRequest` 通知，让主页播放器跳到对应时间点。
 
@@ -75,7 +77,7 @@
 - 主窗口不走 SwiftUI `WindowGroup`。这是为了避免 Debug 构建或 Xcode Preview/JIT 注入导致“进程存在但没有可见窗口”。
 - `applicationDidFinishLaunching(_:)` 只负责异步调度启动设置，不能同步创建 SwiftUI 主界面。主窗口可见并完成一次绘制后，再用 `loadLastLibraryForLaunch()` 恢复上次素材库；启动恢复的目录枚举在后台线程执行，避免启动握手阶段或首帧绘制前被同步目录扫描卡住。
 - `ensureMainWindowVisible()` 是启动兜底：启动完成、应用激活、Dock 重新打开、启动后延迟复查都会确保窗口存在、在可见屏幕内，并被拉到前台。
-- 窗口标题为 `LapianBao`，默认尺寸 `1280 x 800`，最小尺寸 `960 x 620`。
+- 窗口标题为 `LapianBao`，默认尺寸 `1280 x 800`，最小内容尺寸来自 `Design.minimumWindowWidth = 960` 和 `Design.minimumWindowHeight = 720`。
 - 菜单替换默认新建项，提供 `打开文件夹`，快捷键 `Command + O`。
 
 ### `AppChrome.swift`
@@ -87,9 +89,9 @@
 - `WindowConfigurator`：去掉系统标题栏，透明窗口背景，保留可调整大小、关闭、最小化、全屏能力。
 - `WindowDragRegion`：自定义窗口拖拽区域。
 - `PreviewKeyboardHandler` 和 `KeyboardCaptureNSView`：局部键盘焦点捕获。
-- `NativeWindowTrafficLights`：把系统红黄绿按钮重新挂到自定义 rail 中。
+- `NativeWindowTrafficLights`：隐藏系统红黄绿按钮，在自定义 rail 的固定坐标绘制同尺寸按钮，并转发关闭、最小化、全屏动作到 `NSWindow`。
 
-红黄绿按钮尺寸 `12pt`，间距 `6pt`。
+红黄绿按钮尺寸 `12pt`，间距 `6pt`。不要把 `window.standardWindowButton(...)` 重新挂到 SwiftUI 容器中；系统标题栏会在启动和激活阶段重排它们，导致位置漂移。
 
 ### `LibraryStore.swift`
 
@@ -122,7 +124,7 @@
 播放器状态中心，标记为 `@MainActor ObservableObject`：
 
 - 使用单例 `AVPlayer`。
-- 以 `1 / 60s` 周期更新 `elapsed`、`duration`、`progress`、`playbackRate`。
+- 以 `1 / 30s` 周期更新 `elapsed`、`duration`、`progress`、`playbackRate`。
 - `loadVideo(_:autoplay:)` 切换视频，加载波形、帧带和缓存场景切点。
 - 支持播放、暂停、跳转、逐帧、正向变速、反向播放。
 - 反向播放会尝试使用 ffmpeg 生成 intra-only 静音代理视频，缓存到用户缓存目录 `LapianBao/ReversePlaybackProxies`。
@@ -237,12 +239,13 @@
 
 - `Space`：播放/暂停。
 - `K`：播放/暂停；如果正在 J/L shuttle，则提升 shuttle 速度。
-- `J`：向后 shuttle。
-- `L`：向前播放或 shuttle。
+- `J`：单击后退一帧；按住进入向后 shuttle。
+- `L`：单击前进一帧；按住进入向前 shuttle，不能启动普通正向播放或直接调用 `setRate(1)`。
 - `Left Arrow`：后退一帧。
 - `Right Arrow`：前进一帧。
 - `I`：设置声音 In 点。
 - `O`：设置声音 Out 点。
+- `E`：导出当前帧图片。
 - `U`：清除声音选区。
 - `P`：导出当前声音选区。
 
@@ -250,7 +253,10 @@
 
 - 不带 `Command`、`Control`、`Option` 才拦截。
 - 文本编辑控件获得焦点时不拦截。
-- 反向 shuttle 通过逐帧 seek，初始每次 `2` 帧，最多加速到 `12` 帧，每 `33_000_000ns` 一次。
+- 快捷键命令只能由 app-level `NSEvent` monitor 分发到 `PreviewKeyboardCommandDispatcher`。
+- `PreviewKeyboardWindow`、`PreviewKeyboardHandler`、capture view 可以消费事件防止系统 beep，但不能各自重复执行命令。
+- 所有已处理的 `keyDown` 和 `keyUp` 都必须被消费；尤其是 `J/L` 松开时只发 `stopShuttle`，不能把事件继续传给系统。
+- `J/L` shuttle 通过逐帧 seek，进入 shuttle 后初始每次 `2` 帧，最多加速到 `12` 帧，每 `33_000_000ns` 一次。
 
 ## 8. 外部工具和模型
 
@@ -296,6 +302,8 @@ static let railButtonVisualOffsetX: CGFloat = 6
 static let libraryToolbarVisualGap: CGFloat = 14
 static let libraryToolbarHeight: CGFloat = 22
 static let trafficLightSize: CGFloat = 12
+static let trafficLightGap: CGFloat = 6
+static let trafficLightClusterWidth: CGFloat = trafficLightSize * 3 + trafficLightGap * 2
 static let timelineLaneHeight: CGFloat = 100
 static let collapsedTimelineLaneHeight: CGFloat = 40
 static let timelineLaneButtonSize: CGFloat = 24
@@ -311,6 +319,7 @@ static let centeredWaveformViewportSpan: Double = 0.22
 - `railTopChromeHeight = 36`，来自 `14 + 22`。
 - `trafficLightGuideX = 14`，来自 `8 + 6`。
 - `trafficLightGuideY = 19`，来自 `14 + (22 - 12) / 2`。
+- `trafficLightClusterWidth = 48`，来自 `12 * 3 + 6 * 2`。
 - `timelineLaneVisualGap = 7`，来自 `(100 - 24 * 3) / 4`。
 - `timelineLaneContentHeight = 86`，来自 `100 - 7 * 2`。
 
@@ -327,7 +336,7 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 ### 9.3 布局数值
 
 - 窗口默认：`1280 x 800`。
-- 窗口最小：`720 x 500`。
+- 窗口最小内容尺寸：`960 x 720`。
 - 紧凑布局阈值：窗口宽度 `< 900pt`。
 - 主页预览区右侧导出栏显示阈值：工作区宽度 `>= 720pt`。
 - 主页导出栏宽度：`max(240, min(320, width * 0.20))`。
@@ -490,7 +499,43 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 - 反向播放代理需要 ffmpeg，且生成代理可能耗时。
 - 场景识别依赖 TransNetV2 环境，失败时才走本地回退。
 
-## 11. 后续开发原则
+## 11. 本阶段反复问题复盘
+
+### 11.1 启动和窗口
+
+这阶段反复出现的问题是：Debug/Xcode 增量构建后 Dock 显示应用未响应、进程存在但没有可见窗口、或者启动阶段被素材库扫描拖住。当前定论：
+
+- 主窗口必须由 `AppDelegate` 显式创建并强引用 `NSWindow`，不要恢复 `WindowGroup` 做主入口。
+- `applicationDidFinishLaunching(_:)` 必须尽快返回，只能 `DispatchQueue.main.async` 调度 `completeLaunchSetupIfNeeded()`。
+- 启动顺序保持：安装菜单、创建并显示主窗口、安装可见性复查和键盘 monitor、激活 App、延后恢复素材库。
+- `loadLastLibraryForLaunch()` 必须把目录枚举放到后台线程，枚举完成后才回主线程更新 `LibraryStore`。
+- 不要重新打开 SwiftUI `#Preview`、`ENABLE_PREVIEWS` 或 Debug dylib/JIT 路径。这个项目用真实冷启动检查替代 Preview。
+- 改到启动、窗口、工程构建设置、AppKit 桥接后，跑 `Tools/check_launch_window.sh`，失败就先修启动，不要继续叠功能。
+
+### 11.2 设计和布局
+
+这阶段反复出现的问题是：UI 数值被顺手改散、窗口过小导致工作台重叠、rail 和红黄绿按钮对不齐、工具界面变得像网页后台。当前定论：
+
+- `Design` 是可恢复设计基线。改任何尺寸、圆角、间距、颜色，都同步更新本文第 9 节。
+- 保持 macOS 原生工具感：暗色、克制、密度合理、图标按钮和菜单优先，不做营销页、超大 hero、装饰渐变或后台表格风。
+- 窗口最小内容尺寸现在是 `960 x 720`，通过紧凑布局和导出栏阈值保证播放器、素材区、时间线和导出/识别工作流不互相挤压。
+- 左侧 rail 是工作区导航，不是标签筛选；标签筛选留在素材区工具栏。
+- 页面区块不要靠长说明文字撑版面。空状态可以短，但主工作区要让资产、播放器、时间线、列表成为第一视觉。
+- 设置工作区可以更像偏管理的工具面板，但仍要沿用项目的暗色、轻材质、紧凑行高和原生控件。
+
+### 11.3 快捷键和播放器
+
+这阶段反复出现的问题是：快捷键被多个层级重复处理、已处理按键漏传给系统导致 beep、`J/L` shuttle 和普通播放语义混在一起。当前定论：
+
+- 快捷键解析只认 `PreviewKeyboardEventRouter`；命令分发只走 `PreviewKeyboardCommandDispatcher`。
+- app-level `NSEvent` monitor 是唯一执行命令的 owner。窗口和 capture view 只负责兜底消费事件。
+- 文本输入时不拦截快捷键；无修饰键的播放器快捷键才拦截。
+- `J/L` 单击只跳一帧；按住触发 shuttle，松开停止。`L` 不是普通播放键，不能直接调用 `setRate(1)`。
+- `K` 平时是播放/暂停；如果已经在 `J/L` shuttle 中，才作为加速键。
+- `Space`、箭头、`I/O/E/U/P` 都要在 keyDown/keyUp 路径里安静消费，避免系统 beep。
+- 修改快捷键后，同时更新 `PreviewKeyboardCommand`、`PreviewKeyboardEventRouter`、app-level monitor、本文第 7 节和 `AGENTS.md`。
+
+## 12. 后续开发原则
 
 1. 保留 macOS 原生工具感，优先图标按钮、菜单、分段控件、轻量材质。
 2. 每个新增资产都必须能定位回原视频时间点。

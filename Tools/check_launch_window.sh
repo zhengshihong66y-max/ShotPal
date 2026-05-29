@@ -12,6 +12,19 @@ APP_SOURCE="$ROOT_DIR/LapianBao/LapianBaoApp.swift"
 
 cd "$ROOT_DIR"
 
+enabled_breakpoint_files=()
+while IFS= read -r -d '' breakpoint_file; do
+  if grep -q 'shouldBeEnabled = "Yes"' "$breakpoint_file"; then
+    enabled_breakpoint_files+=("$breakpoint_file")
+  fi
+done < <(find LapianBao.xcodeproj -path '*/xcdebugger/Breakpoints_v2.xcbkptlist' -type f -print0)
+
+if [[ "${#enabled_breakpoint_files[@]}" -gt 0 ]]; then
+  echo "Launch check failed: enabled Xcode user breakpoints can pause the app before it opens a window." >&2
+  printf '  %s\n' "${enabled_breakpoint_files[@]}" >&2
+  exit 1
+fi
+
 if ! awk '
   /func applicationDidFinishLaunching/ { in_launch = 1; saw_async = 0; saw_complete = 0 }
   in_launch && /DispatchQueue\.main\.async/ { saw_async = 1 }
@@ -52,7 +65,10 @@ if find "$APP_PATH" -maxdepth 3 -type f \( -name '*debug*' -o -name '*preview*' 
   exit 1
 fi
 
-osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+osascript \
+  -e 'with timeout of 2 seconds' \
+  -e "tell application id \"$BUNDLE_ID\" to quit" \
+  -e 'end timeout' >/dev/null 2>&1 || true
 sleep 1
 
 opened="0"
@@ -70,11 +86,22 @@ if [[ "$opened" != "1" ]]; then
 fi
 
 window_count="0"
+window_count_unavailable="0"
 for _ in {1..30}; do
-  window_count="$(osascript \
+  if window_count_result="$(osascript \
     -e 'with timeout of 2 seconds' \
     -e "tell application \"System Events\" to tell process \"$APP_NAME\" to count windows" \
-    -e 'end timeout' 2>/dev/null || echo 0)"
+    -e 'end timeout' 2>/dev/null)"; then
+    if [[ "$window_count_result" =~ ^[0-9]+$ ]]; then
+      window_count="$window_count_result"
+    else
+      window_count_unavailable="1"
+      window_count="0"
+    fi
+  else
+    window_count_unavailable="1"
+    window_count="0"
+  fi
   if [[ "$window_count" -ge 1 ]]; then
     echo "Launch check passed: $APP_NAME opened $window_count window(s)."
     exit 0
@@ -83,7 +110,7 @@ for _ in {1..30}; do
 done
 
 app_pid="$(pgrep -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" | tail -n 1 || true)"
-if [[ -n "$app_pid" ]]; then
+if [[ "$window_count_unavailable" == "1" && -n "$app_pid" ]]; then
   sample_file="$TMP_BASE/lapianbao-launch-check-sample-$app_pid.txt"
   sample "$app_pid" 2 -file "$sample_file" >/dev/null 2>&1 || true
   if grep -q 'NSApplication(NSEventRouting).*nextEventMatchingMask' "$sample_file"; then
