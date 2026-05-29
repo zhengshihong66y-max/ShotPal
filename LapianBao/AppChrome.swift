@@ -16,8 +16,22 @@ enum PreviewKeyboardCommand {
     case exportAudioSelection
 }
 
-extension Notification.Name {
-    static let lapianBaoPreviewKeyboardCommand = Notification.Name("lapianBaoPreviewKeyboardCommand")
+@MainActor
+enum PreviewKeyboardCommandDispatcher {
+    private static var handler: ((PreviewKeyboardCommand) -> Bool)?
+
+    static func setHandler(_ newHandler: @escaping (PreviewKeyboardCommand) -> Bool) {
+        handler = newHandler
+    }
+
+    static func clearHandler() {
+        handler = nil
+    }
+
+    @discardableResult
+    static func dispatch(_ command: PreviewKeyboardCommand) -> Bool {
+        handler?(command) ?? false
+    }
 }
 
 enum PreviewKeyboardEventRouter {
@@ -40,6 +54,14 @@ enum PreviewKeyboardEventRouter {
 
     static func isHandledKeyCode(_ keyCode: UInt16) -> Bool {
         KeyCode.handled.contains(keyCode)
+    }
+
+    static func isShuttleKeyCode(_ keyCode: UInt16) -> Bool {
+        keyCode == KeyCode.j || keyCode == KeyCode.l
+    }
+
+    static func isShuttling(_ pressedKeyCodes: Set<UInt16>) -> Bool {
+        pressedKeyCodes.contains(KeyCode.j) || pressedKeyCodes.contains(KeyCode.l)
     }
 
     static func isPlainShortcutEvent(_ event: NSEvent) -> Bool {
@@ -74,11 +96,7 @@ enum PreviewKeyboardEventRouter {
     }
 
     static func post(_ command: PreviewKeyboardCommand) {
-        NotificationCenter.default.post(
-            name: .lapianBaoPreviewKeyboardCommand,
-            object: nil,
-            userInfo: ["command": command]
-        )
+        PreviewKeyboardCommandDispatcher.dispatch(command)
     }
 
     static func isEditableTextResponder(_ responder: Any?) -> Bool {
@@ -105,6 +123,54 @@ enum PreviewKeyboardEventRouter {
     }
 }
 
+final class PreviewKeyboardWindow: NSWindow {
+    private var pressedPreviewKeyCodes = Set<UInt16>()
+
+    override func keyDown(with event: NSEvent) {
+        guard let forwardedEvent = processPreviewKeyboardEvent(event) else { return }
+        super.keyDown(with: forwardedEvent)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard let forwardedEvent = processPreviewKeyboardEvent(event) else { return }
+        super.keyUp(with: forwardedEvent)
+    }
+
+    private func processPreviewKeyboardEvent(_ event: NSEvent) -> NSEvent? {
+        guard !PreviewKeyboardEventRouter.isEditableTextResponder(firstResponder) else {
+            return event
+        }
+
+        let isPlainShortcut = PreviewKeyboardEventRouter.isPlainShortcutEvent(event)
+
+        if event.type == .keyUp {
+            pressedPreviewKeyCodes.remove(event.keyCode)
+            if isPlainShortcut && PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
+                return nil
+            }
+            return isPlainShortcut && PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) ? nil : event
+        }
+
+        guard event.type == .keyDown else { return event }
+        guard isPlainShortcut, PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) else { return event }
+
+        if event.isARepeat {
+            return nil
+        }
+
+        pressedPreviewKeyCodes.insert(event.keyCode)
+        guard let command = PreviewKeyboardEventRouter.command(
+            for: event.keyCode,
+            isShuttling: PreviewKeyboardEventRouter.isShuttling(pressedPreviewKeyCodes)
+        ) else {
+            return nil
+        }
+
+        _ = command
+        return nil
+    }
+}
+
 struct WindowConfigurator: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -128,17 +194,49 @@ struct WindowConfigurator: NSViewRepresentable {
         private weak var configuredWindow: NSWindow?
 
         func configureIfNeeded(_ window: NSWindow?) {
-            guard let window, configuredWindow !== window else { return }
-            configuredWindow = window
-            window.styleMask.remove([.titled])
-            window.styleMask.insert([.resizable, .closable, .miniaturizable])
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.backgroundColor = .clear
-            window.isOpaque = false
-            window.hasShadow = true
-            window.isMovableByWindowBackground = false
-            window.collectionBehavior.insert(.fullScreenPrimary)
+            guard let window else { return }
+            if configuredWindow !== window {
+                configuredWindow = window
+                window.styleMask.remove(.fullSizeContentView)
+                window.styleMask.insert([.titled, .resizable, .closable, .miniaturizable])
+                window.titleVisibility = .hidden
+                window.titlebarAppearsTransparent = true
+                window.backgroundColor = .clear
+                window.isOpaque = false
+                window.hasShadow = true
+                window.isMovableByWindowBackground = false
+                window.collectionBehavior.insert(.fullScreenPrimary)
+            }
+            DispatchQueue.main.async {
+                self.restoreWindowToVisibleScreenIfNeeded(window)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self.restoreWindowToVisibleScreenIfNeeded(window)
+            }
+        }
+
+        private func restoreWindowToVisibleScreenIfNeeded(_ window: NSWindow) {
+            let frame = window.frame
+            let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
+            let isCenteredOnVisibleScreen = NSScreen.screens.contains { screen in
+                screen.visibleFrame.contains(windowCenter)
+            }
+            guard !isCenteredOnVisibleScreen, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+
+            let visibleFrame = screen.visibleFrame
+            let windowSize = CGSize(
+                width: min(frame.width, visibleFrame.width),
+                height: min(frame.height, visibleFrame.height)
+            )
+            let clampedOrigin = CGPoint(
+                x: min(max(frame.origin.x, visibleFrame.minX), visibleFrame.maxX - windowSize.width),
+                y: min(max(frame.origin.y, visibleFrame.minY), visibleFrame.maxY - windowSize.height)
+            )
+            window.setFrame(
+                CGRect(origin: clampedOrigin, size: windowSize),
+                display: true
+            )
+            window.makeKeyAndOrderFront(nil)
         }
     }
 }
@@ -190,35 +288,8 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
     }
 
     final class Coordinator {
-        private enum KeyCode {
-            static let space: UInt16 = 49
-            static let i: UInt16 = 34
-            static let o: UInt16 = 31
-            static let u: UInt16 = 32
-            static let p: UInt16 = 35
-            static let j: UInt16 = 38
-            static let k: UInt16 = 40
-            static let l: UInt16 = 37
-            static let leftArrow: UInt16 = 123
-            static let rightArrow: UInt16 = 124
-
-            static let handled: Set<UInt16> = [
-                space,
-                i,
-                o,
-                u,
-                p,
-                j,
-                k,
-                l,
-                leftArrow,
-                rightArrow
-            ]
-        }
-
         var handle: (PreviewKeyboardCommand) -> Bool
         fileprivate weak var captureView: KeyboardCaptureNSView?
-        private var keyMonitor: Any?
         private var mouseMonitor: Any?
         private var pressedKeyCodes = Set<UInt16>()
 
@@ -227,12 +298,6 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
         }
 
         func installMonitor() {
-            if keyMonitor == nil {
-                keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
-                    self?.process(event) ?? event
-                }
-            }
-
             if mouseMonitor == nil {
                 mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
                     self?.restoreKeyboardFocusIfNeeded(for: event)
@@ -242,13 +307,9 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
         }
 
         func removeMonitor() {
-            if let keyMonitor {
-                NSEvent.removeMonitor(keyMonitor)
-            }
             if let mouseMonitor {
                 NSEvent.removeMonitor(mouseMonitor)
             }
-            keyMonitor = nil
             mouseMonitor = nil
         }
 
@@ -261,8 +322,8 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
 
             if event.type == .keyUp {
                 pressedKeyCodes.remove(event.keyCode)
-                if isPlainShortcut && (event.keyCode == KeyCode.l || event.keyCode == KeyCode.j) {
-                    return handle(.stopShuttle) ? nil : event
+                if isPlainShortcut && PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
+                    return nil
                 }
                 return isPlainShortcut && isHandledKeyCode(event.keyCode) ? nil : event
             }
@@ -276,9 +337,10 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
 
             pressedKeyCodes.insert(event.keyCode)
             if let command = command(for: event) {
-                return handle(command) ? nil : event
+                _ = command
+                return nil
             }
-            return event
+            return nil
         }
 
         private var isEditingText: Bool {
@@ -302,7 +364,7 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
         }
 
         private var isShuttling: Bool {
-            pressedKeyCodes.contains(KeyCode.j) || pressedKeyCodes.contains(KeyCode.l)
+            PreviewKeyboardEventRouter.isShuttling(pressedKeyCodes)
         }
 
         static func isEditableTextResponder(_ responder: Any?) -> Bool {

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Bucket
+   uuid = "A6FEB1D0-FD2B-4F1A-A00F-92AD3302B8BE"
+   type = "1"
+   version = "2.0">
+   <Breakpoints>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "25C2338A-93F2-4BEC-83B5-6A7203C106DB"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "LapianBao/ContentView.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "3858"
+            endingLineNumber = "3858"
+            landmarkName = "CardTimeBadge"
+            landmarkType = "14">
+            <Locations>
+               <Location
+                  uuid = "25C2338A-93F2-4BEC-83B5-6A7203C106DB - 21f8ab13230105f4"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "LapianBao.CardTimeBadge.height.unsafeMutableAddressor : CoreGraphics.CGFloat"
+                  moduleName = "LapianBao"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/zhengshihong/Downloads/Newtybei%E7%9F%A5%E8%AF%86%E5%BA%93/%E8%BF%9B%E8%A1%8C%E9%A1%B9%E7%9B%AE/%E6%8B%89%E7%89%87%E5%AE%9D/LapianBao/LapianBao/ContentView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "3858"
+                  endingLineNumber = "3858">
+               </Location>
+               <Location
+                  uuid = "25C2338A-93F2-4BEC-83B5-6A7203C106DB - 2434f01a15e4b244"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "one-time initialization function for height"
+                  moduleName = "LapianBao"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/zhengshihong/Downloads/Newtybei%E7%9F%A5%E8%AF%86%E5%BA%93/%E8%BF%9B%E8%A1%8C%E9%A1%B9%E7%9B%AE/%E6%8B%89%E7%89%87%E5%AE%9D/LapianBao/LapianBao/ContentView.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "3858"
+                  endingLineNumber = "3858">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+   </Breakpoints>
+</Bucket>

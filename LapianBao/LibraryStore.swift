@@ -165,6 +165,23 @@ enum TranscriptJobStatus: Equatable {
     case failed(String)
 }
 
+struct TranscriptBatchJob: Equatable {
+    enum Status: Equatable {
+        case idle
+        case running
+        case paused
+        case completed
+        case failed(String)
+    }
+
+    var status: Status = .idle
+    var total: Int = 0
+    var completed: Int = 0
+    var currentVideoPath: String?
+    var currentVideoName: String?
+    var progress: Double = 0
+}
+
 struct MusicRecognitionItem: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var title: String
@@ -217,6 +234,7 @@ struct RemoteImportJob: Identifiable, Equatable {
         case idle
         case importing
         case transcoding          // VP9/AV1 → H.264 后处理阶段
+        case paused
         case succeeded(String)
         case failed(String)
     }
@@ -226,6 +244,9 @@ struct RemoteImportJob: Identifiable, Equatable {
     let platform: String
     var status: Status
     var downloadProgress: Double? // nil = 不确定；0.0–1.0 = 已知进度
+    var downloadSpeed: String? = nil
+    var outputPath: String? = nil
+    var thumbnailData: Data? = nil
 }
 
 nonisolated private final class SceneDetectionProcessRegistry: @unchecked Sendable {
@@ -292,6 +313,50 @@ nonisolated private final class PipeDataCollector: @unchecked Sendable {
     }
 }
 
+nonisolated private final class PipeLineCollector: @unchecked Sendable {
+    private let dataCollector = PipeDataCollector()
+    private let lock = NSLock()
+    private var pendingText = ""
+
+    func append(_ data: Data) -> [String] {
+        guard !data.isEmpty else { return [] }
+        dataCollector.append(data)
+        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return [] }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        pendingText += text.replacingOccurrences(of: "\r", with: "\n")
+        let parts = pendingText.components(separatedBy: .newlines)
+        guard parts.count > 1 else { return [] }
+
+        pendingText = parts.last ?? ""
+        return Array(parts.dropLast())
+    }
+
+    func finish(with data: Data = Data()) -> [String] {
+        var lines = append(data)
+
+        lock.lock()
+        if !pendingText.isEmpty {
+            lines.append(pendingText)
+            pendingText = ""
+        }
+        lock.unlock()
+
+        return lines
+    }
+
+    var data: Data {
+        dataCollector.data
+    }
+}
+
+nonisolated private struct DownloadProgressUpdate: Sendable {
+    var progress: Double
+    var speed: String?
+}
+
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published var libraryURL: URL?
@@ -320,14 +385,17 @@ final class LibraryStore: ObservableObject {
     @Published var sceneCutsByVideoPath: [String: [SceneCut]] = [:]
     @Published var sceneCutProgressesByVideoPath: [String: [Double]] = [:]
     @Published var sceneDetectionProgress: [String: Double] = [:]
+    @Published var sceneBatchJob = TranscriptBatchJob()
     @Published var sampledFrames: [SampledFrame] = []
     @Published var annotations: [AnnotationItem] = []
     @Published var audioClips: [AudioClipItem] = []
     @Published var audioClipExportProgressByVideoPath: [String: Double] = [:]
     @Published var transcriptSegmentsByVideoPath: [String: [TranscriptSegment]] = [:]
     @Published var transcriptStatusByVideoPath: [String: TranscriptJobStatus] = [:]
+    @Published var transcriptBatchJob = TranscriptBatchJob()
     @Published var musicsByVideoPath: [String: [MusicRecognitionItem]] = [:]
     @Published var musicDetectionStatusByVideoPath: [String: TranscriptJobStatus] = [:]
+    @Published var musicBatchJob = TranscriptBatchJob()
     @Published var musicDownloadJobs: [MusicDownloadJob] = []
     @Published var sortOption: VideoSortOption = VideoSortOption(rawValue: UserDefaults.standard.string(forKey: "videoSortOption") ?? "") ?? .name {
         didSet {
@@ -349,7 +417,7 @@ final class LibraryStore: ObservableObject {
     private let lastLibraryBookmarkKey = "lastLibraryBookmark"
     private let instagramImportEndpointKey = "instagramImportEndpoint"
     private let defaultLibraryPath = "/Users/zhengshihong/Downloads/通用资源/视觉/视频"
-    private let videoExtensions = ["mp4", "mov", "m4v", "mkv", "avi", "webm"]
+    private let videoExtensions = LibraryStore.supportedVideoExtensions
     private struct SceneCutCacheFile: Codable {
         var detectorVersion: String
         var entries: [String: SceneCutCacheEntry]
@@ -380,7 +448,15 @@ final class LibraryStore: ObservableObject {
     private var audioClipWaveformTasks: [UUID: Task<Void, Never>] = [:]
     private var frameStripTasks: [String: Task<Void, Never>] = [:]
     private var sceneDetectionTasks: [String: Task<Void, Never>] = [:]
+    private var transcriptBatchTask: Task<Void, Never>?
+    private var isTranscriptBatchPaused = false
+    private var sceneBatchTask: Task<Void, Never>?
+    private var isSceneBatchPaused = false
+    private var musicBatchTask: Task<Void, Never>?
+    private var isMusicBatchPaused = false
     private var musicDetectionTasks: [String: Task<Void, Never>] = [:]
+    private var remoteImportTasks: [UUID: Task<Void, Never>] = [:]
+    private var remoteImportProcesses: [UUID: Process] = [:]
     private var scopedLibraryURL: URL?
     private var sceneCutCache: [String: SceneCutCacheEntry] = [:]
     private(set) var filteredVideos: [VideoItem] = []
@@ -392,6 +468,7 @@ final class LibraryStore: ObservableObject {
     nonisolated private static let audioClipWaveformSampleCount = 96
     nonisolated private static let audioClipWaveformVersion = AudioClipItem.currentWaveformVersion
     nonisolated private static let musicWaveformSampleCount = 180
+    nonisolated private static let supportedVideoExtensions = ["mp4", "mov", "m4v", "mkv", "avi", "webm"]
 
     nonisolated private static let musicPythonPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/music-env/bin/python3"
     nonisolated private static let musicScriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/detect_music.py"
@@ -399,6 +476,11 @@ final class LibraryStore: ObservableObject {
     nonisolated private static let imageExportFolderName = "图片"
     nonisolated private static let soundEffectExportFolderName = "音效"
     nonisolated private static let musicExportFolderName = "音乐"
+
+    nonisolated private static func normalizedProgress(_ progress: Double) -> Double {
+        guard progress.isFinite else { return 0 }
+        return min(1, max(0, progress))
+    }
 
     nonisolated private static func exportFolder(in libraryURL: URL, named folderName: String) -> URL {
         libraryURL
@@ -550,6 +632,42 @@ final class LibraryStore: ObservableObject {
         )
     }
 
+    func audioClipFileProvider(for clip: AudioClipItem) -> NSItemProvider? {
+        guard let fileURL = audioClipFileURL(for: clip) else { return nil }
+
+        let provider = NSItemProvider()
+        provider.suggestedName = fileURL.lastPathComponent
+        let typeIdentifier = UTType(filenameExtension: fileURL.pathExtension)?.identifier ?? UTType.audio.identifier
+
+        provider.registerFileRepresentation(
+            forTypeIdentifier: typeIdentifier,
+            fileOptions: .openInPlace,
+            visibility: .all
+        ) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            progress.completedUnitCount = 1
+            completion(fileURL, true, nil)
+            return progress
+        }
+
+        provider.registerObject(fileURL as NSURL, visibility: .all)
+        return provider
+    }
+
+    func audioClipFileURL(for clip: AudioClipItem) -> URL? {
+        if let filePath = clip.filePath {
+            let fileURL = URL(fileURLWithPath: filePath)
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                return fileURL
+            }
+        }
+
+        guard let libraryURL else { return nil }
+        let fallbackURL = Self.exportFolder(in: libraryURL, named: Self.soundEffectExportFolderName)
+            .appendingPathComponent("\(Self.safeFileStem(clip.videoName))_\(Self.fileTimecode(clip.inTime))-\(Self.fileTimecode(clip.outTime)).m4a")
+        return FileManager.default.fileExists(atPath: fallbackURL.path) ? fallbackURL : nil
+    }
+
     func annotations(for video: VideoItem) -> [AnnotationItem] {
         annotations
             .filter { $0.videoPath == video.url.path }
@@ -587,24 +705,39 @@ final class LibraryStore: ObservableObject {
 
     func loadLastLibrary() {
         guard libraryURL == nil else { return }
+        guard let url = lastLibraryURLForLoading() else { return }
+        scanVideos(in: url)
+    }
 
+    func loadLastLibraryForLaunch() {
+        guard libraryURL == nil else { return }
+        guard let url = lastLibraryURLForLoading() else { return }
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let urls = Self.videoURLs(in: url)
+            await MainActor.run { [weak self] in
+                guard let store = self, store.libraryURL == nil else { return }
+                store.applyScannedVideos(in: url, urls: urls)
+            }
+        }
+    }
+
+    private func lastLibraryURLForLoading() -> URL? {
         if let defaultURL = defaultLibraryURL() {
             UserDefaults.standard.set(defaultURL.path, forKey: lastLibraryPathKey)
-            scanVideos(in: defaultURL)
-            return
+            return defaultURL
         }
 
         if let bookmarkedURL = restoreLastLibraryBookmark() {
-            scanVideos(in: bookmarkedURL)
-            return
+            return bookmarkedURL
         }
 
         guard
             let path = UserDefaults.standard.string(forKey: lastLibraryPathKey),
             FileManager.default.fileExists(atPath: path)
-        else { return }
+        else { return nil }
 
-        scanVideos(in: URL(fileURLWithPath: path))
+        return URL(fileURLWithPath: path)
     }
 
     private func defaultLibraryURL() -> URL? {
@@ -643,12 +776,51 @@ final class LibraryStore: ObservableObject {
     func clearFinishedRemoteImports() {
         remoteImportJobs.removeAll { job in
             switch job.status {
-            case .succeeded, .failed:
+            case .succeeded, .failed, .paused:
                 return true
             default:
                 return false
             }
         }
+    }
+
+    func pauseRemoteImportJob(id: UUID) {
+        remoteImportTasks[id]?.cancel()
+        remoteImportTasks[id] = nil
+        remoteImportProcesses[id]?.terminate()
+        remoteImportProcesses[id] = nil
+        updateRemoteImportJob(id: id) { job in
+            job.status = .paused
+            job.downloadSpeed = nil
+        }
+    }
+
+    func resumeRemoteImportJob(id: UUID) {
+        guard let job = remoteImportJobs.first(where: { $0.id == id }) else { return }
+        remoteImportJobs.removeAll { $0.id == id }
+        enqueueRemoteImport(from: job.sourceURL.absoluteString, initialThumbnailData: job.thumbnailData)
+    }
+
+    func deleteRemoteImportJob(id: UUID) {
+        remoteImportTasks[id]?.cancel()
+        remoteImportTasks[id] = nil
+        remoteImportProcesses[id]?.terminate()
+        remoteImportProcesses[id] = nil
+
+        if let job = remoteImportJobs.first(where: { $0.id == id }),
+           let outputPath = job.outputPath,
+           let video = selectedVideo(for: outputPath) {
+            removeVideo(video)
+        }
+        remoteImportJobs.removeAll { $0.id == id }
+    }
+
+    func jumpToRemoteImportJob(id: UUID) {
+        guard
+            let job = remoteImportJobs.first(where: { $0.id == id }),
+            let outputPath = job.outputPath
+        else { return }
+        selectVideo(path: outputPath, autoplay: false)
     }
 
     func importRemoteVideos(from rawText: String) {
@@ -667,7 +839,7 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    private func enqueueRemoteImport(from rawURL: String) {
+    private func enqueueRemoteImport(from rawURL: String, initialThumbnailData: Data? = nil) {
         let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sourceURL = URL(string: trimmed) else {
             remoteImportJobs.append(RemoteImportJob(
@@ -697,30 +869,55 @@ final class LibraryStore: ObservableObject {
         }
 
         let endpoint = instagramImportEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let job = RemoteImportJob(sourceURL: sourceURL, platform: platform, status: .importing)
+        let job = RemoteImportJob(
+            sourceURL: sourceURL,
+            platform: platform,
+            status: .importing,
+            thumbnailData: initialThumbnailData
+        )
         remoteImportJobs.append(job)
         let jobID = job.id
 
+        if initialThumbnailData == nil {
+            loadRemoteImportThumbnail(for: jobID, sourceURL: sourceURL)
+        }
+
         // 进度回调：yt-dlp 每行输出一次，跳回主线程更新 UI
-        let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
+        let progressCallback: @Sendable (Double, String?) -> Void = { [weak self] progress, speed in
             Task { @MainActor [weak self] in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     guard case .importing = job.status else { return }
-                    job.downloadProgress = progress
+                    let normalized = Self.normalizedProgress(progress)
+                    job.downloadProgress = max(job.downloadProgress ?? 0, normalized)
+                    if let speed, !speed.isEmpty {
+                        job.downloadSpeed = speed
+                    }
                 }
             }
         }
         // 转码回调：下载结束、VP9→H.264 转码即将开始时触发
-        let transcodingCallback: @Sendable () -> Void = { [weak self] in
+        let transcodingCallback: @Sendable (Double?) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     job.status = .transcoding
-                    job.downloadProgress = nil
+                    job.downloadProgress = progress.map(Self.normalizedProgress)
+                    job.downloadSpeed = nil
                 }
             }
         }
+        let processCallback: @Sendable (Process?) -> Void = { [weak self] process in
+            Task { @MainActor [weak self] in
+                self?.remoteImportProcesses[jobID] = process
+            }
+        }
 
-        Task { [weak self] in
+        let task = Task { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.remoteImportTasks[jobID] = nil
+                    self?.remoteImportProcesses[jobID] = nil
+                }
+            }
             do {
                 let outputURL = try await Self.downloadVideo(
                     from: sourceURL,
@@ -728,13 +925,16 @@ final class LibraryStore: ObservableObject {
                     platform: platform,
                     endpoint: endpoint,
                     progressCallback: progressCallback,
-                    transcodingCallback: transcodingCallback
+                    transcodingCallback: transcodingCallback,
+                    processCallback: processCallback
                 )
 
                 guard !Task.isCancelled else { return }
                 self?.updateRemoteImportJob(id: jobID) { job in
                     job.status = .succeeded(outputURL.lastPathComponent)
                     job.downloadProgress = 1
+                    job.downloadSpeed = nil
+                    job.outputPath = outputURL.path
                 }
                 self?.scanVideos(in: libraryURL)
                 if let importedVideo = self?.videos.first(where: { $0.url.path == outputURL.path }) {
@@ -745,14 +945,31 @@ final class LibraryStore: ObservableObject {
                 self?.updateRemoteImportJob(id: jobID) { job in
                     job.status = .failed(error.localizedDescription)
                     job.downloadProgress = nil
+                    job.downloadSpeed = nil
                 }
             }
         }
+        remoteImportTasks[jobID] = task
     }
 
     private func updateRemoteImportJob(id: UUID, mutate: (inout RemoteImportJob) -> Void) {
         guard let index = remoteImportJobs.firstIndex(where: { $0.id == id }) else { return }
         mutate(&remoteImportJobs[index])
+    }
+
+    private func loadRemoteImportThumbnail(for jobID: UUID, sourceURL: URL) {
+        Task { [weak self] in
+            guard
+                let thumbnailData = await Self.remoteThumbnailData(for: sourceURL),
+                !Task.isCancelled
+            else { return }
+
+            await MainActor.run { [weak self] in
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    job.thumbnailData = thumbnailData
+                }
+            }
+        }
     }
 
     nonisolated private static func remoteImportURLs(from text: String) -> [String] {
@@ -849,13 +1066,10 @@ final class LibraryStore: ObservableObject {
     }
 
     func scanVideos(in folder: URL) {
-        let keys: [URLResourceKey] = [.isRegularFileKey]
-        let urls = FileManager.default.enumerator(
-            at: folder,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles]
-        )?.compactMap { $0 as? URL } ?? []
+        applyScannedVideos(in: folder, urls: Self.videoURLs(in: folder))
+    }
 
+    private func applyScannedVideos(in folder: URL, urls: [URL]) {
         libraryURL = folder
         UserDefaults.standard.set(folder.path, forKey: lastLibraryPathKey)
         Self.ensureExportFolders(in: folder)
@@ -883,6 +1097,19 @@ final class LibraryStore: ObservableObject {
         loadProjectData()
         loadThumbnails(for: videos)
         loadSceneCutCache()
+    }
+
+    nonisolated private static func videoURLs(in folder: URL) -> [URL] {
+        let keys: [URLResourceKey] = [.isRegularFileKey]
+        let urls = FileManager.default.enumerator(
+            at: folder,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        )?.compactMap { $0 as? URL } ?? []
+
+        return urls
+            .filter { supportedVideoExtensions.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 
     func removeVideo(_ video: VideoItem) {
@@ -1153,7 +1380,7 @@ final class LibraryStore: ObservableObject {
         sceneDetectionTasks[path] = Task { [weak self] in
             let cuts = await Self.performSceneDetection(for: video.url) { progress in
                 Task { @MainActor in
-                    self?.sceneDetectionProgress[path] = progress
+                    self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
                 }
             }
 
@@ -1168,6 +1395,113 @@ final class LibraryStore: ObservableObject {
             self?.sceneDetectionProgress[path] = nil
             self?.sceneDetectionTasks[path] = nil
         }
+    }
+
+    func deleteSceneRecognition(for video: VideoItem) {
+        let path = video.url.path
+        sceneDetectionTasks[path]?.cancel()
+        sceneDetectionTasks[path] = nil
+        sceneCutsByVideoPath.removeValue(forKey: path)
+        sceneCutProgressesByVideoPath.removeValue(forKey: path)
+        sceneDetectionProgress.removeValue(forKey: path)
+        sceneCutCache.removeValue(forKey: relativeVideoPath(for: video.url))
+        saveSceneCutCache()
+    }
+
+    func deleteAllSceneRecognitions() {
+        sceneDetectionTasks.values.forEach { $0.cancel() }
+        sceneDetectionTasks.removeAll()
+        sceneCutsByVideoPath.removeAll()
+        sceneCutProgressesByVideoPath.removeAll()
+        sceneDetectionProgress.removeAll()
+        sceneCutCache.removeAll()
+        saveSceneCutCache()
+    }
+
+    func startSceneBatch(onlyMissing: Bool = true) {
+        guard sceneBatchTask == nil else { return }
+        let queue = videos.filter { video in
+            if onlyMissing {
+                return sceneCutsByVideoPath[video.url.path, default: []].isEmpty
+            }
+            return true
+        }
+        guard !queue.isEmpty else {
+            sceneBatchJob = TranscriptBatchJob(status: .completed, total: 0, completed: 0, progress: 1)
+            return
+        }
+
+        isSceneBatchPaused = false
+        sceneBatchJob = TranscriptBatchJob(status: .running, total: queue.count, completed: 0, progress: 0)
+        sceneBatchTask = Task { [weak self] in
+            guard let self else { return }
+            var completed = 0
+
+            for video in queue {
+                while await MainActor.run(body: { self.isSceneBatchPaused }) {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if Task.isCancelled { break }
+
+                let path = video.url.path
+                await MainActor.run {
+                    self.sceneBatchJob.status = .running
+                    self.sceneBatchJob.currentVideoPath = path
+                    self.sceneBatchJob.currentVideoName = video.name
+                    self.sceneDetectionProgress[path] = 0
+                    self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
+                }
+
+                let cuts = await Self.performSceneDetection(for: video.url) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
+                        self?.updateSceneBatchProgress(completed: completed, currentProgress: progress)
+                    }
+                }
+
+                completed += 1
+                await MainActor.run {
+                    self.setSceneCuts(cuts, for: path)
+                    self.storeSceneCutCache(for: video, cuts: cuts)
+                    self.sceneDetectionProgress[path] = nil
+                    self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
+                }
+            }
+
+            await MainActor.run {
+                self.sceneBatchTask = nil
+                if self.sceneBatchJob.completed >= self.sceneBatchJob.total {
+                    self.sceneBatchJob.status = .completed
+                    self.sceneBatchJob.currentVideoPath = nil
+                    self.sceneBatchJob.currentVideoName = nil
+                    self.sceneBatchJob.progress = 1
+                }
+            }
+        }
+    }
+
+    func pauseSceneBatch() {
+        isSceneBatchPaused = true
+        if sceneBatchTask != nil { sceneBatchJob.status = .paused }
+    }
+
+    func resumeSceneBatch() {
+        guard sceneBatchTask != nil else { return }
+        isSceneBatchPaused = false
+        sceneBatchJob.status = .running
+    }
+
+    func cancelSceneBatch() {
+        sceneBatchTask?.cancel()
+        sceneBatchTask = nil
+        isSceneBatchPaused = false
+        sceneBatchJob = TranscriptBatchJob()
+    }
+
+    private func updateSceneBatchProgress(completed: Int, currentProgress: Double) {
+        let total = max(1, sceneBatchJob.total)
+        sceneBatchJob.completed = completed
+        sceneBatchJob.progress = Self.normalizedProgress((Double(completed) + Self.normalizedProgress(currentProgress)) / Double(total))
     }
 
     func loadCachedSceneCuts(for video: VideoItem) {
@@ -1290,6 +1624,7 @@ final class LibraryStore: ObservableObject {
         guard end - start > 0.05 else { return }
         let path = video.url.path
         let videoName = video.name
+        guard audioClipExportProgressByVideoPath[path] == nil else { return }
         audioClipExportProgressByVideoPath[path] = 0.05
 
         Task { [weak self] in
@@ -1324,12 +1659,22 @@ final class LibraryStore: ObservableObject {
     func transcribe(video: VideoItem) {
         let path = video.url.path
         if case .running = transcriptStatusByVideoPath[path] { return }
-        transcriptStatusByVideoPath[path] = .running("提取音频并本地转写")
+        transcriptStatusByVideoPath[path] = .running("准备字幕分析 1%")
         let videoName = video.name
+        let progressCallback: @Sendable (Double, String) -> Void = { [weak self] progress, message in
+            Task { @MainActor [weak self] in
+                self?.updateTranscriptProgress(path: path, progress: progress, message: message)
+            }
+        }
 
         Task { [weak self] in
             do {
-                let segments = try await Self.runWhisperTranscription(video: video, videoName: videoName, libraryURL: self?.libraryURL)
+                let segments = try await Self.runWhisperTranscription(
+                    video: video,
+                    videoName: videoName,
+                    libraryURL: self?.libraryURL,
+                    progressCallback: progressCallback
+                )
                 self?.transcriptSegmentsByVideoPath[path] = segments
                 self?.transcriptStatusByVideoPath[path] = .idle
                 self?.saveProjectData()
@@ -1337,6 +1682,150 @@ final class LibraryStore: ObservableObject {
                 self?.transcriptStatusByVideoPath[path] = .failed(error.localizedDescription)
             }
         }
+    }
+
+    func deleteTranscript(for video: VideoItem) {
+        let path = video.url.path
+        transcriptSegmentsByVideoPath[path] = nil
+        transcriptStatusByVideoPath[path] = .idle
+        saveProjectData()
+    }
+
+    func deleteAllTranscripts() {
+        transcriptSegmentsByVideoPath.removeAll()
+        transcriptStatusByVideoPath.removeAll()
+        saveProjectData()
+    }
+
+    func startTranscriptBatch(onlyMissing: Bool = true) {
+        guard transcriptBatchTask == nil else { return }
+        let queue = videos.filter { video in
+            if onlyMissing {
+                return transcriptSegmentsByVideoPath[video.url.path, default: []].isEmpty
+            }
+            return true
+        }
+        guard !queue.isEmpty else {
+            transcriptBatchJob = TranscriptBatchJob(status: .completed, total: 0, completed: 0, progress: 1)
+            return
+        }
+
+        isTranscriptBatchPaused = false
+        transcriptBatchJob = TranscriptBatchJob(status: .running, total: queue.count, completed: 0, progress: 0)
+
+        transcriptBatchTask = Task { [weak self] in
+            guard let self else { return }
+            var completed = 0
+
+            for video in queue {
+                while await MainActor.run(body: { self.isTranscriptBatchPaused }) {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if Task.isCancelled { break }
+
+                let path = video.url.path
+                await MainActor.run {
+                    self.transcriptBatchJob.status = .running
+                    self.transcriptBatchJob.currentVideoPath = path
+                    self.transcriptBatchJob.currentVideoName = video.name
+                    self.updateTranscriptBatchProgress(completed: completed, currentProgress: 0)
+                    self.transcriptStatusByVideoPath[path] = .running("准备字幕分析 1%")
+                }
+
+                let progressCallback: @Sendable (Double, String) -> Void = { [weak self] progress, message in
+                    Task { @MainActor [weak self] in
+                        self?.updateTranscriptProgress(path: path, progress: progress, message: message)
+                    }
+                }
+
+                do {
+                    let segments = try await Self.runWhisperTranscription(
+                        video: video,
+                        videoName: video.name,
+                        libraryURL: await MainActor.run { self.libraryURL },
+                        progressCallback: progressCallback
+                    )
+                    completed += 1
+                    await MainActor.run {
+                        self.transcriptSegmentsByVideoPath[path] = segments
+                        self.transcriptStatusByVideoPath[path] = .idle
+                        self.updateTranscriptBatchProgress(completed: completed, currentProgress: 0)
+                        self.saveProjectData()
+                    }
+                } catch {
+                    completed += 1
+                    await MainActor.run {
+                        self.transcriptStatusByVideoPath[path] = .failed(error.localizedDescription)
+                        self.updateTranscriptBatchProgress(completed: completed, currentProgress: 0)
+                    }
+                }
+            }
+
+            await MainActor.run {
+                self.transcriptBatchTask = nil
+                if self.transcriptBatchJob.completed >= self.transcriptBatchJob.total {
+                    self.transcriptBatchJob.status = .completed
+                    self.transcriptBatchJob.currentVideoPath = nil
+                    self.transcriptBatchJob.currentVideoName = nil
+                    self.transcriptBatchJob.progress = 1
+                }
+            }
+        }
+    }
+
+    func pauseTranscriptBatch() {
+        isTranscriptBatchPaused = true
+        if transcriptBatchTask != nil {
+            transcriptBatchJob.status = .paused
+        }
+    }
+
+    func resumeTranscriptBatch() {
+        guard transcriptBatchTask != nil else { return }
+        isTranscriptBatchPaused = false
+        transcriptBatchJob.status = .running
+    }
+
+    func cancelTranscriptBatch() {
+        transcriptBatchTask?.cancel()
+        transcriptBatchTask = nil
+        isTranscriptBatchPaused = false
+        transcriptBatchJob = TranscriptBatchJob()
+    }
+
+    private func updateTranscriptProgress(path: String, progress: Double, message: String) {
+        let normalized = Self.normalizedProgress(progress)
+        let currentMessage: String
+        let currentProgress: Double
+        if case let .running(existingMessage) = transcriptStatusByVideoPath[path] {
+            currentMessage = existingMessage
+            currentProgress = Self.parsePercentValue(from: existingMessage).map { Self.normalizedProgress($0 / 100) } ?? 0
+        } else {
+            currentMessage = ""
+            currentProgress = 0
+        }
+
+        let stableProgress = max(currentProgress, normalized)
+        let progressDelta = stableProgress - currentProgress
+        let stageChanged = !currentMessage.hasPrefix(message)
+        guard stageChanged || progressDelta >= 0.01 || stableProgress >= 0.995 else { return }
+
+        transcriptStatusByVideoPath[path] = .running(
+            "\(message) \(Self.progressPercentTextForStatus(stableProgress))"
+        )
+        if transcriptBatchJob.currentVideoPath == path {
+            updateTranscriptBatchProgress(completed: transcriptBatchJob.completed, currentProgress: stableProgress)
+        }
+    }
+
+    private func updateTranscriptBatchProgress(completed: Int, currentProgress: Double) {
+        let total = max(1, transcriptBatchJob.total)
+        transcriptBatchJob.completed = completed
+        transcriptBatchJob.progress = Self.normalizedProgress((Double(completed) + Self.normalizedProgress(currentProgress)) / Double(total))
+    }
+
+    nonisolated private static func progressPercentTextForStatus(_ progress: Double) -> String {
+        "\(Int((normalizedProgress(progress) * 100).rounded()))%"
     }
 
     func detectMusic(for video: VideoItem) {
@@ -1390,6 +1879,129 @@ final class LibraryStore: ObservableObject {
         musicDetectionStatusByVideoPath[path] = .idle
     }
 
+    func deleteMusicRecognition(for video: VideoItem) {
+        let path = video.url.path
+        musicDetectionTasks[path]?.cancel()
+        musicDetectionTasks[path] = nil
+        musicsByVideoPath.removeValue(forKey: path)
+        musicDetectionStatusByVideoPath[path] = .idle
+        saveProjectData()
+    }
+
+    func deleteAllMusicRecognitions() {
+        musicDetectionTasks.values.forEach { $0.cancel() }
+        musicDetectionTasks.removeAll()
+        musicsByVideoPath.removeAll()
+        musicDetectionStatusByVideoPath.removeAll()
+        saveProjectData()
+    }
+
+    func startMusicBatch(onlyMissing: Bool = true) {
+        guard musicBatchTask == nil else { return }
+        let queue = videos.filter { video in
+            if onlyMissing {
+                return musicsByVideoPath[video.url.path, default: []].isEmpty
+            }
+            return true
+        }
+        guard !queue.isEmpty else {
+            musicBatchJob = TranscriptBatchJob(status: .completed, total: 0, completed: 0, progress: 1)
+            return
+        }
+
+        isMusicBatchPaused = false
+        musicBatchJob = TranscriptBatchJob(status: .running, total: queue.count, completed: 0, progress: 0)
+        musicBatchTask = Task { [weak self] in
+            guard let self else { return }
+            var completed = 0
+
+            for video in queue {
+                while await MainActor.run(body: { self.isMusicBatchPaused }) {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if Task.isCancelled { break }
+
+                let path = video.url.path
+                await MainActor.run {
+                    self.musicBatchJob.status = .running
+                    self.musicBatchJob.currentVideoPath = path
+                    self.musicBatchJob.currentVideoName = video.name
+                    self.musicDetectionStatusByVideoPath[path] = .running("准备中…")
+                    self.musicsByVideoPath[path] = []
+                    self.updateMusicBatchProgress(completed: completed, currentProgress: 0)
+                }
+
+                do {
+                    let songs = try await Self.runMusicDetection(
+                        videoPath: path,
+                        onEvent: { event in
+                            await MainActor.run {
+                                switch event {
+                                case .progress(let message):
+                                    self.musicDetectionStatusByVideoPath[path] = .running(message)
+                                case .found(let song):
+                                    var current = self.musicsByVideoPath[path] ?? []
+                                    if !current.contains(where: { $0.title == song.title && $0.artist == song.artist }) {
+                                        current.append(song)
+                                        self.musicsByVideoPath[path] = current
+                                    }
+                                }
+                            }
+                        }
+                    )
+                    completed += 1
+                    await MainActor.run {
+                        self.musicsByVideoPath[path] = songs
+                        self.musicDetectionStatusByVideoPath[path] = .completed
+                        self.updateMusicBatchProgress(completed: completed, currentProgress: 0)
+                        self.saveProjectData()
+                    }
+                } catch {
+                    completed += 1
+                    await MainActor.run {
+                        self.musicsByVideoPath[path] = []
+                        self.musicDetectionStatusByVideoPath[path] = .failed(error.localizedDescription)
+                        self.updateMusicBatchProgress(completed: completed, currentProgress: 0)
+                    }
+                }
+            }
+
+            await MainActor.run {
+                self.musicBatchTask = nil
+                if self.musicBatchJob.completed >= self.musicBatchJob.total {
+                    self.musicBatchJob.status = .completed
+                    self.musicBatchJob.currentVideoPath = nil
+                    self.musicBatchJob.currentVideoName = nil
+                    self.musicBatchJob.progress = 1
+                }
+            }
+        }
+    }
+
+    func pauseMusicBatch() {
+        isMusicBatchPaused = true
+        if musicBatchTask != nil { musicBatchJob.status = .paused }
+    }
+
+    func resumeMusicBatch() {
+        guard musicBatchTask != nil else { return }
+        isMusicBatchPaused = false
+        musicBatchJob.status = .running
+    }
+
+    func cancelMusicBatch() {
+        musicBatchTask?.cancel()
+        musicBatchTask = nil
+        isMusicBatchPaused = false
+        musicBatchJob = TranscriptBatchJob()
+    }
+
+    private func updateMusicBatchProgress(completed: Int, currentProgress: Double) {
+        let total = max(1, musicBatchJob.total)
+        musicBatchJob.completed = completed
+        musicBatchJob.progress = Self.normalizedProgress((Double(completed) + Self.normalizedProgress(currentProgress)) / Double(total))
+    }
+
     func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) {
         guard let libraryURL else {
             let key = "\(song.title)|\(song.artist)"
@@ -1408,7 +2020,7 @@ final class LibraryStore: ObservableObject {
 
         let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
-                self?.updateMusicDownloadJob(id: jobID) { j in j.downloadProgress = progress }
+                self?.updateMusicDownloadJob(id: jobID) { j in j.downloadProgress = Self.normalizedProgress(progress) }
             }
         }
 
@@ -1846,7 +2458,8 @@ final class LibraryStore: ObservableObject {
             case "progress":
                 let msg = json["message"] as? String ?? ""
                 let val = json["value"] as? Double ?? 0
-                await onEvent(.progress("识别中 \(Int(val * 100))% · \(msg)"))
+                let percent = Int((min(1, max(0, val)) * 100).rounded())
+                await onEvent(.progress("识别中 \(percent)% · \(msg)"))
 
             case "found":
                 if let songDict = json["song"] as? [String: Any],
@@ -2534,12 +3147,14 @@ final class LibraryStore: ObservableObject {
 
     nonisolated private final class RemoteFileDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         private let destinationURL: URL
-        private let progressCallback: (@Sendable (Double) -> Void)?
+        private let progressCallback: (@Sendable (Double, String?) -> Void)?
         private let lock = NSLock()
         private var continuation: CheckedContinuation<URL, Error>?
         private var session: URLSession?
+        private var lastSpeedSampleDate = Date()
+        private var lastSpeedSampleBytes: Int64 = 0
 
-        init(destinationURL: URL, progressCallback: (@Sendable (Double) -> Void)?) {
+        init(destinationURL: URL, progressCallback: (@Sendable (Double, String?) -> Void)?) {
             self.destinationURL = destinationURL
             self.progressCallback = progressCallback
         }
@@ -2569,7 +3184,18 @@ final class LibraryStore: ObservableObject {
         ) {
             guard totalBytesExpectedToWrite > 0 else { return }
             let progress = min(1, max(0, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
-            progressCallback?(progress)
+            let now = Date()
+            let elapsed = now.timeIntervalSince(lastSpeedSampleDate)
+            let speed: String?
+            if elapsed >= 0.45, totalBytesWritten >= lastSpeedSampleBytes {
+                let bytesPerSecond = Double(totalBytesWritten - lastSpeedSampleBytes) / elapsed
+                speed = Self.formatSpeed(bytesPerSecond)
+                lastSpeedSampleDate = now
+                lastSpeedSampleBytes = totalBytesWritten
+            } else {
+                speed = nil
+            }
+            progressCallback?(progress, speed)
         }
 
         func urlSession(
@@ -2598,11 +3224,19 @@ final class LibraryStore: ObservableObject {
                 )
                 try? FileManager.default.removeItem(at: destinationURL)
                 try FileManager.default.moveItem(at: location, to: destinationURL)
-                progressCallback?(1)
+                progressCallback?(1, nil)
                 resume(with: .success(destinationURL))
             } catch {
                 resume(with: .failure(error))
             }
+        }
+
+        private static func formatSpeed(_ bytesPerSecond: Double) -> String? {
+            guard bytesPerSecond.isFinite, bytesPerSecond > 0 else { return nil }
+            return ByteCountFormatter.string(
+                fromByteCount: Int64(bytesPerSecond.rounded()),
+                countStyle: .file
+            ) + "/s"
         }
 
         func urlSession(
@@ -2656,8 +3290,9 @@ final class LibraryStore: ObservableObject {
         into libraryURL: URL,
         platform: String,
         endpoint: String,
-        progressCallback: (@Sendable (Double) -> Void)? = nil,
-        transcodingCallback: (@Sendable () -> Void)? = nil
+        progressCallback: (@Sendable (Double, String?) -> Void)? = nil,
+        transcodingCallback: (@Sendable (Double?) -> Void)? = nil,
+        processCallback: (@Sendable (Process?) -> Void)? = nil
     ) async throws -> URL {
         let safeFolder = platform.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
         let destinationDirectory = libraryURL
@@ -2674,7 +3309,8 @@ final class LibraryStore: ObservableObject {
                executableURL: ytdlp,
                sourceURL: sourceURL,
                destinationDirectory: destinationDirectory,
-               progressCallback: progressCallback
+               progressCallback: progressCallback,
+               processCallback: processCallback
            ) {
             rawURL = result
         }
@@ -2715,14 +3351,14 @@ final class LibraryStore: ObservableObject {
         }
 
         // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264
-        return await transcodeToH264IfNeeded(downloadedURL, willTranscodeCallback: transcodingCallback) ?? downloadedURL
+        return await transcodeToH264IfNeeded(downloadedURL, progressCallback: transcodingCallback) ?? downloadedURL
     }
 
     // MARK: - VP9/AV1 → H.264 转码（解决 macOS 播放兼容性）
 
     nonisolated private static func transcodeToH264IfNeeded(
         _ url: URL,
-        willTranscodeCallback: (@Sendable () -> Void)? = nil
+        progressCallback: (@Sendable (Double?) -> Void)? = nil
     ) async -> URL? {
         await Task.detached(priority: .utility) {
             let ffprobePath = "/opt/homebrew/bin/ffprobe"
@@ -2755,11 +3391,13 @@ final class LibraryStore: ObservableObject {
             guard unsupported.contains(codec) else { return nil }
 
             // 通知 UI 进入转码阶段
-            willTranscodeCallback?()
+            progressCallback?(nil)
 
             // 找 ffmpeg
             let ffmpegPath = "/opt/homebrew/bin/ffmpeg"
             guard FileManager.default.isExecutableFile(atPath: ffmpegPath) else { return nil }
+            let asset = AVURLAsset(url: url)
+            let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
 
             // 先输出到临时文件，避免和原文件重名冲突
             let stem = url.deletingPathExtension().lastPathComponent
@@ -2779,14 +3417,33 @@ final class LibraryStore: ObservableObject {
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-movflags", "+faststart",
+                "-progress", "pipe:1",
+                "-nostats",
                 "-y",
                 tmpURL.path
             ]
-            ffmpegProcess.standardOutput = Pipe()
+            let progressPipe = Pipe()
+            ffmpegProcess.standardOutput = progressPipe
             ffmpegProcess.standardError = Pipe()
+
+            let progressCollector = PipeDataCollector()
+            progressPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else { return }
+                progressCollector.append(chunk)
+                guard duration.isFinite, duration > 0,
+                      let text = String(data: chunk, encoding: .utf8) else { return }
+                for line in text.components(separatedBy: .newlines) {
+                    guard line.hasPrefix("out_time_ms="),
+                          let rawValue = Double(line.dropFirst("out_time_ms=".count)) else { continue }
+                    progressCallback?(min(0.995, max(0, rawValue / 1_000_000 / duration)))
+                }
+            }
 
             guard (try? ffmpegProcess.run()) != nil else { return nil }
             ffmpegProcess.waitUntilExit()
+            progressPipe.fileHandleForReading.readabilityHandler = nil
+            progressCollector.append(progressPipe.fileHandleForReading.readDataToEndOfFile())
 
             guard
                 ffmpegProcess.terminationStatus == 0,
@@ -2795,6 +3452,7 @@ final class LibraryStore: ObservableObject {
                 try? FileManager.default.removeItem(at: tmpURL)
                 return nil
             }
+            progressCallback?(1)
 
             // 删除原 VP9 文件，把临时文件重命名回原名
             try? FileManager.default.removeItem(at: url)
@@ -2812,9 +3470,9 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func downloadRemoteFile(
         request: URLRequest,
         to outputURL: URL,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double, String?) -> Void)? = nil
     ) async throws -> URL {
-        progressCallback?(0.02)
+        progressCallback?(0.02, nil)
         let downloader = RemoteFileDownloader(destinationURL: outputURL, progressCallback: progressCallback)
         return try await downloader.download(request: request)
     }
@@ -2822,7 +3480,7 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func downloadXiaoHongShuNative(
         from sourceURL: URL,
         destinationDirectory: URL,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double, String?) -> Void)? = nil
     ) async throws -> URL {
         // 解析 note ID（去掉 query string）
         let noteId = sourceURL.lastPathComponent.components(separatedBy: "?").first
@@ -2926,10 +3584,12 @@ final class LibraryStore: ObservableObject {
         executableURL: URL,
         sourceURL: URL,
         destinationDirectory: URL,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double, String?) -> Void)? = nil,
+        processCallback: (@Sendable (Process?) -> Void)? = nil
     ) async throws -> URL {
         try await Task.detached(priority: .utility) {
             let process = Process()
+            defer { processCallback?(nil) }
             process.executableURL = executableURL
 
             // 确保 yt-dlp 能找到 ffmpeg（App 启动时没有完整 PATH）
@@ -2960,47 +3620,41 @@ final class LibraryStore: ObservableObject {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
-            // 实时读取 stderr 解析进度（yt-dlp 进度输出到 stderr）
-            // 用 @unchecked Sendable 类封装可变状态，避免 Swift 6 并发警告
-            final class StderrCollector: @unchecked Sendable {
-                private let lock = NSLock()
-                private var buffer = Data()
-                func append(_ data: Data) {
-                    lock.lock(); defer { lock.unlock() }
-                    buffer.append(data)
-                }
-                var data: Data {
-                    lock.lock(); defer { lock.unlock() }
-                    return buffer
-                }
-            }
-            let collector = StderrCollector()
-
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                guard !chunk.isEmpty else { return }
-                collector.append(chunk)
-                if let text = String(data: chunk, encoding: .utf8) {
-                    for line in text.components(separatedBy: .newlines) {
-                        if let p = parseYTDLPProgressLine(line) {
-                            progressCallback?(p)
-                        }
+            let outputCollector = PipeLineCollector()
+            let errorCollector = PipeLineCollector()
+            let handleProgressLines: @Sendable ([String]) -> Void = { lines in
+                for line in lines {
+                    if let update = parseYTDLPProgressUpdate(line) {
+                        progressCallback?(min(update.progress, 0.96), update.speed)
                     }
                 }
             }
 
+            progressCallback?(0.01, nil)
+
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                handleProgressLines(outputCollector.append(handle.availableData))
+            }
+
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                handleProgressLines(errorCollector.append(handle.availableData))
+            }
+
             try process.run()
+            processCallback?(process)
             process.waitUntilExit()
 
             // nil 掉 handler（内部会等当前 handler 执行完毕），再排空剩余数据
+            outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
-            collector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            handleProgressLines(outputCollector.finish(with: outputPipe.fileHandleForReading.readDataToEndOfFile()))
+            handleProgressLines(errorCollector.finish(with: errorPipe.fileHandleForReading.readDataToEndOfFile()))
 
             let output = String(
-                data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                data: outputCollector.data,
                 encoding: .utf8
             ) ?? ""
-            let errorOutput = String(data: collector.data, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errorCollector.data, encoding: .utf8) ?? ""
 
             guard process.terminationStatus == 0 else {
                 throw RemoteImportError.downloaderFailed(errorOutput)
@@ -3024,8 +3678,53 @@ final class LibraryStore: ObservableObject {
         }.value
     }
 
+    nonisolated private static func remoteThumbnailData(for sourceURL: URL) async -> Data? {
+        guard let ytdlp = localYTDLPURL() else { return nil }
+
+        return await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = ytdlp
+            process.arguments = [
+                "--no-playlist",
+                "--skip-download",
+                "--print", "thumbnail",
+                "--no-warnings",
+                sourceURL.absoluteString
+            ]
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                return nil
+            }
+
+            guard process.terminationStatus == 0 else { return nil }
+
+            let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            guard
+                let thumbnail = output
+                    .split(whereSeparator: \.isNewline)
+                    .map(String.init)
+                    .first(where: { $0.hasPrefix("http://") || $0.hasPrefix("https://") }),
+                let thumbnailURL = URL(string: thumbnail)
+            else { return nil }
+
+            return try? Data(contentsOf: thumbnailURL)
+        }.value
+    }
+
     /// 解析 yt-dlp 进度行，如 "[download]  45.6% of 1.23MiB at 2.34MiB/s ETA 00:12"
     nonisolated private static func parseYTDLPProgressLine(_ line: String) -> Double? {
+        parseYTDLPProgressUpdate(line)?.progress
+    }
+
+    nonisolated private static func parseYTDLPProgressUpdate(_ line: String) -> DownloadProgressUpdate? {
         guard line.contains("[download]"), line.contains("%") else { return nil }
         // 忽略 "Destination:" 等非进度行
         guard !line.contains("Destination:"),
@@ -3034,17 +3733,31 @@ final class LibraryStore: ObservableObject {
         let tokens = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         for token in tokens where token.hasSuffix("%") {
             if let value = Double(token.dropLast()), value >= 0 {
-                return min(1.0, value / 100.0)
+                return DownloadProgressUpdate(
+                    progress: min(1.0, value / 100.0),
+                    speed: parseYTDLPSpeed(from: line)
+                )
             }
         }
         return nil
+    }
+
+    nonisolated private static func parseYTDLPSpeed(from line: String) -> String? {
+        let pattern = #"\bat\s+([^\s]+/s)\b"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+            let range = Range(match.range(at: 1), in: line)
+        else { return nil }
+        let speed = String(line[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return speed.isEmpty || speed == "Unknown/s" ? nil : speed
     }
 
     nonisolated private static func importViaConfiguredAPI(
         sourceURL: URL,
         endpoint: String,
         destinationDirectory: URL,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double, String?) -> Void)? = nil
     ) async throws -> URL {
         guard let endpointURL = URL(string: endpoint) else {
             throw RemoteImportError.invalidAPIEndpoint
@@ -3103,7 +3816,7 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func importViaCobalt(
         sourceURL: URL,
         destinationDirectory: URL,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double, String?) -> Void)? = nil
     ) async throws -> URL {
         guard let cobaltEndpoint = URL(string: "https://api.cobalt.tools/") else {
             throw RemoteImportError.downloaderMissing
@@ -3595,8 +4308,14 @@ final class LibraryStore: ObservableObject {
         }.value
     }
 
-    nonisolated private static func runWhisperTranscription(video: VideoItem, videoName: String, libraryURL: URL?) async throws -> [TranscriptSegment] {
+    nonisolated private static func runWhisperTranscription(
+        video: VideoItem,
+        videoName: String,
+        libraryURL: URL?,
+        progressCallback: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws -> [TranscriptSegment] {
         try await Task.detached(priority: .utility) {
+            progressCallback?(0.01, "准备字幕分析")
             let scriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/transcribe_with_whisper.sh"
             guard FileManager.default.isExecutableFile(atPath: scriptPath) else {
                 throw NSError(domain: "LapianBao", code: 1, userInfo: [NSLocalizedDescriptionKey: "找不到本地 Whisper 转写脚本"])
@@ -3611,21 +4330,116 @@ final class LibraryStore: ObservableObject {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: scriptPath)
             process.arguments = [video.url.path, outputBase.path, "auto"]
-            process.standardOutput = Pipe()
-            let errorPipe = Pipe()
-            process.standardError = errorPipe
+
+            var environment = ProcessInfo.processInfo.environment
+            let extraPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            environment["PATH"] = [environment["PATH"], extraPath]
+                .compactMap { $0 }
+                .joined(separator: ":")
+            process.environment = environment
+
+            let logURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("LapianBao-whisper-\(UUID().uuidString).log")
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            let logHandle = try FileHandle(forWritingTo: logURL)
+            defer {
+                try? logHandle.close()
+                try? FileManager.default.removeItem(at: logURL)
+            }
+            let outputPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = outputPipe
+            let outputCollector = PipeLineCollector()
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else { return }
+                try? logHandle.write(contentsOf: chunk)
+                for line in outputCollector.append(chunk) {
+                    if let update = parseWhisperProgressUpdate(line) {
+                        progressCallback?(update.progress, update.message)
+                    }
+                }
+            }
             try process.run()
             process.waitUntilExit()
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            let remainingOutput = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            if !remainingOutput.isEmpty {
+                try? logHandle.write(contentsOf: remainingOutput)
+            }
+            for line in outputCollector.finish(with: remainingOutput) {
+                if let update = parseWhisperProgressUpdate(line) {
+                    progressCallback?(update.progress, update.message)
+                }
+            }
 
             guard process.terminationStatus == 0 else {
-                let message = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "本地转写失败"
+                let logData = (try? Data(contentsOf: logURL)) ?? Data()
+                let fullMessage = String(data: logData, encoding: .utf8) ?? "本地转写失败"
+                let message = trimmedProcessLog(fullMessage, fallback: "本地转写失败")
                 throw NSError(domain: "LapianBao", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
             }
 
             let jsonURL = outputBase.appendingPathExtension("json")
+            progressCallback?(0.98, "载入字幕结果")
             let data = try Data(contentsOf: jsonURL)
-            return try parseWhisperSegments(data: data, videoPath: video.url.path)
+            let segments = try parseWhisperSegments(data: data, videoPath: video.url.path)
+            let cleanedSegments = cleanTranscriptSegments(segments)
+            progressCallback?(1.0, "字幕分析完成")
+            return cleanedSegments
         }.value
+    }
+
+    nonisolated private struct WhisperProgressUpdate: Sendable {
+        let progress: Double
+        let message: String
+    }
+
+    nonisolated private static func parseWhisperProgressUpdate(_ line: String) -> WhisperProgressUpdate? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("LPB_PROGRESS") {
+            let parts = trimmed.split(separator: " ", maxSplits: 2).map(String.init)
+            guard parts.count >= 2, let value = Double(parts[1]) else { return nil }
+            let message = parts.count >= 3 ? parts[2] : "字幕分析中"
+            return WhisperProgressUpdate(progress: normalizedProgress(value), message: message)
+        }
+
+        guard let percent = parsePercentValue(from: trimmed) else { return nil }
+        return WhisperProgressUpdate(
+            progress: min(0.94, 0.18 + normalizedProgress(percent / 100) * 0.76),
+            message: "本地 Whisper 转写"
+        )
+    }
+
+    nonisolated private static func parsePercentValue(from line: String) -> Double? {
+        let normalized = line.replacingOccurrences(of: "％", with: "%")
+        guard let percentRange = normalized.range(of: "%", options: .backwards) else { return nil }
+        let prefix = normalized[..<percentRange.lowerBound]
+        let chars = Array(prefix)
+        var start = chars.count
+
+        while start > 0 {
+            let char = chars[start - 1]
+            if char.isNumber || char == "." {
+                start -= 1
+            } else {
+                break
+            }
+        }
+
+        guard start < chars.count else { return nil }
+        return Double(String(chars[start...]))
+    }
+
+    nonisolated private static func trimmedProcessLog(_ message: String, fallback: String) -> String {
+        let lines = message
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let tail = lines.suffix(12).joined(separator: "\n")
+        return tail.isEmpty ? fallback : tail
     }
 
     nonisolated private struct WhisperOutput: Decodable {
@@ -3667,6 +4481,102 @@ final class LibraryStore: ObservableObject {
             guard !text.isEmpty else { return nil }
             return TranscriptSegment(videoPath: videoPath, start: start, end: end, text: text)
         }
+    }
+
+    nonisolated private static func cleanTranscriptSegments(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var cleaned: [TranscriptSegment] = []
+        var recentOccurrences: [String: [Double]] = [:]
+        var totalOccurrences: [String: Int] = [:]
+        let rollingWindow: Double = 180
+
+        for rawSegment in segments.sorted(by: { $0.start < $1.start }) {
+            var segment = rawSegment
+            segment.text = collapseRepeatedSentences(in: segment.text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !segment.text.isEmpty else { continue }
+            guard segment.end > segment.start else { continue }
+
+            let key = transcriptRepeatKey(segment.text)
+            guard key.count >= 2 else { continue }
+
+            if let last = cleaned.last,
+               transcriptRepeatKey(last.text) == key,
+               segment.start - last.end <= 2.0 {
+                cleaned[cleaned.count - 1].end = max(last.end, segment.end)
+                continue
+            }
+
+            let recent = recentOccurrences[key, default: []]
+                .filter { segment.start - $0 <= rollingWindow }
+            let total = totalOccurrences[key, default: 0]
+            let repeatedInShortWindow = key.count >= 6 && recent.count >= 2
+            let repeatedTooOften = key.count >= 4 && total >= 4
+            if repeatedInShortWindow || repeatedTooOften {
+                recentOccurrences[key] = recent + [segment.start]
+                totalOccurrences[key] = total + 1
+                continue
+            }
+
+            recentOccurrences[key] = recent + [segment.start]
+            totalOccurrences[key] = total + 1
+            cleaned.append(segment)
+        }
+
+        return mergeShortGaps(cleaned)
+    }
+
+    nonisolated private static func mergeShortGaps(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        var merged: [TranscriptSegment] = []
+        for segment in segments {
+            guard let last = merged.last else {
+                merged.append(segment)
+                continue
+            }
+
+            let sameVideo = last.videoPath == segment.videoPath
+            let close = segment.start - last.end <= 0.25
+            let combinedText = "\(last.text)\(segment.text)"
+            if sameVideo, close, combinedText.count <= 42 {
+                var updated = last
+                updated.end = max(last.end, segment.end)
+                updated.text = "\(last.text) \(segment.text)"
+                merged[merged.count - 1] = updated
+            } else {
+                merged.append(segment)
+            }
+        }
+        return merged
+    }
+
+    nonisolated private static func collapseRepeatedSentences(in text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+
+        var result: [String] = []
+        let pattern = #"[^。！？!?;；，,]+[。！？!?;；，,]?"#
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+            for match in regex.matches(in: normalized, range: range) {
+                guard let textRange = Range(match.range, in: normalized) else { continue }
+                let sentence = String(normalized[textRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !sentence.isEmpty else { continue }
+                if result.last.map(transcriptRepeatKey) == transcriptRepeatKey(sentence) {
+                    continue
+                }
+                result.append(sentence)
+            }
+        }
+
+        return result.isEmpty ? normalized : result.joined(separator: " ")
+    }
+
+    nonisolated private static func transcriptRepeatKey(_ text: String) -> String {
+        text.lowercased()
+            .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[[:punct:][:symbol:]，。！？；：“”‘’、（）《》【】—…·]"#, with: "", options: .regularExpression)
     }
 
     nonisolated private static func parseTimestamp(_ text: String) -> Double? {

@@ -39,9 +39,9 @@ final class PreviewController: ObservableObject {
 
     init() {
         player = Self.sharedPlayer
-        player.automaticallyWaitsToMinimizeStalling = false
+        player.automaticallyWaitsToMinimizeStalling = true
 
-        let interval = CMTime(seconds: 1.0 / 60.0, preferredTimescale: 600)
+        let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
         timeObserverToken = player.addPeriodicTimeObserver(
             forInterval: interval, queue: .main
         ) { [weak self] _ in
@@ -153,13 +153,15 @@ final class PreviewController: ObservableObject {
         if isPlaying || abs(playbackRate) > 0.001 { pause() } else { setRate(1) }
     }
 
-    func pause() {
+    func pause(snapToFrame: Bool = false) {
         player.pause()
         player.isMuted = false
         playbackRate = 0
         isPlaying = false
         updateProgress()
-        snapToNearestFrame()
+        if snapToFrame {
+            snapToNearestFrame()
+        }
     }
 
     func setRate(_ rate: Double) {
@@ -204,7 +206,7 @@ final class PreviewController: ObservableObject {
     }
 
     func stepFrame(by direction: Int) {
-        pause()
+        pause(snapToFrame: false)
         seekToSeconds(elapsed + Double(direction) / max(frameRate, 1))
     }
 
@@ -271,8 +273,15 @@ final class PreviewController: ObservableObject {
     }
 
     private func handleEnd() {
-        isPlaying = false; playbackRate = 0; progress = 0; elapsed = 0
-        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        isPlaying = false
+        playbackRate = 0
+        if let d = effectiveDuration, d > 0 {
+            elapsed = d
+            progress = 1
+        } else {
+            elapsed = 0
+            progress = 0
+        }
     }
 
     private func snapToNearestFrame() {
@@ -326,7 +335,11 @@ final class PreviewController: ObservableObject {
     private func beginPlayback(at rate: Double) {
         playbackMessage = nil
         player.isMuted = rate < 0
-        player.playImmediately(atRate: Float(rate))
+        if abs(rate - 1) <= 0.001 {
+            player.play()
+        } else {
+            player.playImmediately(atRate: Float(rate))
+        }
         playbackRate = rate
         isPlaying = true
     }
@@ -349,6 +362,7 @@ final class PreviewController: ObservableObject {
 
     private func replacePlayerItem(with url: URL) {
         let item = AVPlayerItem(url: url)
+        item.preferredForwardBufferDuration = 1.5
         item.forwardPlaybackEndTime = .invalid
         item.reversePlaybackEndTime = .zero
         player.replaceCurrentItem(with: item)
