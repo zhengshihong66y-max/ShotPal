@@ -5,16 +5,18 @@ import Foundation
 
 // MARK: - PreviewController
 /// 持有 AVPlayer 和播放状态。作为 @StateObject 存在，
-/// 播放中用高频 time observer 驱动，让时间线播放头保持连续移动。
+/// 播放中定期同步 AVPlayer 状态。视频画面由 AVPlayerLayer 自己刷新，
+/// 这里避免用显示器刷新率驱动整块 SwiftUI 预览面板重算。
 @MainActor
 final class PreviewController: ObservableObject {
     private static let sharedPlayer = AVPlayer()
+    private static let playbackStateInterval = 1.0 / 12.0
 
     // ── Published（播放中高频变化）────────────────
     @Published var isPlaying     = false
     @Published var elapsed       = 0.0
     @Published var duration      = 0.0
-    @Published var progress      = 0.0
+    var progress      = 0.0
     @Published var frameRate     = 30.0
     @Published var playbackRate  = 0.0
     @Published var playbackMessage: String?
@@ -34,14 +36,14 @@ final class PreviewController: ObservableObject {
     private var pendingReverseProxyRate: Double?
     private let unsupportedReversePlaybackMessage = "这个视频编码不支持流畅倒放"
     private let reverseProxyPreparationMessage = "正在准备流畅倒放代理"
-    /// AVPlayer 原生周期观察者：播放中接近刷新率更新，让播放头丝滑移动。
+    /// AVPlayer 原生周期观察者：只同步控制 UI；视频帧刷新不走 SwiftUI。
     private var timeObserverToken: Any?
 
     init() {
         player = Self.sharedPlayer
         player.automaticallyWaitsToMinimizeStalling = true
 
-        let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
+        let interval = CMTime(seconds: Self.playbackStateInterval, preferredTimescale: 600)
         timeObserverToken = player.addPeriodicTimeObserver(
             forInterval: interval, queue: .main
         ) { [weak self] _ in

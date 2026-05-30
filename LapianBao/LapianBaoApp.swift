@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hostingController = NSHostingController(rootView: contentView)
         let window = PreviewKeyboardWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
-            styleMask: [.titled, .resizable, .closable, .miniaturizable],
+            styleMask: [.titled, .resizable, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )

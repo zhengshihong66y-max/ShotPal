@@ -85,9 +85,18 @@ enum Design {
     static let railIconInset: CGFloat = 8
     static let railButtonHeight: CGFloat = 34
     static let railIconBoxSize: CGFloat = 24
-    static let railButtonVisualOffsetX: CGFloat = 6
+    static let railButtonVisualOffsetX: CGFloat = 3.5
+    static let railSelectionGuideX: CGFloat = railIconInset + railButtonVisualOffsetX
     static let libraryToolbarVisualGap: CGFloat = 14
     static let libraryToolbarHeight: CGFloat = 22
+    static let libraryToolbarButtonSlotWidth: CGFloat = 22
+    static let libraryToolbarButtonSlotHeight: CGFloat = 22
+    static let libraryToolbarButtonGap: CGFloat = 13
+    static let previewHeaderTagRowHeight: CGFloat = 12
+    static let previewHeaderTopInset: CGFloat = libraryToolbarVisualGap
+    static let previewHeaderTitleTagGap: CGFloat = 4
+    static let previewHeaderTitleLineHeight: CGFloat = 22
+    static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderTitleTagGap
     static let trafficLightSize: CGFloat = 12
     static let trafficLightGap: CGFloat = 6
     static let trafficLightClusterWidth: CGFloat = trafficLightSize * 3 + trafficLightGap * 2
@@ -104,12 +113,16 @@ enum Design {
     static let timelineLaneContentHeight: CGFloat = timelineLaneHeight - timelineLaneVisualGap * 2
     static let expandedTimelineDetailHeight: CGFloat = 280
     static let expandedTimelineStackMaxHeight: CGFloat = 520
+    static let sceneTimelineAutoVisibleSceneLimit = 36
+    static let sceneTimelineAutoMaxZoom: Double = 6
     static let centeredWaveformViewportSpan: Double = 0.22
     static let previewExportOverlayWidthRatio: CGFloat = 1.0 / 3.0
+    static let previewExportOverlayMinWidth: CGFloat = 260
     static let previewExportOverlayButtonSize: CGFloat = 28
     static let previewExportOverlayButtonIconSize: CGFloat = 13
     static let previewExportOverlayButtonInset: CGFloat = 10
     static let previewExportPanelPadding: CGFloat = 10
+    static let libraryToolbarIconTint = Color.white.opacity(0.72)
 
     // 侧边栏（icon rail + 内容区）统一同色，主内容略亮，形成嵌套层次感
     static let sidebarBg = Color(red: 0.118, green: 0.118, blue: 0.129)
@@ -138,11 +151,13 @@ private enum ExportPanelFilter: String, CaseIterable, Identifiable {
 private enum ExportPanelItem: Identifiable {
     case frame(SampledFrame)
     case audio(AudioClipItem)
+    case transcript(TranscriptExportItem)
 
     var id: String {
         switch self {
         case .frame(let frame): return "frame-\(frame.id.uuidString)"
         case .audio(let clip): return "audio-\(clip.id.uuidString)"
+        case .transcript(let export): return "transcript-\(export.id.uuidString)"
         }
     }
 
@@ -150,8 +165,22 @@ private enum ExportPanelItem: Identifiable {
         switch self {
         case .frame(let frame): return frame.createdAt
         case .audio(let clip): return clip.createdAt
+        case .transcript(let export): return export.createdAt
         }
     }
+}
+
+private struct TimelineAnnotationMarker: Identifiable, Equatable {
+    var id: UUID
+    var progress: Double
+    var text: String
+    var kind: AnnotationItem.Kind
+}
+
+private struct AnnotationEditorAnchor: Equatable {
+    var progress: Double
+    var kind: AnnotationItem.Kind
+    var sourceTab: PreviewTab
 }
 
 private enum AppWorkspace: String, CaseIterable, Identifiable {
@@ -160,6 +189,10 @@ private enum AppWorkspace: String, CaseIterable, Identifiable {
     case audio
     case content
     case settings
+
+    static var allCases: [AppWorkspace] {
+        [.home, .frames, .audio, .settings]
+    }
 
     var id: String { rawValue }
 
@@ -193,6 +226,20 @@ private enum AppWorkspace: String, CaseIterable, Identifiable {
     }
 }
 
+private enum FramesBoardMode: String, CaseIterable, Identifiable {
+    case storyboard = "分镜模式"
+    case byVideo = "按视频精选"
+    case byTag = "按标签精选"
+
+    var id: String { rawValue }
+}
+
+private struct VideoDateSection: Identifiable {
+    var id: String
+    var title: String
+    var videos: [VideoItem]
+}
+
 private enum VideoSourcePlatform: String, CaseIterable {
     case instagram = "Instagram"
     case youtube = "YouTube"
@@ -205,7 +252,7 @@ private enum VideoSourcePlatform: String, CaseIterable {
         case .instagram: return "camera"
         case .youtube: return "play.rectangle.fill"
         case .xiaohongshu: return "book.pages.fill"
-        case .bilibili: return "tv.fill"
+        case .bilibili: return "play.rectangle.fill"
         case .douyin: return "music.note.tv.fill"
         }
     }
@@ -358,6 +405,151 @@ private struct VideoTagOverflowChip: View {
     }
 }
 
+private struct TagSuggestionGrid: View {
+    let currentTags: [String]
+    let suggestedTags: [String]
+    var limit = 12
+    let onAdd: (String) -> Void
+
+    private var candidates: [String] {
+        suggestedTags.filter { !currentTags.contains($0) }
+    }
+
+    var body: some View {
+        if !candidates.isEmpty {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(candidates.prefix(limit), id: \.self) { tag in
+                    Button {
+                        onAdd(tag)
+                    } label: {
+                        HStack(spacing: 4) {
+                            VideoTagColorDot(tag: tag)
+                            Text(tag)
+                                .font(.caption2.weight(.semibold))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct InlineTagEditorButton: View {
+    let title: String
+    let tags: [String]
+    let suggestedTags: [String]
+    var buttonSize: CGFloat = 26
+    let onAdd: (String) -> Void
+    let onRemove: (String) -> Void
+
+    @State private var isPresented = false
+    @State private var draftTag = ""
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: tags.isEmpty ? "tag" : "tag.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tags.isEmpty ? .secondary : Design.captureFrameAccent)
+                .frame(width: buttonSize, height: buttonSize)
+                .overlay(alignment: .topTrailing) {
+                    if !tags.isEmpty {
+                        Text("\(tags.count)")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.orange)
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -4)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .popover(isPresented: $isPresented, arrowEdge: .trailing) {
+            tagEditorPopover
+        }
+    }
+
+    private var tagEditorPopover: some View {
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if tags.isEmpty {
+                AppEmptyState(title: "暂无标签", style: .inline, alignment: .leading, fillsWidth: false)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(tags, id: \.self) { tag in
+                            VideoTagChip(tag: tag, size: .compact) {
+                                onRemove(tag)
+                            }
+                        }
+                    }
+                }
+            }
+
+            TagSuggestionGrid(currentTags: tags, suggestedTags: suggestedTags, onAdd: onAdd)
+
+            HStack(spacing: 6) {
+                TextField("添加标签", text: $draftTag)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addDraftTag)
+
+                Button(action: addDraftTag) {
+                    Image(systemName: "plus")
+                }
+                .disabled(draftTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(12)
+        .frame(width: 260)
+        .onChange(of: isPresented) { _, presented in
+            if !presented { draftTag = "" }
+        }
+    }
+
+    private func addDraftTag() {
+        let tag = draftTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty else { return }
+        onAdd(tag)
+        draftTag = ""
+    }
+}
+
+private struct PreviewTitleTagChip: View {
+    let tag: String
+
+    var body: some View {
+        let tint = VideoTagPalette.color(for: tag)
+
+        Text(tag)
+            .font(.system(size: 9, weight: .semibold))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .allowsTightening(true)
+            .frame(maxWidth: 64, minHeight: Design.previewHeaderTagRowHeight, maxHeight: Design.previewHeaderTagRowHeight, alignment: .center)
+            .padding(.horizontal, 5)
+            .foregroundStyle(.primary.opacity(0.88))
+            .background(tint.opacity(0.16))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(tint.opacity(0.28), lineWidth: 0.7)
+            }
+    }
+}
+
 private struct VideoTagColorDot: View {
     let tag: String
 
@@ -397,6 +589,23 @@ private struct SourcePlatformBadge: View {
                 .stroke(tint.opacity(0.42), lineWidth: 0.8)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct SourcePlatformIconBadge: View {
+    static let size: CGFloat = 18
+
+    let platform: String
+
+    var body: some View {
+        let tint = VideoSourcePlatform.color(for: platform)
+
+        Image(systemName: VideoSourcePlatform.iconName(for: platform))
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(tint)
+            .frame(width: Self.size, height: Self.size)
+            .shadow(color: .black.opacity(0.72), radius: 1.4, x: 0, y: 0.7)
+            .shadow(color: .black.opacity(0.32), radius: 4, x: 0, y: 1.5)
     }
 }
 
@@ -595,12 +804,17 @@ private struct CenteredWaveformTimeline: View {
     var sceneCuts: [Double] = []
     var inPoint: Double? = nil
     var outPoint: Double? = nil
+    var annotationItems: [TimelineAnnotationMarker] = []
+    var onAnnotationSelect: ((UUID) -> Void)? = nil
+    var onClearSelection: (() -> Void)? = nil
     var viewportSpan: Double = 1
+    var playheadTint: Color = .white.opacity(0.96)
     var panViewport: ((Double) -> Void)? = nil
     var zoomViewport: ((Double, Double) -> Void)? = nil
 
     @State private var dragStartProgress: Double?
     @State private var draftProgress: Double?
+    @State private var isHoveringSelection = false
     @State private var lastMagnification: CGFloat = 1
 
     private let placeholderSamples: [Double] = (0..<360).map { index in
@@ -635,21 +849,28 @@ private struct CenteredWaveformTimeline: View {
                     let sampleStep = 1 / Double(values.count)
                     let visibleWidth = size.width / CGFloat(span)
                     let barWidth = max(0.65, min(1.5, visibleWidth / CGFloat(values.count) * 0.82))
+                    let visibleStart = max(0, focus - span / 2)
+                    let visibleEnd = min(1, focus + span / 2)
+                    let firstIndex = max(0, Int(floor(visibleStart / sampleStep)) - 1)
+                    let lastIndex = min(values.count - 1, Int(ceil(visibleEnd / sampleStep)) + 1)
 
-                    for (index, value) in values.enumerated() {
-                        let sampleProgress = (Double(index) + 0.5) * sampleStep
-                        let x = xPosition(for: sampleProgress, focus: focus, span: span, width: size.width)
-                        guard x > -barWidth, x < size.width + barWidth else { continue }
+                    if firstIndex <= lastIndex {
+                        for index in firstIndex...lastIndex {
+                            let value = values[index]
+                            let sampleProgress = (Double(index) + 0.5) * sampleStep
+                            let x = xPosition(for: sampleProgress, focus: focus, span: span, width: size.width)
+                            guard x > -barWidth, x < size.width + barWidth else { continue }
 
-                        let normalized = max(0.04, min(1, value))
-                        let barHeight = CGFloat(normalized) * size.height * 0.78
-                        let rect = CGRect(x: x - barWidth / 2, y: (size.height - barHeight) / 2, width: barWidth, height: barHeight)
-                        var path = Path()
-                        path.addRoundedRect(in: rect, cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
-                        let color: Color = samples == nil
-                            ? .white.opacity(0.18)
-                            : (sampleProgress <= focus ? .white.opacity(0.72) : .white.opacity(0.30))
-                        context.fill(path, with: .color(color))
+                            let normalized = max(0.04, min(1, value))
+                            let barHeight = CGFloat(normalized) * size.height * 0.78
+                            let rect = CGRect(x: x - barWidth / 2, y: (size.height - barHeight) / 2, width: barWidth, height: barHeight)
+                            var path = Path()
+                            path.addRoundedRect(in: rect, cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
+                            let color: Color = samples == nil
+                                ? .white.opacity(0.18)
+                                : (sampleProgress <= focus ? .white.opacity(0.72) : .white.opacity(0.30))
+                            context.fill(path, with: .color(color))
+                        }
                     }
 
                     for cut in sceneCuts {
@@ -666,7 +887,55 @@ private struct CenteredWaveformTimeline: View {
                         in: CGRect(x: centerX - 1, y: 1, width: 2, height: size.height - 2),
                         cornerSize: CGSize(width: 1, height: 1)
                     )
-                    context.fill(centerLine, with: .color(.white.opacity(0.96)))
+                    context.fill(centerLine, with: .color(playheadTint))
+                }
+
+                ForEach(annotationItems) { item in
+                    Button {
+                        onAnnotationSelect?(item.id)
+                    } label: {
+                        Circle()
+                            .fill(Color.orange.opacity(0.92))
+                            .frame(width: 8, height: 8)
+                            .overlay {
+                                Circle().stroke(.black.opacity(0.36), lineWidth: 0.6)
+                            }
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(
+                        x: xPosition(
+                            for: item.progress,
+                            focus: min(1, max(0, draftProgress ?? progress)),
+                            span: max(0.02, min(1, viewportSpan)),
+                            width: proxy.size.width
+                        ) - 9,
+                        y: 4
+                    )
+                    .opacity(isMarkerVisible(item.progress, focus: min(1, max(0, draftProgress ?? progress)), span: max(0.02, min(1, viewportSpan))) ? 1 : 0)
+                    .zIndex(5)
+                }
+
+                if isHoveringSelection,
+                   let onClearSelection,
+                   let frame = selectionFrame(
+                       focus: min(1, max(0, draftProgress ?? progress)),
+                       span: max(0.02, min(1, viewportSpan)),
+                       width: proxy.size.width,
+                       height: proxy.size.height
+                   ) {
+                    Button(action: onClearSelection) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .frame(width: 22, height: 22)
+                            .background(Color.orange.opacity(0.82))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .position(x: frame.midX, y: frame.midY)
+                    .help("清除声音选区")
+                    .zIndex(3)
                 }
 
                 if panViewport != nil {
@@ -675,6 +944,19 @@ private struct CenteredWaveformTimeline: View {
                 }
             }
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case let .active(location):
+                    isHoveringSelection = selectionFrame(
+                        focus: min(1, max(0, draftProgress ?? progress)),
+                        span: max(0.02, min(1, viewportSpan)),
+                        width: proxy.size.width,
+                        height: proxy.size.height
+                    )?.contains(location) == true
+                case .ended:
+                    isHoveringSelection = false
+                }
+            }
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -713,6 +995,20 @@ private struct CenteredWaveformTimeline: View {
         width / 2 + CGFloat((sampleProgress - focus) / span) * width
     }
 
+    private func isMarkerVisible(_ sampleProgress: Double, focus: Double, span: Double) -> Bool {
+        abs(sampleProgress - focus) <= span / 2
+    }
+
+    private func selectionFrame(focus: Double, span: Double, width: CGFloat, height: CGFloat) -> CGRect? {
+        guard let inPoint, let outPoint, width > 0, height > 0 else { return nil }
+        let x1 = xPosition(for: min(inPoint, outPoint), focus: focus, span: span, width: width)
+        let x2 = xPosition(for: max(inPoint, outPoint), focus: focus, span: span, width: width)
+        let minX = max(0, min(x1, x2))
+        let maxX = min(width, max(x1, x2))
+        guard maxX - minX >= 10 else { return nil }
+        return CGRect(x: minX, y: 0, width: maxX - minX, height: height)
+    }
+
     private func scrubProgress(for value: DragGesture.Value, width: CGFloat) -> Double {
         if dragStartProgress == nil {
             dragStartProgress = progress
@@ -720,7 +1016,7 @@ private struct CenteredWaveformTimeline: View {
 
         let base = dragStartProgress ?? progress
         let span = max(0.02, min(1, viewportSpan))
-        let next = base + Double(value.translation.width / max(width, 1)) * span
+        let next = base - Double(value.translation.width / max(width, 1)) * span
         return min(1, max(0, next))
     }
 }
@@ -1114,13 +1410,12 @@ private struct CardInlineTagChip: View {
         let tint = VideoTagPalette.color(for: tag)
 
         Text(tag)
-            .font(VideoTagChipSize.mini.font)
+            .font(.system(size: 11, weight: .semibold))
             .lineLimit(1)
             .truncationMode(.tail)
-            .frame(maxWidth: VideoTagChipSize.mini.maxTextWidth, alignment: .leading)
+            .frame(maxWidth: VideoTagChipSize.mini.maxTextWidth, minHeight: 18, maxHeight: 18, alignment: .center)
             .foregroundStyle(.primary)
-            .padding(.horizontal, VideoTagChipSize.mini.horizontalPadding)
-            .padding(.vertical, VideoTagChipSize.mini.verticalPadding)
+            .padding(.horizontal, 7)
             .background(tint.opacity(0.18))
             .clipShape(Capsule())
             .overlay {
@@ -1149,6 +1444,7 @@ private struct ScaledCardTagCloud: View {
 
             if overflowCount > 0 {
                 VideoTagOverflowChip(count: overflowCount)
+                    .frame(height: 18, alignment: .center)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1231,12 +1527,14 @@ private struct SceneStoryboardStrip: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let height = proxy.size.height
-            let boundaries = sceneBoundaries
+            let visibleRange = visibleSceneRange()
 
             ZStack(alignment: .leading) {
-                if images.count == boundaries.count - 1, viewportSpan > 0 {
-                    ForEach(0..<images.count, id: \.self) { index in
-                        if let frame = visibleFrame(for: index, boundaries: boundaries, width: width) {
+                if images.count == sceneCuts.count + 1,
+                   viewportSpan > 0,
+                   let visibleRange {
+                    ForEach(Array(visibleRange), id: \.self) { index in
+                        if let frame = visibleFrame(for: index, width: width) {
                             Image(nsImage: images[index])
                                 .resizable()
                                 .scaledToFill()
@@ -1246,11 +1544,11 @@ private struct SceneStoryboardStrip: View {
                                 .overlay(alignment: .leading) {
                                     Rectangle()
                                         .fill(.white.opacity(0.16))
-                                        .frame(width: playbackWidth(for: index, boundaries: boundaries, visibleFrameWidth: frame.width))
+                                        .frame(width: playbackWidth(for: index, visibleFrameWidth: frame.width))
                                         .clipShape(RoundedRectangle(cornerRadius: segmentRadius, style: .continuous))
                                 }
                                 .overlay {
-                                    if isActive(index, boundaries: boundaries) {
+                                    if isActive(index) {
                                         CurrentFrameFocusOverlay(cornerRadius: segmentRadius)
                                     }
                                 }
@@ -1265,19 +1563,55 @@ private struct SceneStoryboardStrip: View {
         .allowsHitTesting(false)
     }
 
-    private var sceneBoundaries: [Double] {
-        let cuts = sceneCuts
-            .map { min(1, max(0, $0)) }
-            .sorted()
-        return [0] + cuts + [1]
+    private func visibleSceneRange() -> ClosedRange<Int>? {
+        let sceneCount = sceneCuts.count + 1
+        guard images.count == sceneCount, sceneCount > 0, viewportSpan > 0 else { return nil }
+
+        let start = min(1, max(0, viewportStart))
+        let end = min(1, max(start, viewportStart + viewportSpan))
+        guard end > start else { return nil }
+
+        let first = min(sceneCount - 1, firstSceneIndexEnding(after: start))
+        let last = min(sceneCount - 1, lastSceneIndexStarting(before: end))
+        guard first <= last else { return nil }
+        return first...last
     }
 
-    private func visibleFrame(for index: Int, boundaries: [Double], width: CGFloat) -> (x: CGFloat, width: CGFloat)? {
-        guard viewportSpan > 0, index + 1 < boundaries.count else { return nil }
+    private func firstSceneIndexEnding(after progress: Double) -> Int {
+        var lower = 0
+        var upper = sceneCuts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cutProgress(at: middle) <= progress {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
 
-        let viewportEnd = viewportStart + viewportSpan
-        let start = boundaries[index]
-        let end = boundaries[index + 1]
+    private func lastSceneIndexStarting(before progress: Double) -> Int {
+        var lower = 0
+        var upper = sceneCuts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cutProgress(at: middle) < progress {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
+
+    private func visibleFrame(for index: Int, width: CGFloat) -> (x: CGFloat, width: CGFloat)? {
+        guard viewportSpan > 0, index >= 0, index < images.count else { return nil }
+
+        let viewportStart = min(1, max(0, self.viewportStart))
+        let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
+        let start = sceneStart(for: index)
+        let end = sceneEnd(for: index)
         let visibleStart = max(start, viewportStart)
         let visibleEnd = min(end, viewportEnd)
         guard visibleEnd > visibleStart else { return nil }
@@ -1301,30 +1635,44 @@ private struct SceneStoryboardStrip: View {
         return (x: x0, width: x1 - x0)
     }
 
-    private func isActive(_ index: Int, boundaries: [Double]) -> Bool {
-        guard index + 1 < boundaries.count else { return false }
+    private func isActive(_ index: Int) -> Bool {
+        guard index >= 0, index < images.count else { return false }
         let progress = min(1, max(0, activeProgress))
         if index == images.count - 1 {
-            return progress >= boundaries[index] && progress <= boundaries[index + 1]
+            return progress >= sceneStart(for: index) && progress <= sceneEnd(for: index)
         }
-        return progress >= boundaries[index] && progress < boundaries[index + 1]
+        return progress >= sceneStart(for: index) && progress < sceneEnd(for: index)
     }
 
-    private func playbackWidth(for index: Int, boundaries: [Double], visibleFrameWidth: CGFloat) -> CGFloat {
-        guard index + 1 < boundaries.count else { return 0 }
-        let start = boundaries[index]
-        let end = boundaries[index + 1]
+    private func playbackWidth(for index: Int, visibleFrameWidth: CGFloat) -> CGFloat {
+        guard index >= 0, index < images.count else { return 0 }
+        let start = sceneStart(for: index)
+        let end = sceneEnd(for: index)
         let isActive = index == images.count - 1
             ? activeProgress >= start && activeProgress <= end
             : activeProgress >= start && activeProgress < end
         guard isActive else { return 0 }
 
-        let viewportEnd = viewportStart + viewportSpan
+        let viewportStart = min(1, max(0, self.viewportStart))
+        let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
         let visibleStart = max(start, viewportStart)
         let visibleEnd = min(end, viewportEnd)
         guard visibleEnd > visibleStart, activeProgress > visibleStart else { return 0 }
         let played = min(visibleEnd, activeProgress)
         return visibleFrameWidth * CGFloat((played - visibleStart) / (visibleEnd - visibleStart))
+    }
+
+    private func sceneStart(for index: Int) -> Double {
+        index <= 0 ? 0 : cutProgress(at: index - 1)
+    }
+
+    private func sceneEnd(for index: Int) -> Double {
+        index < sceneCuts.count ? cutProgress(at: index) : 1
+    }
+
+    private func cutProgress(at index: Int) -> Double {
+        guard sceneCuts.indices.contains(index) else { return index < 0 ? 0 : 1 }
+        return min(1, max(0, sceneCuts[index]))
     }
 }
 
@@ -1337,17 +1685,20 @@ private struct FrameScrubberView: View {
     let togglePlayback: () -> Void
     let seek: (Double) -> Void
     var screenshotMarkers: [Double] = []
-    var annotationItems: [(progress: Double, text: String)] = []
+    var annotationItems: [TimelineAnnotationMarker] = []
     var prevScene: (() -> Void)? = nil
     var nextScene: (() -> Void)? = nil
     var stepBack: (() -> Void)? = nil
     var stepForward: (() -> Void)? = nil
     var onScreenshot: (() -> Void)? = nil
     var onAnnotate: (() -> Void)? = nil
+    var onAnnotationSelect: ((UUID) -> Void)? = nil
     var viewportStart: Double = 0
     var viewportSpan: Double = 1
     var duration: Double = 0
     var zoomLevel: Double = 1
+    var playheadTint: Color = .white.opacity(0.92)
+    var showsPlayhead: Bool = false
     var panViewport: ((Double) -> Void)? = nil
     var zoomViewport: ((Double, Double) -> Void)? = nil
     var resetViewport: (() -> Void)? = nil
@@ -1431,11 +1782,15 @@ private struct FrameScrubberView: View {
                     // 批注点：可点击，显示批注文本
                     ForEach(Array(annotationItems.enumerated()), id: \.offset) { _, item in
                         Button {
-                            tappedAnnotationText = item.text
-                            showAnnotationDetail = true
+                            if let onAnnotationSelect {
+                                onAnnotationSelect(item.id)
+                            } else {
+                                tappedAnnotationText = item.text
+                                showAnnotationDetail = true
+                            }
                         } label: {
                             Circle()
-                                .fill(Design.annotationAccent.opacity(0.88))
+                                .fill(annotationTint(for: item.kind).opacity(0.92))
                                 .frame(width: 7, height: 7)
                                 .overlay {
                                     Circle()
@@ -1443,10 +1798,21 @@ private struct FrameScrubberView: View {
                                 }
                                 .frame(width: 18, height: 18)
                         }
-                        .buttonStyle(.plain)
-                        .opacity(isVisible(item.progress) ? 1 : 0)
-                        .offset(x: width * CGFloat(localProgress(item.progress)) - 9, y: 3)
-                    }
+                    .buttonStyle(.plain)
+                    .opacity(isVisible(item.progress) ? 1 : 0)
+                    .offset(x: width * CGFloat(localProgress(item.progress)) - 9, y: 3)
+                    .zIndex(5)
+                }
+
+                if showsPlayhead, isVisible(draftProgress ?? progress) {
+                    Rectangle()
+                        .fill(playheadTint)
+                            .frame(width: 2, height: height)
+                        .shadow(color: .black.opacity(0.35), radius: 1)
+                        .offset(x: width * CGFloat(localProgress(draftProgress ?? progress)) - 1)
+                        .allowsHitTesting(false)
+                        .zIndex(3)
+                }
 
                     // 双指水平滑动平移时间线（透明覆盖层，仅拦截 scroll 事件）
                     if panViewport != nil {
@@ -1587,6 +1953,14 @@ private struct FrameScrubberView: View {
         global >= viewportStart && global <= viewportStart + viewportSpan
     }
 
+    private func annotationTint(for kind: AnnotationItem.Kind) -> Color {
+        switch kind {
+        case .frame: return Design.captureFrameAccent
+        case .audio: return .orange
+        case .content: return Design.annotationAccent
+        }
+    }
+
 }
 
 private struct SimpleProgressBar: View {
@@ -1597,6 +1971,9 @@ private struct SimpleProgressBar: View {
     let seek: (Double) -> Void
     var chapters: [TranscriptTimelineChapter] = []
     var duration: Double = 0
+    var annotationItems: [TimelineAnnotationMarker] = []
+    var onAnnotationSelect: ((UUID) -> Void)? = nil
+    var playheadTint: Color = .white.opacity(0.92)
     var stepBack: (() -> Void)? = nil
     var stepForward: (() -> Void)? = nil
     var onScreenshot: (() -> Void)? = nil
@@ -1654,10 +2031,32 @@ private struct SimpleProgressBar: View {
                 }
 
                 Rectangle()
-                    .fill(.white.opacity(0.92))
+                    .fill(playheadTint)
                     .frame(width: 2, height: height)
                     .shadow(color: .black.opacity(0.28), radius: 1)
                     .offset(x: min(max(0, width * CGFloat(dp) - 1), max(0, width - 2)))
+                    .allowsHitTesting(false)
+                    .zIndex(3)
+
+                ForEach(annotationItems) { item in
+                    Button {
+                        onAnnotationSelect?(item.id)
+                    } label: {
+                        Circle()
+                            .fill(annotationTint(for: item.kind).opacity(0.92))
+                            .frame(width: 7, height: 7)
+                            .overlay {
+                                Circle().stroke(.black.opacity(0.58), lineWidth: 0.8)
+                            }
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .zIndex(5)
+                    .offset(
+                        x: min(max(0, width * CGFloat(item.progress) - 9), max(0, width - 18)),
+                        y: annotationYOffset(for: item.kind, height: height)
+                    )
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay {
@@ -1724,6 +2123,27 @@ private struct SimpleProgressBar: View {
     private func segmentStrokeOpacity(for segment: ChapterSegment, progress: Double) -> Double {
         if progress >= segment.start, progress <= segment.end { return 0.24 }
         return 0.08
+    }
+
+    private func annotationYOffset(for kind: AnnotationItem.Kind, height: CGFloat) -> CGFloat {
+        let margin: CGFloat = min(max(12, height * 0.16), max(12, height / 2))
+        let topCenter = margin
+        let middleCenter = height / 2
+        let bottomCenter = max(margin, height - margin)
+        let targetCenter: CGFloat
+        switch kind {
+        case .frame:
+            targetCenter = topCenter
+        case .audio:
+            targetCenter = middleCenter
+        case .content:
+            targetCenter = bottomCenter
+        }
+        return targetCenter - height / 2
+    }
+
+    private func annotationTint(for kind: AnnotationItem.Kind) -> Color {
+        .white
     }
 }
 
@@ -2139,6 +2559,7 @@ struct ContentView: View {
     @State private var renamingTag: String? = nil
     @State private var renameInput = ""
     @State private var isImportSheetPresented = false
+    @State private var isSettingsSheetPresented = false
     @State private var importURLText = ""
     @State private var importEndpointText = ""
     @State private var observedPasteboardChangeCount = NSPasteboard.general.changeCount
@@ -2151,7 +2572,10 @@ struct ContentView: View {
     @State private var isDividerHovered = false
 
     private var appWorkspace: AppWorkspace {
-        get { AppWorkspace(rawValue: appWorkspaceRawValue) ?? .home }
+        get {
+            let stored = AppWorkspace(rawValue: appWorkspaceRawValue) ?? .home
+            return stored == .settings || stored == .content ? .home : stored
+        }
         nonmutating set { appWorkspaceRawValue = newValue.rawValue }
     }
 
@@ -2169,9 +2593,12 @@ struct ContentView: View {
                 if isImportSheetPresented {
                     importOverlay(containerSize: proxy.size)
                 }
+
+                if isSettingsSheetPresented {
+                    settingsOverlay(containerSize: proxy.size)
+                }
             }
             .ignoresSafeArea(.container, edges: .top)
-            .clipShape(RoundedRectangle(cornerRadius: Design.windowRadius, style: .continuous))
         }
         .background(WindowConfigurator())
         .frame(minWidth: Design.minimumWindowWidth, minHeight: Design.minimumWindowHeight)
@@ -2218,15 +2645,15 @@ struct ContentView: View {
         let activeMediaPanelWidth = resolvedMediaPanelWidth(containerWidth: containerWidth)
 
         HStack(spacing: Design.panelSpacing) {
-            if appWorkspace == .settings {
+            if appWorkspace == .audio || appWorkspace == .frames {
                 navigationRail
-                    .frame(width: Design.settingsRailWidth, alignment: .leading)
+                    .frame(width: Design.railWidth, alignment: .leading)
                     .background(Design.sidebarBg)
                     .zIndex(1)
 
                 workspaceView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Design.contentBg)
+                    .background(Design.sidebarBg)
             } else if isCompact {
                 VStack(spacing: Design.panelSpacing) {
                     libraryColumn(isCompact: true)
@@ -2278,7 +2705,8 @@ struct ContentView: View {
     private func libraryColumn(isCompact: Bool) -> some View {
         HStack(spacing: 0) {
             navigationRail
-                .frame(width: Design.railWidth)
+                .frame(width: Design.railWidth, alignment: .leading)
+                .zIndex(1)
 
             if appWorkspace == .frames {
                 frameVideoFilterColumn(isCompact: isCompact)
@@ -2295,8 +2723,17 @@ struct ContentView: View {
         VStack(spacing: 0) {
             // 顶部窗口按键与素材库工具栏共用同一条视觉中心线。
             ZStack(alignment: .topLeading) {
+                Design.sidebarBg
+                    .frame(
+                        width: Design.trafficLightGuideX + Design.trafficLightClusterWidth,
+                        height: Design.railTopChromeHeight
+                    )
+
                 WindowDragRegion()
-                    .frame(width: Design.railWidth, height: Design.railTopChromeHeight)
+                    .frame(
+                        width: Design.trafficLightGuideX + Design.trafficLightClusterWidth,
+                        height: Design.railTopChromeHeight
+                    )
 
                 windowControls
                     .position(
@@ -2319,25 +2756,35 @@ struct ContentView: View {
     }
 
     private func navigationRailButton(_ workspace: AppWorkspace) -> some View {
-        let isSelected = appWorkspace == workspace
+        let isSelected = workspace == .settings ? isSettingsSheetPresented : appWorkspace == workspace
+        let selectionWidth = Design.railWidth - Design.railIconInset * 2
 
         return Button {
-            appWorkspace = workspace
-        } label: {
-            Image(systemName: workspace.icon)
-                .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? Color.white.opacity(0.88) : Color.white.opacity(0.40))
-                .frame(width: Design.railIconBoxSize, height: Design.railIconBoxSize)
-                .offset(x: workspace.railIconOffset)
-                .frame(width: Design.railWidth, height: Design.railButtonHeight)
-                .background {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(.white.opacity(0.10))
-                            .padding(.horizontal, Design.railIconInset)
-                    }
+            if workspace == .settings {
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                    isSettingsSheetPresented = true
                 }
-                .offset(x: Design.railButtonVisualOffsetX)
+            } else {
+                appWorkspace = workspace
+            }
+        } label: {
+            ZStack(alignment: .leading) {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(.white.opacity(0.10))
+                        .frame(width: selectionWidth, height: Design.railButtonHeight)
+                        .offset(x: Design.railSelectionGuideX)
+                }
+
+                Image(systemName: workspace.icon)
+                    .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.88) : Color.white.opacity(0.40))
+                    .frame(width: Design.railIconBoxSize, height: Design.railIconBoxSize)
+                    .offset(x: workspace.railIconOffset)
+                    .frame(width: Design.railWidth, height: Design.railButtonHeight)
+                    .offset(x: Design.railButtonVisualOffsetX)
+            }
+            .frame(width: Design.railWidth, height: Design.railButtonHeight, alignment: .leading)
         }
         .buttonStyle(.plain)
         .help(workspace.title)
@@ -2630,10 +3077,13 @@ struct ContentView: View {
         return HStack(alignment: .top, spacing: 8) {
             LibraryVideoTile(
                 video: video,
+                displayName: videoDisplayName(for: video),
                 thumbnailImage: thumbnailImage(for: video),
                 durationText: durationTextIfReady(for: video),
                 sourcePlatform: sourcePlatformName(for: video),
                 tags: libraryStore.tagsByVideoPath[video.url.path, default: []],
+                suggestedTags: libraryStore.allTags,
+                analysisItems: analysisMenuItems(for: video),
                 isSelected: frameFilterVideoPath == video.url.path,
                 onSelect: {
                     frameFilterVideoPath = video.url.path
@@ -2644,6 +3094,12 @@ struct ContentView: View {
                 },
                 onRemoveTag: { tag in
                     libraryStore.removeTag(tag, from: video)
+                },
+                onRunAnalysis: { kind in
+                    runAnalysis(kind, for: video)
+                },
+                onDeleteAnalysis: { kind in
+                    deleteAnalysis(kind, for: video)
                 },
                 onDelete: {
                     libraryStore.removeVideo(video)
@@ -2674,7 +3130,7 @@ struct ContentView: View {
                     frameSelectedFrameID = frame.id
                 } label: {
                     ZStack(alignment: .bottomTrailing) {
-                        if let image = NSImage(data: frame.thumbnailData) {
+                        if let image = libraryStore.thumbnailImage(for: frame) {
                             Image(nsImage: image)
                                 .resizable()
                                 .scaledToFill()
@@ -2720,11 +3176,12 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Spacer(minLength: 4)
 
-                HStack(spacing: 8) {
+                HStack(spacing: Design.libraryToolbarButtonGap) {
                     importButton
                     tagFilterMenu
                     sortMenu
                 }
+                .frame(height: Design.libraryToolbarButtonSlotHeight)
 
                 gridSizeControl
             }
@@ -2732,10 +3189,29 @@ struct ContentView: View {
             .padding(.horizontal, 14)
 
             ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                    ForEach(libraryStore.filteredVideos) { video in
-                        videoTile(video)
-                            .frame(maxWidth: .infinity)
+                Group {
+                    if libraryStore.sortOption == .importDate {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(importDateVideoSections) { section in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    dateDivider(section.title)
+
+                                    LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                                        ForEach(section.videos) { video in
+                                            videoTile(video)
+                                                .frame(maxWidth: .infinity)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                            ForEach(libraryStore.filteredVideos) { video in
+                                videoTile(video)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2763,6 +3239,49 @@ struct ContentView: View {
         )
     }
 
+    private var importDateVideoSections: [VideoDateSection] {
+        var sections: [VideoDateSection] = []
+        for video in libraryStore.filteredVideos {
+            let section = importDateSection(for: video)
+            if sections.last?.id == section.id {
+                sections[sections.count - 1].videos.append(video)
+            } else {
+                sections.append(VideoDateSection(id: section.id, title: section.title, videos: [video]))
+            }
+        }
+        return sections
+    }
+
+    private func importDateSection(for video: VideoItem) -> (id: String, title: String) {
+        guard let date = libraryStore.metadataByVideoPath[video.url.path]?.createdAt else {
+            return ("unknown", "日期未知")
+        }
+        let startOfDay = Calendar.current.startOfDay(for: date)
+        let id = String(Int(startOfDay.timeIntervalSince1970))
+        let title = DateFormatter.localizedString(from: startOfDay, dateStyle: .medium, timeStyle: .none)
+        return (id, title)
+    }
+
+    private func dateDivider(_ title: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Rectangle()
+                .fill(.white.opacity(0.10))
+                .frame(height: 1)
+
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Rectangle()
+                .fill(.white.opacity(0.10))
+                .frame(height: 1)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 10)
+    }
+
     private var importButton: some View {
         Button {
             importEndpointText = libraryStore.instagramImportEndpoint
@@ -2771,53 +3290,19 @@ struct ContentView: View {
                 isImportSheetPresented = true
             }
         } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 22)
+            libraryToolbarIcon(systemName: "arrow.down.circle", size: 13)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .contentShape(Rectangle())
         .help("下载视频")
     }
 
     private var tagFilterMenu: some View {
-        Menu {
-            Button {
-                libraryStore.selectedTags.removeAll()
-            } label: {
-                HStack {
-                    if libraryStore.selectedTags.isEmpty { Image(systemName: "checkmark") }
-                    Text("全部素材")
-                }
-            }
-
-            if !libraryStore.allTags.isEmpty {
-                Divider()
-                ForEach(libraryStore.allTags, id: \.self) { tag in
-                    Button {
-                        libraryStore.toggleTagSelection(tag)
-                    } label: {
-                        HStack(spacing: 6) {
-                            if libraryStore.selectedTags.contains(tag) { Image(systemName: "checkmark") }
-                            VideoTagColorDot(tag: tag)
-                            Text(tag)
-                        }
-                    }
-                    .contextMenu {
-                        Button {
-                            renamingTag = tag
-                            renameInput = tag
-                        } label: { Label("重命名", systemImage: "pencil") }
-                        Divider()
-                        Button(role: .destructive) {
-                            libraryStore.removeGlobalTag(tag)
-                        } label: { Label("从所有视频中删除", systemImage: "trash") }
-                    }
-                }
-            }
+        Button {
+            isTagFilterMenuPresented.toggle()
         } label: {
-            Image(systemName: libraryStore.selectedTags.isEmpty ? "tag" : "tag.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 22)
+            libraryToolbarIcon(systemName: libraryStore.selectedTags.isEmpty ? "tag" : "tag.fill", size: 12)
                 .overlay(alignment: .topTrailing) {
                     if !libraryStore.selectedTags.isEmpty {
                         Text("\(libraryStore.selectedTags.count)")
@@ -2830,9 +3315,87 @@ struct ContentView: View {
                     }
                 }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .contentShape(Rectangle())
         .help("标签筛选")
+        .popover(isPresented: $isTagFilterMenuPresented, arrowEdge: .bottom) {
+            tagFilterPopover
+        }
+    }
+
+    private var tagFilterPopover: some View {
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("标签筛选")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("全部") {
+                    libraryStore.selectedTags.removeAll()
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .disabled(libraryStore.selectedTags.isEmpty)
+            }
+
+            if libraryStore.allTags.isEmpty {
+                AppEmptyState(title: "暂无标签", style: .inline, alignment: .leading)
+                    .frame(minHeight: 36)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(libraryStore.allTags, id: \.self) { tag in
+                            HStack(spacing: 7) {
+                                Button {
+                                    libraryStore.toggleTagSelection(tag)
+                                } label: {
+                                    HStack(spacing: 7) {
+                                        Image(systemName: libraryStore.selectedTags.contains(tag) ? "checkmark.square.fill" : "square")
+                                            .foregroundStyle(libraryStore.selectedTags.contains(tag) ? Color.orange : .secondary)
+                                            .frame(width: 15)
+                                        VideoTagColorDot(tag: tag)
+                                        Text(tag)
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    renamingTag = tag
+                                    renameInput = tag
+                                } label: {
+                                    Image(systemName: "pencil")
+                                        .frame(width: 20, height: 20)
+                                }
+                                .buttonStyle(.plain)
+                                .help("重命名标签")
+
+                                Button(role: .destructive) {
+                                    libraryStore.removeGlobalTag(tag)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .frame(width: 20, height: 20)
+                                }
+                                .buttonStyle(.plain)
+                                .help("从所有视频中删除")
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 5)
+                            .background(libraryStore.selectedTags.contains(tag) ? Color.white.opacity(0.08) : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+                .scrollIndicators(.hidden)
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
     }
 
     private var sortMenu: some View {
@@ -2857,13 +3420,25 @@ struct ContentView: View {
                 }
             }
         } label: {
-            Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 22)
+            libraryToolbarIcon(systemName: "arrow.up.arrow.down", size: 12, opticalOffsetX: 3.5)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .help("排序")
+    }
+
+    private func libraryToolbarIcon(systemName: String, size: CGFloat, opticalOffsetX: CGFloat = 0) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(Design.libraryToolbarIconTint)
+            .frame(
+                width: Design.libraryToolbarButtonSlotWidth,
+                height: Design.libraryToolbarButtonSlotHeight,
+                alignment: .center
+            )
+            .offset(x: opticalOffsetX)
     }
 
     private var importTile: some View {
@@ -3047,8 +3622,8 @@ struct ContentView: View {
     }
 
     private func importOverlay(containerSize: CGSize) -> some View {
-        let panelWidth = max(560, min(containerSize.width - 48, 980))
-        let panelHeight = max(430, min(containerSize.height - 56, 720))
+        let panelWidth = max(420, min(containerSize.width - 80, 520))
+        let panelHeight = max(340, min(containerSize.height - 80, 420))
 
         return ZStack {
             Color.black.opacity(0.44)
@@ -3071,6 +3646,61 @@ struct ContentView: View {
         }
         .zIndex(20)
         .transition(.opacity.combined(with: .scale(scale: 0.985)))
+    }
+
+    private func settingsOverlay(containerSize: CGSize) -> some View {
+        let panelWidth = max(420, min(containerSize.width - 80, 520))
+        let panelHeight = max(360, min(containerSize.height - 80, 460))
+
+        return ZStack {
+            Color.black.opacity(0.44)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    closeSettingsPanel()
+                }
+
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Label("设置", systemImage: "gearshape")
+                        .font(.headline.weight(.semibold))
+                    Spacer()
+                    Button {
+                        closeSettingsPanel()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+                    .help("关闭")
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 10)
+
+                SettingsWorkspaceView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(width: panelWidth, height: panelHeight)
+            .background(Design.sidebarBg)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(.white.opacity(0.14), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.38), radius: 28, y: 18)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 24)
+        }
+        .zIndex(21)
+        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+    }
+
+    private func closeSettingsPanel() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+            isSettingsSheetPresented = false
+        }
     }
 
     private var importSheet: some View {
@@ -3203,9 +3833,11 @@ struct ContentView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(activeImportJobs.count) 个")
+                Text(importProgressSummary)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
             if activeImportJobs.isEmpty {
@@ -3216,6 +3848,10 @@ struct ContentView: View {
                 )
                     .frame(maxWidth: .infinity, minHeight: 132)
             } else {
+                if let progress = activeImportOverallProgress {
+                    importLinearProgress(progress, tint: Color(red: 0.36, green: 0.70, blue: 1.00))
+                }
+
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(activeImportJobs) { job in
@@ -3244,13 +3880,6 @@ struct ContentView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                if !importHistoryJobs.isEmpty {
-                    Button("清空") {
-                        libraryStore.clearFinishedRemoteImports()
-                    }
-                    .font(.caption)
-                    .buttonStyle(.borderless)
-                }
             }
 
             if importHistoryJobs.isEmpty {
@@ -3270,6 +3899,16 @@ struct ContentView: View {
                 }
                 .scrollIndicators(.hidden)
                 .background(HiddenScrollIndicators())
+
+                Button {
+                    libraryStore.clearFinishedRemoteImports()
+                } label: {
+                    Label("一键清空下载记录", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.borderless)
+                .padding(.top, 2)
             }
         }
         .padding(16)
@@ -3328,10 +3967,12 @@ struct ContentView: View {
     }
 
     private func sourcePlatformName(for video: VideoItem) -> String? {
-        guard video.url.pathComponents.contains("Imports"),
-              let platform = VideoSourcePlatform.matching(video.folder)
-        else { return nil }
-        return platform.rawValue
+        guard let platform = libraryStore.videoSourcePlatform(for: video) else { return nil }
+        return VideoSourcePlatform.matching(platform)?.rawValue ?? platform
+    }
+
+    private func videoDisplayName(for video: VideoItem) -> String {
+        libraryStore.videoSourceTitle(for: video) ?? video.name
     }
 
     private var isImporting: Bool {
@@ -3365,17 +4006,22 @@ struct ContentView: View {
             return libraryStore.remoteImportJobs.isEmpty ? "等待添加下载链接" : "下载任务已完成"
         }
 
-        let knownProgress = activeImportJobs.compactMap(\.downloadProgress).map(normalizedProgressFraction)
-        guard !knownProgress.isEmpty else {
-            return "\(activeImportJobs.count) 个任务进行中"
+        let progress = activeImportOverallProgress
+        guard let progress else { return "\(activeImportJobs.count) 个任务进行中" }
+        return "\(activeImportJobs.count) 个任务进行中 · 总体 \(progressPercentText(progress))"
+    }
+
+    private var activeImportOverallProgress: Double? {
+        guard !activeImportJobs.isEmpty else { return nil }
+        let progressValues = activeImportJobs.map { job in
+            normalizedProgressFraction(job.downloadProgress ?? 0)
         }
-        let average = knownProgress.reduce(0, +) / Double(knownProgress.count)
-        return "\(activeImportJobs.count) 个任务进行中 · 平均 \(progressPercentText(average))"
+        return progressValues.reduce(0, +) / Double(progressValues.count)
     }
 
     private func isActiveImportJob(_ job: RemoteImportJob) -> Bool {
         switch job.status {
-        case .importing, .transcoding, .paused:
+        case .importing, .transcoding, .finalizing, .paused:
             return true
         default:
             return false
@@ -3453,6 +4099,11 @@ struct ContentView: View {
                 return "正在转码 · 等待 ffmpeg 返回进度"
             }
             return "正在转码 · \(progressText)"
+        case .finalizing:
+            guard let progressText = importStatusProgressText(for: job) else {
+                return "正在整理导入结果"
+            }
+            return "正在整理导入结果 · \(progressText)"
         case .paused:
             if let progressText = importStatusProgressText(for: job) {
                 return "\(job.platform) 已暂停 · \(progressText)"
@@ -3492,6 +4143,17 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+
+            if let video = importedVideo(for: job) {
+                InlineTagEditorButton(
+                    title: "视频标签",
+                    tags: libraryStore.tagsByVideoPath[video.url.path, default: []],
+                    suggestedTags: libraryStore.allTags,
+                    onAdd: { libraryStore.addTag($0, to: video) },
+                    onRemove: { libraryStore.removeTag($0, from: video) }
+                )
+                .frame(height: 56, alignment: .top)
+            }
 
             importJobActions(for: job)
                 .frame(height: 56, alignment: .top)
@@ -3541,6 +4203,11 @@ struct ContentView: View {
         return nil
     }
 
+    private func importedVideo(for job: RemoteImportJob) -> VideoItem? {
+        guard let outputPath = job.outputPath else { return nil }
+        return libraryStore.selectedVideo(for: outputPath)
+    }
+
     @ViewBuilder
     private func importJobActions(for job: RemoteImportJob) -> some View {
         VStack(spacing: 4) {
@@ -3587,6 +4254,8 @@ struct ContentView: View {
             return "正在下载 \(job.platform)"
         case .transcoding:
             return "正在转码为 H.264"
+        case .finalizing:
+            return "正在整理导入结果"
         case .paused:
             return "\(job.platform) 已暂停"
         case let .succeeded(filename):
@@ -3604,6 +4273,8 @@ struct ContentView: View {
             return "arrow.down.circle.fill"
         case .transcoding:
             return "film.circle.fill"
+        case .finalizing:
+            return "checkmark.seal.fill"
         case .paused:
             return "pause.circle.fill"
         case .succeeded:
@@ -3621,6 +4292,8 @@ struct ContentView: View {
             return Color(red: 0.36, green: 0.70, blue: 1.00)
         case .transcoding:
             return Design.captureFrameAccent
+        case .finalizing:
+            return Color(red: 0.42, green: 0.78, blue: 0.48)
         case .paused:
             return .secondary
         case .succeeded:
@@ -3640,7 +4313,7 @@ struct ContentView: View {
                 return "\(progressPercentText(progress)) · \(speed)"
             }
             return progressPercentText(progress)
-        case .transcoding:
+        case .transcoding, .finalizing:
             guard let progress = job.downloadProgress else { return nil }
             return progressPercentText(progress)
         default:
@@ -3668,6 +4341,12 @@ struct ContentView: View {
         case .transcoding:
             if let progress = job.downloadProgress {
                 importLinearProgress(progress, tint: Design.captureFrameAccent)
+            } else {
+                EmptyView()
+            }
+        case .finalizing:
+            if let progress = job.downloadProgress {
+                importLinearProgress(progress, tint: Color(red: 0.42, green: 0.78, blue: 0.48))
             } else {
                 EmptyView()
             }
@@ -3726,10 +4405,13 @@ struct ContentView: View {
 
         return LibraryVideoTile(
             video: video,
+            displayName: videoDisplayName(for: video),
             thumbnailImage: thumbnailImage(for: video),
             durationText: durationTextIfReady(for: video),
             sourcePlatform: sourcePlatformName(for: video),
             tags: libraryStore.tagsByVideoPath[path, default: []],
+            suggestedTags: libraryStore.allTags,
+            analysisItems: analysisMenuItems(for: video),
             isSelected: isSelected,
             onSelect: {
                 libraryStore.selectVideo(video, autoplay: true)
@@ -3739,6 +4421,12 @@ struct ContentView: View {
             },
             onRemoveTag: { tag in
                 libraryStore.removeTag(tag, from: video)
+            },
+            onRunAnalysis: { kind in
+                runAnalysis(kind, for: video)
+            },
+            onDeleteAnalysis: { kind in
+                deleteAnalysis(kind, for: video)
             },
             onDelete: {
                 libraryStore.removeVideo(video)
@@ -3757,6 +4445,104 @@ struct ContentView: View {
         return formatDuration(duration)
     }
 
+    private func analysisMenuItems(for video: VideoItem) -> [VideoAnalysisMenuItem] {
+        let path = video.url.path
+        let transcriptSegments = libraryStore.transcriptSegmentsByVideoPath[path, default: []]
+        let transcriptStatus = libraryStore.transcriptStatusByVideoPath[path] ?? .idle
+        let sceneCuts = libraryStore.sceneCutsByVideoPath[path]
+        let sceneProgress = libraryStore.sceneDetectionProgress[path]
+        let musics = libraryStore.musicsByVideoPath[path, default: []]
+        let musicStatus = libraryStore.musicDetectionStatusByVideoPath[path] ?? .idle
+
+        return [
+            VideoAnalysisMenuItem(
+                kind: .transcript,
+                title: "内容",
+                icon: "text.bubble",
+                detail: transcriptSegments.isEmpty ? "暂无字幕" : "\(transcriptSegments.count) 段字幕",
+                status: menuStatusText(transcriptStatus, idleText: "空闲"),
+                tone: menuTone(transcriptStatus),
+                canRun: !isRunning(transcriptStatus),
+                canDelete: !transcriptSegments.isEmpty || transcriptStatus != .idle
+            ),
+            VideoAnalysisMenuItem(
+                kind: .scene,
+                title: "画面",
+                icon: "rectangle.on.rectangle",
+                detail: sceneCuts.map { "\($0.count) 个剪辑点" } ?? "暂无场景",
+                status: sceneProgress.map { "分析中 \(progressPercentText($0))" } ?? (sceneCuts == nil ? "空闲" : "已完成"),
+                tone: sceneProgress == nil ? (sceneCuts == nil ? .idle : .completed) : .running,
+                canRun: sceneProgress == nil,
+                canDelete: sceneCuts != nil || sceneProgress != nil
+            ),
+            VideoAnalysisMenuItem(
+                kind: .music,
+                title: "声音",
+                icon: "music.note.list",
+                detail: musics.isEmpty ? "暂无音乐" : "\(musics.count) 首音乐",
+                status: menuStatusText(musicStatus, idleText: "空闲"),
+                tone: menuTone(musicStatus),
+                canRun: !isRunning(musicStatus),
+                canDelete: !musics.isEmpty || musicStatus != .idle
+            )
+        ]
+    }
+
+    private func runAnalysis(_ kind: VideoAnalysisKind, for video: VideoItem) {
+        switch kind {
+        case .transcript:
+            libraryStore.transcribe(video: video)
+        case .scene:
+            libraryStore.detectSceneCuts(for: video)
+        case .music:
+            libraryStore.detectMusic(for: video)
+        }
+    }
+
+    private func deleteAnalysis(_ kind: VideoAnalysisKind, for video: VideoItem) {
+        switch kind {
+        case .transcript:
+            libraryStore.deleteTranscript(for: video)
+        case .scene:
+            libraryStore.deleteSceneRecognition(for: video)
+        case .music:
+            libraryStore.deleteMusicRecognition(for: video)
+        }
+    }
+
+    private func menuStatusText(_ status: TranscriptJobStatus, idleText: String) -> String {
+        switch status {
+        case .idle:
+            return idleText
+        case .running(let message):
+            return message
+        case .completed:
+            return "已完成"
+        case .failed(let message):
+            return message.isEmpty ? "失败" : message
+        }
+    }
+
+    private func menuTone(_ status: TranscriptJobStatus) -> VideoAnalysisTone {
+        switch status {
+        case .idle:
+            return .idle
+        case .running:
+            return .running
+        case .completed:
+            return .completed
+        case .failed:
+            return .failed
+        }
+    }
+
+    private func isRunning(_ status: TranscriptJobStatus) -> Bool {
+        if case .running = status {
+            return true
+        }
+        return false
+    }
+
     private func formatDuration(_ seconds: Double) -> String {
         let totalSeconds = max(0, Int(seconds.rounded()))
         let hours = totalSeconds / 3600
@@ -3771,16 +4557,60 @@ struct ContentView: View {
     }
 }
 
+private enum VideoAnalysisKind: String, CaseIterable, Equatable {
+    case transcript
+    case scene
+    case music
+}
+
+private enum VideoAnalysisTone: Equatable {
+    case idle
+    case running
+    case completed
+    case failed
+
+    var color: Color {
+        switch self {
+        case .idle:
+            return .secondary
+        case .running:
+            return Color(red: 0.36, green: 0.70, blue: 1.00)
+        case .completed:
+            return Color(red: 0.42, green: 0.78, blue: 0.48)
+        case .failed:
+            return Color(red: 0.96, green: 0.58, blue: 0.24)
+        }
+    }
+}
+
+private struct VideoAnalysisMenuItem: Identifiable, Equatable {
+    var kind: VideoAnalysisKind
+    var title: String
+    var icon: String
+    var detail: String
+    var status: String
+    var tone: VideoAnalysisTone
+    var canRun: Bool
+    var canDelete: Bool
+
+    var id: VideoAnalysisKind { kind }
+}
+
 private struct LibraryVideoTile: View, Equatable {
     let video: VideoItem
+    let displayName: String
     let thumbnailImage: NSImage?
     let durationText: String?
     let sourcePlatform: String?
     let tags: [String]
+    let suggestedTags: [String]
+    let analysisItems: [VideoAnalysisMenuItem]
     let isSelected: Bool
     let onSelect: () -> Void
     let onAddTag: (String) -> Void
     let onRemoveTag: (String) -> Void
+    let onRunAnalysis: (VideoAnalysisKind) -> Void
+    let onDeleteAnalysis: (VideoAnalysisKind) -> Void
     let onDelete: () -> Void
     let dragItemProvider: (() -> NSItemProvider)?
 
@@ -3789,17 +4619,20 @@ private struct LibraryVideoTile: View, Equatable {
     @State private var draftTag = ""
 
     private let cardAspectRatio: CGFloat = 1.06
-    private let infoBarMinHeight: CGFloat = 42
-    private let infoBarMaxHeight: CGFloat = 74
+    private let infoBarMinHeight: CGFloat = 48
+    private let infoBarMaxHeight: CGFloat = 64
 
     static func == (lhs: LibraryVideoTile, rhs: LibraryVideoTile) -> Bool {
         lhs.video == rhs.video
+            && lhs.displayName == rhs.displayName
             && lhs.durationText == rhs.durationText
             && lhs.sourcePlatform == rhs.sourcePlatform
             && lhs.tags == rhs.tags
+            && lhs.suggestedTags == rhs.suggestedTags
+            && lhs.analysisItems == rhs.analysisItems
             && lhs.isSelected == rhs.isSelected
             && sameImage(lhs.thumbnailImage, rhs.thumbnailImage)
-            // onDelete/onAddTag/onRemoveTag are closures, not compared
+            // Action closures are intentionally not compared.
     }
 
     var body: some View {
@@ -3853,6 +4686,17 @@ private struct LibraryVideoTile: View, Equatable {
                             thumbnailHeight - CardTimeBadge.height - CardTimeBadge.verticalInset
                         )
                     )
+
+                if let sourcePlatform {
+                    sourcePlatformIconBadge(sourcePlatform)
+                        .offset(
+                            x: CardTimeBadge.edgeInset,
+                            y: max(
+                                CardTimeBadge.edgeInset,
+                                thumbnailHeight - SourcePlatformIconBadge.size - CardTimeBadge.verticalInset
+                            )
+                        )
+                }
             }
         }
         .aspectRatio(cardAspectRatio, contentMode: .fit)
@@ -3868,24 +4712,26 @@ private struct LibraryVideoTile: View, Equatable {
 
     private struct TileMetrics {
         let infoHeight: CGFloat
-        let contentGap: CGFloat
         let horizontalPadding: CGFloat
+        let verticalPadding: CGFloat
         let titleFontSize: CGFloat
         let titleLineHeight: CGFloat
     }
 
     private func tileMetrics(width: CGFloat, height: CGFloat) -> TileMetrics {
         let compactness = min(1, max(0, (width - 118) / 140))
-        let infoRatio = 0.40 - compactness * 0.06
+        let infoRatio = 0.31 - compactness * 0.03
         let infoHeight = min(infoBarMaxHeight, max(infoBarMinHeight, height * infoRatio))
-        let contentGap = min(6, max(4, infoHeight * 0.095))
+        let titleLineHeight = min(17, max(15, infoHeight * 0.27))
+        let titleBlockHeight = titleLineHeight * 2
+        let verticalPadding = max(6, (infoHeight - titleBlockHeight) / 2)
 
         return TileMetrics(
             infoHeight: infoHeight,
-            contentGap: contentGap,
             horizontalPadding: min(10, max(7, width * 0.07)),
+            verticalPadding: verticalPadding,
             titleFontSize: min(13, max(11, width * 0.095)),
-            titleLineHeight: min(18, max(15, infoHeight * 0.34))
+            titleLineHeight: titleLineHeight
         )
     }
 
@@ -3906,30 +4752,28 @@ private struct LibraryVideoTile: View, Equatable {
     }
 
     private func infoBar(metrics: TileMetrics) -> some View {
-        VStack(alignment: .leading, spacing: metrics.contentGap) {
-            Text(video.name)
-                .font(.system(size: metrics.titleFontSize, weight: .semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(height: metrics.titleLineHeight, alignment: .leading)
-                .clipped()
-
-            cardTagStrip
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
+        Text(displayName)
+            .font(.system(size: metrics.titleFontSize, weight: .semibold))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .truncationMode(.tail)
+            .lineSpacing(1)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: metrics.titleLineHeight * 2,
+                maxHeight: metrics.titleLineHeight * 2,
+                alignment: .leading
+            )
+            .clipped()
+            .layoutPriority(1)
         .padding(.horizontal, metrics.horizontalPadding)
-        .padding(.vertical, metrics.contentGap)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.vertical, metrics.verticalPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var cardTagStrip: some View {
-        if !tags.isEmpty {
-            ScaledCardTagCloud(tags: tags)
-        } else {
-            Color.clear
-        }
+    private func sourcePlatformIconBadge(_ platform: String) -> some View {
+        SourcePlatformIconBadge(platform: platform)
+            .help(platform)
     }
 
     private var moreButton: some View {
@@ -3956,6 +4800,8 @@ private struct LibraryVideoTile: View, Equatable {
             VStack(alignment: .leading, spacing: 8) {
                 tagChips
 
+                TagSuggestionGrid(currentTags: tags, suggestedTags: suggestedTags, onAdd: onAddTag)
+
                 HStack(spacing: 6) {
                     TextField("添加标签", text: $draftTag)
                         .textFieldStyle(.roundedBorder)
@@ -3968,6 +4814,10 @@ private struct LibraryVideoTile: View, Equatable {
                 }
             }
             .padding(14)
+
+            Divider()
+
+            analysisManagementSection
 
             Divider()
 
@@ -4001,6 +4851,66 @@ private struct LibraryVideoTile: View, Equatable {
             .padding(.vertical, 6)
         }
         .frame(minWidth: 220)
+    }
+
+    private var analysisManagementSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("分析管理")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(analysisItems) { item in
+                HStack(spacing: 8) {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(item.tone.color)
+                        .frame(width: 18)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(item.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(item.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Text(item.status)
+                            .font(.caption2)
+                            .foregroundStyle(item.tone.color)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        onRunAnalysis(item.kind)
+                    } label: {
+                        Image(systemName: item.tone == .idle ? "play.fill" : "arrow.clockwise")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!item.canRun)
+                    .help(item.tone == .idle ? "开始识别" : "重新识别")
+
+                    Button(role: .destructive) {
+                        onDeleteAnalysis(item.kind)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!item.canDelete)
+                    .help("删除识别记录")
+                }
+                .padding(.vertical, 3)
+            }
+        }
+        .padding(14)
     }
 
     private var tagChips: some View {
@@ -4089,6 +4999,9 @@ private struct ScenePanelView: View, Equatable {
     let sceneCuts: [SceneCut]
     let hasSceneRecognitionResult: Bool
     let sceneDetectionProgress: Double?
+    let sceneThumbnailVersion: Int
+    let sceneThumbnailsNeedHydration: Bool
+    let isHydratingSceneThumbnails: Bool
     let sampledFrames: [SampledFrame]
     var activeItemID: String?
     @EnvironmentObject private var libraryStore: LibraryStore
@@ -4101,6 +5014,9 @@ private struct ScenePanelView: View, Equatable {
             && lhs.activeItemID == rhs.activeItemID
             && lhs.hasSceneRecognitionResult == rhs.hasSceneRecognitionResult
             && lhs.sceneDetectionProgress == rhs.sceneDetectionProgress
+            && lhs.sceneThumbnailVersion == rhs.sceneThumbnailVersion
+            && lhs.sceneThumbnailsNeedHydration == rhs.sceneThumbnailsNeedHydration
+            && lhs.isHydratingSceneThumbnails == rhs.isHydratingSceneThumbnails
             && lhs.sceneCutSignature == rhs.sceneCutSignature
             && lhs.sampledFrameSignature == rhs.sampledFrameSignature
     }
@@ -4119,31 +5035,37 @@ private struct ScenePanelView: View, Equatable {
                     let tileWidth = [86.0, 116.0, 150.0][min(max(sceneGridSize, 0), 2)]
                     let columns = [GridItem(.adaptive(minimum: tileWidth), spacing: 8)]
 
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 8) {
-                            ForEach(items) { item in
-                                SceneCutTile(
-                                    thumbnailImage: item.thumbnailImage,
-                                    timeLabel: item.sample?.kind == .screenshot ? formatDuration(item.time) : sceneDurationLabel(for: item),
-                                    isExported: item.sample?.isExported == true,
-                                    isScreenshot: item.sample?.kind == .screenshot,
-                                    isSelected: selectedItemID == item.id,
-                                    isActive: activeItemID == item.id,
-                                    onTap: {
-                                        selectedItemID = item.id
-                                        controller.seekToSeconds(item.time)
-                                    },
-                                    onCollect: collectAction(for: item),
-                                    onDelete: deleteAction(for: item),
-                                    dragItemProvider: dragProvider(for: item)
-                                )
-                                .id(item.id)
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            LazyVGrid(columns: columns, spacing: 8) {
+                                ForEach(items) { item in
+                                    SceneCutTile(
+                                        thumbnailImage: item.thumbnailImage,
+                                        timeLabel: item.sample?.kind == .screenshot ? formatDuration(item.time) : sceneDurationLabel(for: item),
+                                        isExported: item.sample?.isExported == true,
+                                        isScreenshot: item.sample?.kind == .screenshot,
+                                        isSelected: selectedItemID == item.id,
+                                        isActive: activeItemID == item.id,
+                                        onTap: {
+                                            selectedItemID = item.id
+                                            controller.seekToSeconds(item.time)
+                                        },
+                                        onCollect: collectAction(for: item),
+                                        onDelete: deleteAction(for: item),
+                                        dragItemProvider: dragProvider(for: item)
+                                    )
+                                    .id(item.id)
+                                }
                             }
+                            .padding(.bottom, 48)
                         }
-                        .padding(.bottom, 4)
+                        .scrollIndicators(.hidden)
+                        .background(HiddenScrollIndicators())
+
+                        sceneGridSizeControl
+                            .padding(.trailing, 8)
+                            .padding(.bottom, 8)
                     }
-                    .scrollIndicators(.hidden)
-                    .background(HiddenScrollIndicators())
                     .onChange(of: activeItemID) { _, newID in
                         if let newID, !controller.isPlaying, abs(controller.playbackRate) < 0.001 {
                             withAnimation(.easeInOut(duration: 0.25)) {
@@ -4162,8 +5084,41 @@ private struct ScenePanelView: View, Equatable {
         }
     }
 
+    private var sceneGridSizeControl: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.grid.3x3")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Slider(
+                value: Binding(
+                    get: { Double(sceneGridSize) },
+                    set: { sceneGridSize = Int($0.rounded()) }
+                ),
+                in: 0...2,
+                step: 1
+            )
+            .frame(width: 64)
+            .controlSize(.small)
+            Image(systemName: "rectangle.grid.1x2")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.48))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(0.13), lineWidth: 0.7)
+        }
+        .help("视频时间线场景网格大小")
+    }
+
     private var shouldShowSceneRecognitionStatus: Bool {
-        sceneDetectionProgress != nil || !hasSceneRecognitionResult || sceneCuts.isEmpty
+        sceneDetectionProgress != nil
+            || isHydratingSceneThumbnails
+            || (!hasSceneRecognitionResult && !sceneThumbnailsNeedHydration)
+            || (hasSceneRecognitionResult && sceneCuts.isEmpty)
     }
 
     @ViewBuilder
@@ -4180,6 +5135,12 @@ private struct ScenePanelView: View, Equatable {
             RecognitionProgressRow(
                 message: "正在识别场景...",
                 progress: progress
+            )
+        } else if isHydratingSceneThumbnails {
+            RecognitionProgressRow(
+                message: "正在补齐场景缩略图...",
+                progress: nil,
+                showPercent: false
             )
         } else if !hasSceneRecognitionResult {
             RecognitionProgressRow(
@@ -4201,17 +5162,22 @@ private struct ScenePanelView: View, Equatable {
     }
 
     private func startSceneRecognitionIfNeeded() {
+        if hasSceneRecognitionResult {
+            if !controller.isPlaying {
+                libraryStore.hydrateSceneThumbnailsIfNeeded(for: video)
+            }
+            return
+        }
         guard !hasSceneRecognitionResult, sceneDetectionProgress == nil else { return }
         libraryStore.detectSceneCuts(for: video)
     }
 
     private var sceneCutSignature: [String] {
-        sceneCuts.map { "\($0.id):\($0.time)" }
+        sceneCuts.map { "\($0.id):\($0.time):\($0.isPlaceholder):\(ObjectIdentifier($0.thumbnailImage).hashValue)" }
     }
 
     private var sampledFrameSignature: [String] {
         sampledFrames
-            .filter { $0.videoPath == video.url.path }
             .map { "\($0.id):\($0.time):\($0.kind.rawValue):\($0.isExported)" }
     }
 
@@ -4225,7 +5191,7 @@ private struct ScenePanelView: View, Equatable {
             let sceneIndex: Int?
         }
 
-        let samples = sampledFrames.filter { $0.videoPath == video.url.path }
+        let samples = sampledFrames
         let representativeSamples = Dictionary(
             samples
                 .filter { $0.kind == .sceneRepresentative }
@@ -4239,7 +5205,7 @@ private struct ScenePanelView: View, Equatable {
                 time: cut.time,
                 cut: cut,
                 sample: representativeSamples[sceneSampleKey(for: cut.time)],
-                image: cut.thumbnailImage,
+                image: libraryStore.displaySceneCutImage(for: video, cut: cut),
                 sceneIndex: index
             )
         }
@@ -4252,7 +5218,7 @@ private struct ScenePanelView: View, Equatable {
                     time: sample.time,
                     cut: nil,
                     sample: sample,
-                    image: NSImage(data: sample.thumbnailData),
+                    image: libraryStore.thumbnailImage(for: sample),
                     sceneIndex: sample.sceneIndex
                 )
             }
@@ -4336,9 +5302,22 @@ private struct PreviewPanelView: View {
     @Namespace private var tabNamespace
     private static let contentTimelineDetailBlockGap: CGFloat = 8
     private static let contentTimelineDetailBlockPadding: CGFloat = 8
+    private static let annotationEditorWidth: CGFloat = 288
+    private static let annotationEditorHeight: CGFloat = 184
+    private static let exportActionButtonSize: CGFloat = 22
+    private static let exportRowContentHeight: CGFloat = 78
+    private static let exportRowVerticalPadding: CGFloat = 10
+    private static let exportRowHeight: CGFloat = exportRowContentHeight + exportRowVerticalPadding * 2
+    private static let exportFramePreviewWidth: CGFloat = 100
+    private static let exportFramePreviewMinWidth: CGFloat = 48
+    private static let exportFramePreviewMaxWidth: CGFloat = 142
+    private static let exportTranscriptIconWidth: CGFloat = 34
     @State private var activePreviewTab: PreviewTab = .frames
     @State private var annotationText = ""
+    @State private var pendingAnnotationKind: AnnotationItem.Kind = .frame
+    @State private var editingAnnotationID: UUID?
     @State private var isAnnotationPopoverPresented = false
+    @State private var annotationEditorAnchor = AnnotationEditorAnchor(progress: 0, kind: .frame, sourceTab: .frames)
     @State private var audioInPoint: Double?
     @State private var audioOutPoint: Double?
     @State private var activeTranscriptSegmentID: UUID? = nil
@@ -4347,6 +5326,7 @@ private struct PreviewPanelView: View {
     @State private var visibleTimelineDetailTab: PreviewTab?
     @State private var timelineZoom: Double = 1
     @State private var timelineOffset: Double = 0
+    @State private var sceneTimelineAutoFocusedKey: String?
     @State private var isVideoTagPopoverPresented = false
     @State private var isVideoTagAddHovered = false
     @State private var draftVideoTag = ""
@@ -4381,12 +5361,13 @@ private struct PreviewPanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 16)
-        .padding(.top, 16)
         .padding(.bottom, 16)
         .contentPanel()
         .onAppear {
             controller.libraryStore = libraryStore
             controller.loadVideo(libraryStore.selectedVideo, autoplay: false)
+            focusSceneTimelineOnOpeningIfNeeded()
+            hydrateSceneThumbnailsForFrameTimelineIfIdle()
             PreviewKeyboardCommandDispatcher.setHandler { command in
                 handlePreviewKeyboardCommand(command)
             }
@@ -4397,6 +5378,7 @@ private struct PreviewPanelView: View {
             stopExportAudioClipPlayback()
             exportPanelHighlightTask?.cancel()
             exportPanelHighlightTask = nil
+            libraryStore.cancelAllSceneThumbnailHydration()
             controller.stopPlayback()
         }
         .onChange(of: isVideoTagPopoverPresented) { _, isPresented in
@@ -4405,6 +5387,7 @@ private struct PreviewPanelView: View {
             }
         }
         .onChange(of: libraryStore.selectedVideoSelectionID) { _, _ in
+            libraryStore.cancelAllSceneThumbnailHydration()
             controller.libraryStore = libraryStore
             controller.loadVideo(
                 libraryStore.selectedVideo,
@@ -4413,28 +5396,47 @@ private struct PreviewPanelView: View {
             audioInPoint = nil
             audioOutPoint = nil
             activeTranscriptSegmentID = nil
+            editingAnnotationID = nil
+            isAnnotationPopoverPresented = false
             expandedPreviewTab = nil
             visibleTimelineDetailTab = nil
             resetTimelineViewport()
             stopKeyboardShuttle()
             stopExportAudioClipPlayback()
+            focusSceneTimelineOnOpeningIfNeeded()
+            hydrateSceneThumbnailsForFrameTimelineIfIdle()
             startMusicDetectionIfNeeded(for: libraryStore.selectedVideo, filter: exportPanelFilter)
         }
         .onChange(of: libraryStore.playbackSupportByVideoPath) { _, _ in
             controller.applyPlaybackSupportIfNeeded()
+        }
+        .onChange(of: controller.isPlaying) { _, isPlaying in
+            guard let video = libraryStore.selectedVideo else { return }
+            if isPlaying {
+                libraryStore.cancelSceneThumbnailHydration(for: video)
+            } else if activePreviewTab == .frames || visibleTimelineDetailTab == .frames {
+                hydrateSceneThumbnailsForFrameTimelineIfIdle()
+            }
         }
         .onChange(of: controller.elapsed) { _, elapsed in
             keepTimelineProgressVisible(controller.progress)
 
             guard let video = libraryStore.selectedVideo else { return }
             let segs = libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []]
-            let seg = segs.last { $0.start <= elapsed }
-            if seg?.id != activeTranscriptSegmentID {
-                activeTranscriptSegmentID = seg?.id
+            let segmentID = activeTranscriptSegmentID(at: elapsed, in: segs)
+            if segmentID != activeTranscriptSegmentID {
+                activeTranscriptSegmentID = segmentID
             }
         }
         .onChange(of: visibleTimelineDetailTab) { _, _ in
             startRecognitionForVisibleTimelineIfNeeded()
+        }
+        .onChange(of: activePreviewTab) { _, _ in
+            focusSceneTimelineOnOpeningIfNeeded()
+            hydrateSceneThumbnailsForFrameTimelineIfIdle()
+        }
+        .onChange(of: libraryStore.sceneCutProgressesByVideoPath) { _, _ in
+            focusSceneTimelineOnOpeningIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .lapianBaoSeekRequest)) { notification in
             guard
@@ -4445,11 +5447,14 @@ private struct PreviewPanelView: View {
             controller.pause()
             controller.seekToSeconds(time)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .lapianBaoPausePreviewRequest)) { _ in
+            controller.pause()
+            stopExportAudioClipPlayback()
+        }
     }
 
     private var collapsedPreviewTimelineStackHeight: CGFloat {
-        let laneGap: CGFloat = 8
-        return Design.timelineLaneHeight * 3 + laneGap * 2
+        Design.timelineLaneHeight * 3 + timelineLaneGap * 2
     }
 
     private func expandedPreviewTimelineStackHeight(in workspaceHeight: CGFloat) -> CGFloat {
@@ -4463,15 +5468,20 @@ private struct PreviewPanelView: View {
             let stageGap: CGFloat = showsSidebar ? 12 : 0
             let playerWidth = showsSidebar ? max(360, proxy.size.width - sidebarWidth - stageGap) : proxy.size.width
             let workspaceGap: CGFloat = 8
-            let headerHeight: CGFloat = 38
+            let headerHeight = Design.previewHeaderHeight
             let topChromeHeight = headerHeight + workspaceGap
             let timelineHeight = collapsedPreviewTimelineStackHeight
             let expandedTimelineHeight = expandedPreviewTimelineStackHeight(in: proxy.size.height)
             let currentTimelineHeight = expandedPreviewTab == nil ? timelineHeight : expandedTimelineHeight
-            let verticalBudget = max(0, proxy.size.height - topChromeHeight - workspaceGap * 3)
+            let verticalBudget = max(0, proxy.size.height - topChromeHeight - workspaceGap * 2)
             let stageHeight = max(220, verticalBudget - currentTimelineHeight)
             let overlayInset = Design.previewExportOverlayButtonInset
-            let overlayPanelWidth = max(1, proxy.size.width * Design.previewExportOverlayWidthRatio)
+            let overlayAvailableWidth = max(1, proxy.size.width - overlayInset * 2)
+            let overlayPreferredWidth = max(
+                Design.previewExportOverlayMinWidth,
+                proxy.size.width * Design.previewExportOverlayWidthRatio
+            )
+            let overlayPanelWidth = min(overlayAvailableWidth, overlayPreferredWidth)
             let overlayPanelHeight = max(1, stageHeight - overlayInset * 2)
 
             if showsSidebar {
@@ -4492,6 +5502,12 @@ private struct PreviewPanelView: View {
                         .frame(width: playerWidth, alignment: .topLeading)
 
                         exportPanel(for: video, isOverlay: false)
+                            .frame(
+                                width: sidebarWidth,
+                                height: stageHeight + topChromeHeight - Design.previewHeaderTopInset,
+                                alignment: .top
+                            )
+                            .padding(.top, Design.previewHeaderTopInset)
                             .frame(width: sidebarWidth, height: stageHeight + topChromeHeight, alignment: .top)
                             .transaction { $0.animation = nil }
                     }
@@ -4504,7 +5520,7 @@ private struct PreviewPanelView: View {
                     )
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
                 }
-                .padding(.vertical, workspaceGap)
+                .padding(.bottom, workspaceGap)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 VStack(alignment: .leading, spacing: workspaceGap) {
@@ -4547,23 +5563,31 @@ private struct PreviewPanelView: View {
                     )
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
                 }
-                .padding(.vertical, workspaceGap)
+                .padding(.bottom, workspaceGap)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }
 
+    private func videoDisplayName(for video: VideoItem) -> String {
+        libraryStore.videoSourceTitle(for: video) ?? video.name
+    }
+
     private func previewHeader(for video: VideoItem) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(video.name)
+        VStack(alignment: .leading, spacing: Design.previewHeaderTitleTagGap) {
+            Text(videoDisplayName(for: video))
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .frame(maxWidth: .infinity, minHeight: Design.previewHeaderTitleLineHeight, maxHeight: Design.previewHeaderTitleLineHeight, alignment: .leading)
+                .layoutPriority(1)
 
             videoTagStrip(for: video)
         }
-        .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+        .padding(.top, Design.previewHeaderTopInset)
+        .padding(.bottom, Design.previewHeaderTitleTagGap)
+        .frame(maxWidth: .infinity, minHeight: Design.previewHeaderHeight, maxHeight: Design.previewHeaderHeight, alignment: .topLeading)
         .clipped()
     }
 
@@ -4668,20 +5692,32 @@ private struct PreviewPanelView: View {
     }
 
     private func exportPanelContent(video: VideoItem, frames: [SampledFrame], clips: [AudioClipItem], isOverlay: Bool) -> some View {
+        let sortedFrames = frames.sorted { $0.createdAt < $1.createdAt }
         let sortedAudioClips = clips.sorted { $0.createdAt < $1.createdAt }
-        let visibleItemIDs = exportPanelVisibleItemIDs(video: video, frames: frames, clips: clips)
+        let recentItems = exportPanelFilter == .recent ? recentExportPanelItems() : []
+        let recentAudioClipIndexByID = recentExportAudioClipIndexByID(from: recentItems)
+        let visibleItemIDs: [String] = {
+            switch exportPanelFilter {
+            case .recent:
+                return recentItems.map(\.id)
+            case .images:
+                return sortedFrames.map { ExportPanelItem.frame($0).id }
+            case .audio:
+                return sortedAudioClips.map { ExportPanelItem.audio($0).id }
+            case .music:
+                return []
+            }
+        }()
 
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     switch exportPanelFilter {
                     case .recent:
-                        let items = recentExportPanelItems()
-                        let recentAudioClipIndexByID = recentExportAudioClipIndexByID()
-                        if items.isEmpty {
+                        if recentItems.isEmpty {
                             AppEmptyState(title: "暂无素材", style: .inline, minHeight: 80)
                         } else {
-                            ForEach(items) { item in
+                            ForEach(recentItems) { item in
                                 switch item {
                                 case .frame(let frame):
                                     exportFrameRow(frame, showsSource: true, showsMetadata: !isOverlay, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
@@ -4691,6 +5727,10 @@ private struct PreviewPanelView: View {
                                     exportAudioClipRow(clip, index: recentAudioClipIndexByID[clip.id], showsSource: true, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
                                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                                case .transcript(let export):
+                                    exportTranscriptRow(export, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
+                                        .id(item.id)
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 }
                             }
                         }
@@ -4698,7 +5738,7 @@ private struct PreviewPanelView: View {
                         if frames.isEmpty {
                             AppEmptyState(title: "暂无图片", style: .inline, minHeight: 80)
                         } else {
-                            ForEach(frames.sorted { $0.createdAt < $1.createdAt }) { frame in
+                            ForEach(sortedFrames) { frame in
                                 let itemID = ExportPanelItem.frame(frame).id
                                 exportFrameRow(frame, showsMetadata: !isOverlay, highlightIntensity: exportPanelHighlightedItemID == itemID ? exportPanelHighlightIntensity : 0)
                                     .id(itemID)
@@ -4736,41 +5776,30 @@ private struct PreviewPanelView: View {
         }
     }
 
-    private func exportPanelItems(frames: [SampledFrame], clips: [AudioClipItem]) -> [ExportPanelItem] {
+    private func exportPanelItems(frames: [SampledFrame], clips: [AudioClipItem], transcripts: [TranscriptExportItem] = []) -> [ExportPanelItem] {
         let frameItems = frames.map(ExportPanelItem.frame)
         let clipItems = clips.map(ExportPanelItem.audio)
-        return (frameItems + clipItems).sorted { $0.createdAt < $1.createdAt }
+        let transcriptItems = transcripts.map(ExportPanelItem.transcript)
+        return (frameItems + clipItems + transcriptItems).sorted { $0.createdAt < $1.createdAt }
     }
 
     private func recentExportPanelItems() -> [ExportPanelItem] {
         let visibleVideoPaths = Set(libraryStore.videos.map { $0.url.path })
         return exportPanelItems(
             frames: libraryStore.sampledFrames.filter { visibleVideoPaths.contains($0.videoPath) },
-            clips: libraryStore.audioClips.filter { visibleVideoPaths.contains($0.videoPath) }
+            clips: libraryStore.audioClips.filter { visibleVideoPaths.contains($0.videoPath) },
+            transcripts: libraryStore.transcriptExports.filter { visibleVideoPaths.contains($0.videoPath) }
         )
     }
 
-    private func recentExportAudioClipIndexByID() -> [UUID: Int] {
-        let visibleVideoPaths = Set(libraryStore.videos.map { $0.url.path })
-        let sortedClips = libraryStore.audioClips
-            .filter { visibleVideoPaths.contains($0.videoPath) }
-            .sorted { $0.createdAt < $1.createdAt }
+    private func recentExportAudioClipIndexByID(from items: [ExportPanelItem]) -> [UUID: Int] {
+        let sortedClips = items.compactMap { item -> AudioClipItem? in
+            if case let .audio(clip) = item { return clip }
+            return nil
+        }
         return Dictionary(
             uniqueKeysWithValues: sortedClips.enumerated().map { ($0.element.id, $0.offset + 1) }
         )
-    }
-
-    private func exportPanelVisibleItemIDs(video: VideoItem, frames: [SampledFrame], clips: [AudioClipItem]) -> [String] {
-        switch exportPanelFilter {
-        case .recent:
-            return recentExportPanelItems().map(\.id)
-        case .images:
-            return frames.sorted { $0.createdAt < $1.createdAt }.map { ExportPanelItem.frame($0).id }
-        case .audio:
-            return clips.sorted { $0.createdAt < $1.createdAt }.map { ExportPanelItem.audio($0).id }
-        case .music:
-            return []
-        }
     }
 
     private func syncExportPanelTracking(ids: [String], proxy: ScrollViewProxy, shouldTrackNewItems: Bool) {
@@ -4818,23 +5847,10 @@ private struct PreviewPanelView: View {
                 jumpToExportLocation(path: frame.videoPath, time: frame.time)
             } label: {
                 HStack(spacing: 9) {
-                    if let image = NSImage(data: frame.thumbnailData) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 100, height: 56)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    } else {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(.black.opacity(0.28))
-                            .frame(width: 100, height: 56)
-                            .overlay {
-                                Image(systemName: "photo")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-                    }
+                    exportFramePreview(
+                        image: libraryStore.thumbnailImage(for: frame),
+                        showsMetadata: showsMetadata
+                    )
 
                     if showsMetadata {
                         VStack(alignment: .leading, spacing: 2) {
@@ -4847,8 +5863,10 @@ private struct PreviewPanelView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
+                        .frame(height: Self.exportRowContentHeight, alignment: .center)
                     }
                 }
+                .frame(height: Self.exportRowContentHeight, alignment: .center)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
@@ -4864,11 +5882,20 @@ private struct PreviewPanelView: View {
                 onDelete: {
                     libraryStore.deleteSampledFrame(frame)
                 }
-            )
+            ) {
+                InlineTagEditorButton(
+                    title: "图片标签",
+                    tags: frame.tags,
+                    suggestedTags: libraryStore.allFrameTags,
+                    buttonSize: 22,
+                    onAdd: { libraryStore.addFrameTag($0, to: frame) },
+                    onRemove: { libraryStore.removeFrameTag($0, from: frame) }
+                )
+            }
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 10)
-        .frame(minHeight: 76)
+        .padding(.vertical, Self.exportRowVerticalPadding)
+        .frame(height: Self.exportRowHeight)
         .background(exportRowBackground(isActive: false, progress: 0, highlightIntensity: highlight))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
@@ -4878,6 +5905,52 @@ private struct PreviewPanelView: View {
         .fullResolutionImageDrag {
             libraryStore.fullResolutionFrameProvider(for: frame)
         }
+    }
+
+    private func exportFramePreview(image: NSImage?, showsMetadata: Bool) -> some View {
+        let previewWidth = exportFramePreviewWidth(for: image, showsMetadata: showsMetadata)
+        let previewShape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+
+        return ZStack {
+            previewShape
+                .fill(.black.opacity(0.28))
+
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.medium)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "photo")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: previewWidth, height: Self.exportRowContentHeight)
+        .clipShape(previewShape)
+        .overlay {
+            previewShape
+                .stroke(.white.opacity(0.06), lineWidth: 0.7)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func exportFramePreviewWidth(for image: NSImage?, showsMetadata: Bool) -> CGFloat {
+        guard !showsMetadata else { return Self.exportFramePreviewWidth }
+        let aspectRatio = exportFramePreviewAspectRatio(for: image)
+        return min(
+            Self.exportFramePreviewMaxWidth,
+            max(Self.exportFramePreviewMinWidth, Self.exportRowContentHeight * aspectRatio)
+        )
+    }
+
+    private func exportFramePreviewAspectRatio(for image: NSImage?) -> CGFloat {
+        guard
+            let size = image?.size,
+            size.width > 0,
+            size.height > 0
+        else { return 16 / 9 }
+        return size.width / size.height
     }
 
     private func exportFrameTitle(for frame: SampledFrame) -> String {
@@ -4899,6 +5972,7 @@ private struct PreviewPanelView: View {
         let duration = max(0, clip.outTime - clip.inTime)
         let title = showsSource ? clip.videoName : audioClipTitle(index: index)
         let subtitle = "\(audioClipTitle(index: index)) · \(formatDuration(clip.inTime)) - \(formatDuration(clip.outTime))"
+        let waveformHeight: CGFloat = showsSource ? 44 : 58
 
         return HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: showsSource ? 3 : 4) {
@@ -4928,9 +6002,9 @@ private struct PreviewPanelView: View {
                     isActive: isPlaying,
                     progress: progress
                 )
-                .frame(height: showsSource ? 30 : 36)
+                .frame(height: waveformHeight)
             }
-            .frame(height: showsSource ? 64 : 56, alignment: .center)
+            .frame(height: Self.exportRowContentHeight, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -4948,11 +6022,20 @@ private struct PreviewPanelView: View {
                 onDelete: {
                     deleteExportAudioClip(clip)
                 }
-            )
+            ) {
+                InlineTagEditorButton(
+                    title: "声音标签",
+                    tags: clip.tags,
+                    suggestedTags: libraryStore.allAudioTags,
+                    buttonSize: 22,
+                    onAdd: { libraryStore.addAudioTag($0, to: clip) },
+                    onRemove: { libraryStore.removeAudioTag($0, from: clip) }
+                )
+            }
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 10)
-        .frame(minHeight: showsSource ? 84 : 76)
+        .padding(.vertical, Self.exportRowVerticalPadding)
+        .frame(height: Self.exportRowHeight)
         .background(exportRowBackground(isActive: isPlaying, progress: 0, highlightIntensity: highlight))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
@@ -4963,6 +6046,74 @@ private struct PreviewPanelView: View {
             libraryStore.loadAudioClipWaveformIfNeeded(clip)
         }
         .itemProviderDrag(audioClipDragProvider(for: clip))
+    }
+
+    private func exportTranscriptRow(_ export: TranscriptExportItem, highlightIntensity: Double = 0) -> some View {
+        let highlight = min(1, max(0, highlightIntensity))
+        let rangeText = "\(formatDuration(export.startTime)) - \(formatDuration(export.endTime))"
+        let actionSpacing = max(0, Self.exportRowContentHeight - Self.exportActionButtonSize * 2)
+
+        return HStack(alignment: .center, spacing: 10) {
+            Button {
+                jumpToExportLocation(path: export.videoPath, time: export.startTime)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Design.annotationAccent)
+                        .frame(width: Self.exportTranscriptIconWidth, height: Self.exportRowContentHeight)
+                        .background(.white.opacity(0.075))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(export.videoName)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.86))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text("字幕 · \(export.segmentCount) 段 · \(rangeText)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.48))
+                            .lineLimit(1)
+                    }
+                    .frame(height: Self.exportRowContentHeight, alignment: .center)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: Self.exportRowContentHeight, alignment: .center)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("跳到字幕起点")
+
+            VStack(spacing: actionSpacing) {
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: export.filePath))
+                } label: {
+                    exportItemActionIcon("doc.text", tint: .white.opacity(0.70), size: Self.exportActionButtonSize)
+                }
+                .buttonStyle(.plain)
+                .disabled(!FileManager.default.fileExists(atPath: export.filePath))
+                .help("打开字幕文件")
+
+                Button {
+                    jumpToExportLocation(path: export.videoPath, time: export.startTime)
+                } label: {
+                    exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70), size: Self.exportActionButtonSize)
+                }
+                .buttonStyle(.plain)
+                .help("跳到字幕起点")
+            }
+            .frame(width: Self.exportActionButtonSize, height: Self.exportRowContentHeight)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, Self.exportRowVerticalPadding)
+        .frame(height: Self.exportRowHeight)
+        .background(exportRowBackground(isActive: false, progress: 0, highlightIntensity: highlight))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: .white.opacity(0.07)), lineWidth: 0.8 + 0.4 * highlight)
+        }
     }
 
     private func exportAudioPlayButton(clip: AudioClipItem, isPlaying: Bool, progress: Double) -> some View {
@@ -5016,34 +6167,41 @@ private struct PreviewPanelView: View {
         }
     }
 
-    private func exportItemActionColumn(
+    private func exportItemActionColumn<Accessory: View>(
         jumpHelp: String,
         deleteHelp: String,
         onJump: @escaping () -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        @ViewBuilder accessory: () -> Accessory
     ) -> some View {
-        VStack(spacing: 4) {
+        let buttonSize = Self.exportActionButtonSize
+        let spacing = max(0, (Self.exportRowContentHeight - buttonSize * 3) / 2)
+
+        return VStack(spacing: spacing) {
+            accessory()
+                .frame(width: buttonSize, height: buttonSize)
+
             Button(action: onJump) {
-                exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70))
+                exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70), size: buttonSize)
             }
             .buttonStyle(.plain)
             .help(jumpHelp)
 
             Button(role: .destructive, action: onDelete) {
-                exportItemActionIcon("trash", tint: .white.opacity(0.70))
+                exportItemActionIcon("trash", tint: .white.opacity(0.70), size: buttonSize)
             }
             .buttonStyle(.plain)
             .help(deleteHelp)
         }
-        .frame(width: 26)
-        .frame(maxHeight: .infinity, alignment: .center)
+        .frame(width: buttonSize)
+        .frame(height: Self.exportRowContentHeight, alignment: .center)
     }
 
-    private func exportItemActionIcon(_ systemImage: String, tint: Color) -> some View {
+    private func exportItemActionIcon(_ systemImage: String, tint: Color, size: CGFloat = 26) -> some View {
         Image(systemName: systemImage)
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: min(13, size - 9), weight: .semibold))
             .foregroundStyle(tint)
-            .frame(width: 26, height: 26)
+            .frame(width: size, height: size)
             .contentShape(Rectangle())
     }
 
@@ -5269,12 +6427,15 @@ private struct PreviewPanelView: View {
         let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
 
         return ScrollView(.horizontal) {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(tags, id: \.self) { tag in
-                    VideoTagChip(tag: tag, size: .compact)
+                    PreviewTitleTagChip(tag: tag)
                 }
+
+                videoTagAddButton(for: video)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: Design.previewHeaderTagRowHeight, maxHeight: Design.previewHeaderTagRowHeight, alignment: .leading)
         .scrollIndicators(.hidden)
     }
 
@@ -5284,17 +6445,18 @@ private struct PreviewPanelView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 12, height: 18)
+                    .font(.system(size: 8, weight: .bold))
+                    .frame(width: 9, height: Design.previewHeaderTagRowHeight)
 
                 if isVideoTagAddHovered {
                     Text("添加标签")
-                        .font(.caption2.weight(.semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }
             }
             .foregroundStyle(.secondary)
-            .frame(width: isVideoTagAddHovered ? 72 : 22, height: 18)
+            .padding(.horizontal, isVideoTagAddHovered ? 5 : 2)
+            .frame(width: isVideoTagAddHovered ? 58 : 14, height: Design.previewHeaderTagRowHeight)
             .background(.white.opacity(isVideoTagAddHovered ? 0.11 : 0.07))
             .clipShape(Capsule())
             .contentShape(Capsule())
@@ -5312,22 +6474,31 @@ private struct PreviewPanelView: View {
     }
 
     private func videoTagPopover(for video: VideoItem) -> some View {
-        HStack(spacing: 8) {
-            TextField("添加标签", text: $draftVideoTag)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 160)
-                .onSubmit {
-                    addDraftVideoTag(to: video)
-                }
+        let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
 
-            Button {
-                addDraftVideoTag(to: video)
-            } label: {
-                Image(systemName: "plus")
+        return VStack(alignment: .leading, spacing: 10) {
+            TagSuggestionGrid(currentTags: tags, suggestedTags: libraryStore.allTags) { tag in
+                libraryStore.addTag(tag, to: video)
             }
-            .disabled(draftVideoTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            HStack(spacing: 8) {
+                TextField("添加标签", text: $draftVideoTag)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+                    .onSubmit {
+                        addDraftVideoTag(to: video)
+                    }
+
+                Button {
+                    addDraftVideoTag(to: video)
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .disabled(draftVideoTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
         .padding(12)
+        .frame(width: 260)
     }
 
     private func addDraftVideoTag(to video: VideoItem) {
@@ -5349,21 +6520,149 @@ private struct PreviewPanelView: View {
         return compositeTimelineStack(for: video, expandedHeight: height)
             .frame(maxWidth: .infinity)
             .frame(height: height, alignment: .top)
-            .shadow(color: .black.opacity(isExpanded ? 0.18 : 0), radius: isExpanded ? 18 : 0, y: -4)
             .clipped()
+            .overlay(alignment: .topLeading) {
+                GeometryReader { overlayProxy in
+                    annotationEditorOverlay(for: video, in: overlayProxy.size)
+                }
+                .allowsHitTesting(isAnnotationPopoverPresented)
+            }
+            .shadow(color: .black.opacity(isExpanded ? 0.18 : 0), radius: isExpanded ? 18 : 0, y: -4)
             .animation(timelineFadeAnimation, value: expandedPreviewTab)
     }
 
     @ViewBuilder
     private func compositeTimelineStack(for video: VideoItem, expandedHeight: CGFloat? = nil) -> some View {
         let detailHeight = expandedHeight.map { height in
-            max(120, height - Design.timelineLaneHeight - 16)
+            expandedTimelineDetailHeight(for: height)
         } ?? Design.expandedTimelineDetailHeight
 
-        VStack(spacing: 8) {
-            timelineLaneSlot(.frames, for: video, detailHeight: detailHeight)
-            timelineLaneSlot(.audio, for: video, detailHeight: detailHeight)
-            timelineLaneSlot(.content, for: video, detailHeight: detailHeight)
+        VStack(spacing: timelineLaneGap) {
+            ForEach(timelineLaneOrder, id: \.self) { tab in
+                timelineLaneSlot(tab, for: video, detailHeight: detailHeight)
+            }
+        }
+    }
+
+    private var timelineLaneGap: CGFloat { 8 }
+
+    private var timelineLaneOrder: [PreviewTab] {
+        guard let expandedPreviewTab else { return PreviewTab.allCases }
+        return [expandedPreviewTab]
+    }
+
+    private func expandedTimelineDetailHeight(for stackHeight: CGFloat) -> CGFloat {
+        max(120, stackHeight - Design.timelineLaneHeight - 16)
+    }
+
+    @ViewBuilder
+    private func annotationEditorOverlay(for video: VideoItem, in size: CGSize) -> some View {
+        if isAnnotationPopoverPresented {
+            let anchor = annotationEditorPoint(in: size)
+            annotationEditorView(for: video)
+                .frame(width: Self.annotationEditorWidth)
+                .background(.black.opacity(0.78))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(.white.opacity(0.16), lineWidth: 0.8)
+                }
+                .shadow(color: .black.opacity(0.34), radius: 18, y: 8)
+                .position(anchor)
+                .zIndex(50)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        }
+    }
+
+    private func annotationEditorPoint(in size: CGSize) -> CGPoint {
+        let marker = annotationMarkerPoint(in: size)
+        let halfWidth = Self.annotationEditorWidth / 2
+        let halfHeight = Self.annotationEditorHeight / 2
+        let x = min(max(marker.x, halfWidth + 6), max(halfWidth + 6, size.width - halfWidth - 6))
+        let aboveY = marker.y - halfHeight - 14
+        let belowY = marker.y + halfHeight + 14
+        let rawY = aboveY >= halfHeight + 4 ? aboveY : belowY
+        let y = min(max(rawY, halfHeight + 4), max(halfHeight + 4, size.height - halfHeight - 4))
+        return CGPoint(x: x, y: y)
+    }
+
+    private func annotationMarkerPoint(in size: CGSize) -> CGPoint {
+        let tab = visibleAnnotationSourceTab()
+        let laneHeight = Design.timelineLaneHeight
+        let laneOrigin = expandedPreviewTab == nil
+            ? CGFloat(timelineIndex(for: tab)) * (laneHeight + timelineLaneGap)
+            : 0
+        let contentFrame = timelineContentFrame(in: size, laneOrigin: laneOrigin, laneHeight: laneHeight)
+        let progress = min(1, max(0, annotationEditorAnchor.progress))
+        let x: CGFloat
+
+        switch tab {
+        case .frames:
+            let local = (progress - timelineOffset) / max(timelineViewportSpan, 0.0001)
+            x = contentFrame.minX + contentFrame.width * CGFloat(local)
+        case .audio:
+            let span = max(0.02, min(1, Design.centeredWaveformViewportSpan))
+            let focus = min(1, max(0, controller.progress))
+            x = contentFrame.midX + contentFrame.width * CGFloat((progress - focus) / span)
+        case .content:
+            x = contentFrame.minX + contentFrame.width * CGFloat(progress)
+        }
+
+        return CGPoint(
+            x: min(max(x, contentFrame.minX + 9), contentFrame.maxX - 9),
+            y: annotationMarkerY(for: annotationEditorAnchor.kind, tab: tab, in: contentFrame)
+        )
+    }
+
+    private func visibleAnnotationSourceTab() -> PreviewTab {
+        if let expandedPreviewTab, expandedPreviewTab != annotationEditorAnchor.sourceTab {
+            return expandedPreviewTab
+        }
+        return annotationEditorAnchor.sourceTab
+    }
+
+    private func timelineContentFrame(in size: CGSize, laneOrigin: CGFloat, laneHeight: CGFloat) -> CGRect {
+        let horizontalPadding: CGFloat = 8
+        let headerSpacing: CGFloat = 8
+        let minX = horizontalPadding + Design.timelineLaneButtonSize + headerSpacing
+        let maxX = max(minX + 1, size.width - horizontalPadding)
+        let sideButtonCount: CGFloat = 3
+        let sideButtonsHeight = Design.timelineLaneButtonSize * sideButtonCount
+        let visualGap = max(Design.timelineLaneVisualGap, (laneHeight - sideButtonsHeight) / (sideButtonCount + 1))
+        let contentHeight = max(Design.timelineLaneContentHeight, laneHeight - visualGap * 2)
+        let minY = laneOrigin + max(0, (laneHeight - contentHeight) / 2)
+
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: contentHeight)
+    }
+
+    private func annotationMarkerY(for kind: AnnotationItem.Kind, tab: PreviewTab, in frame: CGRect) -> CGFloat {
+        switch tab {
+        case .frames:
+            return frame.midY + 3
+        case .audio:
+            return frame.midY + 4
+        case .content:
+            return frame.minY + annotationLaneCenter(for: kind, height: frame.height)
+        }
+    }
+
+    private func annotationLaneCenter(for kind: AnnotationItem.Kind, height: CGFloat) -> CGFloat {
+        let margin: CGFloat = min(max(12, height * 0.16), max(12, height / 2))
+        switch kind {
+        case .frame:
+            return margin
+        case .audio:
+            return height / 2
+        case .content:
+            return max(margin, height - margin)
+        }
+    }
+
+    private func timelineIndex(for tab: PreviewTab) -> Int {
+        switch tab {
+        case .frames: return 0
+        case .audio: return 1
+        case .content: return 2
         }
     }
 
@@ -5373,19 +6672,22 @@ private struct PreviewPanelView: View {
         for video: VideoItem,
         detailHeight: CGFloat
     ) -> some View {
-        if expandedPreviewTab == nil || expandedPreviewTab == tab {
-            timelineLaneForTab(tab, for: video, detailHeight: detailHeight)
-                .frame(height: timelineSlotHeight(for: tab, detailHeight: detailHeight), alignment: .top)
-                .clipped()
-                .transition(.identity)
-        } else {
-            EmptyView()
-        }
+        timelineLaneForTab(tab, for: video, detailHeight: detailHeight)
+            .frame(height: timelineSlotHeight(for: tab, detailHeight: detailHeight), alignment: .top)
+            .clipped()
+            .transition(.identity)
     }
 
     private func timelineSlotHeight(for tab: PreviewTab, detailHeight: CGFloat) -> CGFloat {
-        guard expandedPreviewTab == tab else { return Design.timelineLaneHeight }
-        return Design.timelineLaneHeight + detailHeight + 16
+        if expandedPreviewTab == tab {
+            return Design.timelineLaneHeight + detailHeight + 16
+        }
+
+        if expandedPreviewTab != nil {
+            return Design.collapsedTimelineLaneHeight
+        }
+
+        return Design.timelineLaneHeight
     }
 
     private var timelineFadeAnimation: Animation {
@@ -5415,8 +6717,7 @@ private struct PreviewPanelView: View {
                     Spacer(minLength: 0)
 
                     trackHeaderButton(icon: "text.bubble.fill", help: "添加批注") {
-                        annotationText = ""
-                        isAnnotationPopoverPresented = true
+                        beginAnnotation(.frame, sourceTab: .frames)
                     }
                 },
                 content: {
@@ -5426,9 +6727,6 @@ private struct PreviewPanelView: View {
                     timelineDetailContent(.frames, for: video)
                 }
             )
-            .popover(isPresented: $isAnnotationPopoverPresented, arrowEdge: .bottom) {
-                annotationEditorView(for: video)
-            }
         case .audio:
             timelineLane(
                 tab: .audio,
@@ -5437,16 +6735,13 @@ private struct PreviewPanelView: View {
                 detailHeight: detailHeight,
                 regularLaneHeight: regularLaneHeight,
                 actions: {
-                    trackHeaderTextButton(audioSelectionButtonTitle, help: audioSelectionButtonHelp) {
-                        setNextAudioSelectionPoint()
-                    }
+                    audioSelectionActionButton(for: video)
 
                     Spacer(minLength: 0)
 
-                    trackHeaderButton(icon: "waveform.badge.plus", help: "导出选区音频") {
-                        exportCurrentAudioSelection(for: video)
+                    trackHeaderButton(icon: "text.bubble.fill", help: "添加声音批注") {
+                        beginAnnotation(.audio, sourceTab: .audio)
                     }
-                    .disabled(audioInPoint == nil || audioOutPoint == nil)
                 },
                 content: {
                     audioTimeline(for: video)
@@ -5463,17 +6758,16 @@ private struct PreviewPanelView: View {
                 detailHeight: detailHeight,
                 regularLaneHeight: regularLaneHeight,
                 actions: {
-                    trackHeaderButton(icon: "backward.end.fill", help: "上一个内容章节") {
-                        seekAdjacentContentChapter(for: video, direction: -1)
+                    trackHeaderButton(icon: "square.and.arrow.down", help: "导出字幕") {
+                        exportCurrentTranscript(for: video)
                     }
-                    .disabled(!canSeekAdjacentContentChapter(for: video, direction: -1))
+                    .disabled(libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []].isEmpty)
 
                     Spacer(minLength: 0)
 
-                    trackHeaderButton(icon: "forward.end.fill", help: "下一个内容章节") {
-                        seekAdjacentContentChapter(for: video, direction: 1)
+                    trackHeaderButton(icon: "text.bubble.fill", help: "添加内容批注") {
+                        beginAnnotation(.content, sourceTab: .content)
                     }
-                    .disabled(!canSeekAdjacentContentChapter(for: video, direction: 1))
                 },
                 content: {
                     contentTimeline(for: video)
@@ -5632,7 +6926,14 @@ private struct PreviewPanelView: View {
         guard let inT = audioInPoint, let outT = audioOutPoint else { return }
         guard libraryStore.audioClipExportProgressByVideoPath[video.url.path] == nil else { return }
         libraryStore.exportAudioClip(video: video, inTime: inT, outTime: outT)
-        exportPanelFilter = .audio
+        exportPanelFilter = .recent
+        isExportPanelPresented = true
+    }
+
+    private func exportCurrentTranscript(for video: VideoItem) {
+        guard libraryStore.exportTranscriptMarkdown(video: video) != nil else { return }
+        exportPanelFilter = .recent
+        isExportPanelPresented = true
     }
 
     private var displayedAudioOutPoint: Double? {
@@ -5659,6 +6960,20 @@ private struct PreviewPanelView: View {
         .help(help)
     }
 
+    @ViewBuilder
+    private func audioSelectionActionButton(for video: VideoItem) -> some View {
+        if audioInPoint != nil, audioOutPoint != nil {
+            trackHeaderButton(icon: "square.and.arrow.down", help: "导出选区音频") {
+                exportCurrentAudioSelection(for: video)
+            }
+            .disabled(libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
+        } else {
+            trackHeaderTextButton(audioSelectionButtonTitle, help: audioSelectionButtonHelp) {
+                setNextAudioSelectionPoint()
+            }
+        }
+    }
+
 
     private func toggleExpanded(_ tab: PreviewTab) {
         let nextExpandedTab: PreviewTab? = expandedPreviewTab == tab ? nil : tab
@@ -5667,6 +6982,10 @@ private struct PreviewPanelView: View {
             activePreviewTab = tab
             expandedPreviewTab = nextExpandedTab
             visibleTimelineDetailTab = nextExpandedTab
+            if let nextExpandedTab, isAnnotationPopoverPresented, annotationEditorAnchor.sourceTab != nextExpandedTab {
+                isAnnotationPopoverPresented = false
+                editingAnnotationID = nil
+            }
         }
 
         if nextExpandedTab != nil {
@@ -5684,7 +7003,10 @@ private struct PreviewPanelView: View {
                 sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
                 hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
                 sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
-                sampledFrames: libraryStore.sampledFrames,
+                sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
+                sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
+                isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
+                sampledFrames: libraryStore.sampledFrames(for: video),
                 activeItemID: activeSceneItemID(for: video)
             )
             .equatable()
@@ -6002,10 +7324,24 @@ private struct PreviewPanelView: View {
         }
     }
 
+    private func hydrateSceneThumbnailsForFrameTimelineIfIdle() {
+        guard
+            let video = libraryStore.selectedVideo,
+            !controller.isPlaying,
+            activePreviewTab == .frames || visibleTimelineDetailTab == .frames
+        else { return }
+
+        libraryStore.hydrateSceneThumbnailsIfNeeded(for: video)
+    }
+
     private func startSceneRecognitionIfNeeded(for video: VideoItem) {
         let path = video.url.path
+        if libraryStore.sceneCutsByVideoPath[path] != nil {
+            hydrateSceneThumbnailsForFrameTimelineIfIdle()
+            return
+        }
+
         guard
-            libraryStore.sceneCutsByVideoPath[path] == nil,
             libraryStore.sceneDetectionProgress[path] == nil
         else { return }
 
@@ -6033,11 +7369,16 @@ private struct PreviewPanelView: View {
 
     private func generateContentNodeTimeline(video: VideoItem, segments: [TranscriptSegment]) {
         guard !segments.isEmpty else { return }
+        let authorName = libraryStore.videoAuthorName(for: video)
         contentNodeTimelineStatus = .running(videoPath: video.url.path)
 
         Task {
             do {
-                let chapters = try await LocalTranscriptTimelineAnalyzer.analyze(videoName: video.name, segments: segments)
+                let chapters = try await LocalTranscriptTimelineAnalyzer.analyze(
+                    videoName: video.name,
+                    videoAuthor: authorName,
+                    segments: segments
+                )
                 await MainActor.run {
                     contentNodeTimelineStatus = .loaded(videoPath: video.url.path, chapters: chapters)
                 }
@@ -6061,13 +7402,14 @@ private struct PreviewPanelView: View {
             togglePlayback: { controller.togglePlayback() },
             seek: { controller.seekToProgress($0) },
             screenshotMarkers: normalizedSampledFrames(for: video),
-            annotationItems: normalizedAnnotations(for: video),
+            annotationItems: normalizedAnnotations(for: video, kind: .frame),
             prevScene: prevSceneAction(cuts: cuts),
             nextScene: nextSceneAction(cuts: cuts),
             stepBack: { controller.stepFrame(by: -1) },
             stepForward: { controller.stepFrame(by: 1) },
             onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-            onAnnotate: { annotationText = ""; isAnnotationPopoverPresented = true },
+            onAnnotate: { beginAnnotation(.frame, sourceTab: .frames) },
+            onAnnotationSelect: { openAnnotation($0, sourceTab: .frames) },
             viewportStart: timelineOffset,
             viewportSpan: timelineViewportSpan,
             duration: controller.duration,
@@ -6090,7 +7432,11 @@ private struct PreviewPanelView: View {
             sceneCuts: [],
             inPoint: audioInPoint.map { dur > 0 ? $0 / dur : 0 },
             outPoint: displayedAudioOutPoint.map { dur > 0 ? $0 / dur : 0 },
+            annotationItems: normalizedAnnotations(for: video, kind: .audio),
+            onAnnotationSelect: { openAnnotation($0, sourceTab: .audio) },
+            onClearSelection: { clearAudioSelection() },
             viewportSpan: Design.centeredWaveformViewportSpan,
+            playheadTint: timelinePlayheadTint,
             panViewport: panAudioTimelinePlayback
         )
     }
@@ -6104,10 +7450,13 @@ private struct PreviewPanelView: View {
             seek: { controller.seekToProgress($0) },
             chapters: loadedContentNodeChapters(for: video),
             duration: controller.duration,
+            annotationItems: normalizedAnnotations(for: video),
+            onAnnotationSelect: { openAnnotation($0, sourceTab: .content) },
+            playheadTint: .white.opacity(0.92),
             stepBack: { controller.stepFrame(by: -1) },
             stepForward: { controller.stepFrame(by: 1) },
             onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-            onAnnotate: { annotationText = ""; isAnnotationPopoverPresented = true }
+            onAnnotate: { beginAnnotation(.content, sourceTab: .content) }
         )
     }
 
@@ -6126,16 +7475,41 @@ private struct PreviewPanelView: View {
     }
 
     private func annotationEditorView(for video: VideoItem) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("添加批注 · \(previewTimecodeText)")
+        let editingAnnotation = editingAnnotation(for: video)
+        let title = editingAnnotation.map { "编辑\($0.kind.title)批注" }
+            ?? "添加\(pendingAnnotationKind.title)批注 · \(previewTimecodeText)"
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(title)
                 .font(.headline)
             TextEditor(text: $annotationText)
                 .frame(width: 260, height: 88)
             HStack {
+                if let editingAnnotation {
+                    Button(role: .destructive) {
+                        libraryStore.deleteAnnotation(editingAnnotation)
+                        editingAnnotationID = nil
+                        isAnnotationPopoverPresented = false
+                    } label: {
+                        Text("删除")
+                    }
+                }
+
                 Spacer()
-                Button("取消") { isAnnotationPopoverPresented = false }
+                Button("取消") {
+                    editingAnnotationID = nil
+                    isAnnotationPopoverPresented = false
+                }
                 Button("保存") {
-                    libraryStore.addAnnotation(video: video, time: controller.elapsed, text: annotationText)
+                    if let editingAnnotation {
+                        libraryStore.updateAnnotation(editingAnnotation, text: annotationText)
+                    } else {
+                        let annotationTime = controller.duration > 0
+                            ? annotationEditorAnchor.progress * controller.duration
+                            : controller.elapsed
+                        libraryStore.addAnnotation(video: video, time: annotationTime, text: annotationText, kind: pendingAnnotationKind)
+                    }
+                    editingAnnotationID = nil
                     isAnnotationPopoverPresented = false
                 }
                 .keyboardShortcut(.defaultAction)
@@ -6143,6 +7517,37 @@ private struct PreviewPanelView: View {
             }
         }
         .padding(14)
+    }
+
+    private func beginAnnotation(_ kind: AnnotationItem.Kind, sourceTab: PreviewTab) {
+        pendingAnnotationKind = kind
+        editingAnnotationID = nil
+        annotationText = ""
+        annotationEditorAnchor = AnnotationEditorAnchor(
+            progress: min(1, max(0, controller.progress)),
+            kind: kind,
+            sourceTab: sourceTab
+        )
+        isAnnotationPopoverPresented = true
+    }
+
+    private func openAnnotation(_ id: UUID, sourceTab: PreviewTab) {
+        guard let annotation = libraryStore.annotations.first(where: { $0.id == id }) else { return }
+        pendingAnnotationKind = annotation.kind
+        editingAnnotationID = id
+        annotationText = annotation.text
+        let progress = controller.duration > 0 ? annotation.time / controller.duration : controller.progress
+        annotationEditorAnchor = AnnotationEditorAnchor(
+            progress: min(1, max(0, progress)),
+            kind: annotation.kind,
+            sourceTab: sourceTab
+        )
+        isAnnotationPopoverPresented = true
+    }
+
+    private func editingAnnotation(for video: VideoItem) -> AnnotationItem? {
+        guard let editingAnnotationID else { return nil }
+        return libraryStore.annotations(for: video).first { $0.id == editingAnnotationID }
     }
 
     // MARK: – Custom liquid-glass tab switcher
@@ -6229,13 +7634,14 @@ private struct PreviewPanelView: View {
                 togglePlayback: { controller.togglePlayback() },
                 seek: { controller.seekToProgress($0) },
                 screenshotMarkers: normalizedSampledFrames(for: video),
-                annotationItems: normalizedAnnotations(for: video),
+                annotationItems: normalizedAnnotations(for: video, kind: .frame),
                 prevScene: prevSceneAction(cuts: cuts),
                 nextScene: nextSceneAction(cuts: cuts),
                 stepBack: { controller.stepFrame(by: -1) },
                 stepForward: { controller.stepFrame(by: 1) },
                 onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-                onAnnotate: { annotationText = ""; isAnnotationPopoverPresented = true },
+                onAnnotate: { beginAnnotation(.frame, sourceTab: .frames) },
+                onAnnotationSelect: { openAnnotation($0, sourceTab: .frames) },
                 viewportStart: timelineOffset,
                 viewportSpan: timelineViewportSpan,
                 duration: controller.duration,
@@ -6263,7 +7669,7 @@ private struct PreviewPanelView: View {
                 stepBack: { controller.stepFrame(by: -1) },
                 stepForward: { controller.stepFrame(by: 1) },
                 onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-                onAnnotate: { annotationText = ""; isAnnotationPopoverPresented = true },
+                onAnnotate: { beginAnnotation(.audio, sourceTab: .audio) },
                 viewportStart: timelineOffset,
                 viewportSpan: timelineViewportSpan,
                 duration: controller.duration,
@@ -6281,10 +7687,12 @@ private struct PreviewPanelView: View {
                 seek: { controller.seekToProgress($0) },
                 chapters: loadedContentNodeChapters(for: video),
                 duration: controller.duration,
+                annotationItems: normalizedAnnotations(for: video),
+                onAnnotationSelect: { openAnnotation($0, sourceTab: .content) },
                 stepBack: { controller.stepFrame(by: -1) },
                 stepForward: { controller.stepFrame(by: 1) },
                 onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-                onAnnotate: { annotationText = ""; isAnnotationPopoverPresented = true }
+                onAnnotate: { beginAnnotation(.content, sourceTab: .content) }
             )
         }
     }
@@ -6343,7 +7751,10 @@ private struct PreviewPanelView: View {
                 sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
                 hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
                 sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
-                sampledFrames: libraryStore.sampledFrames,
+                sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
+                sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
+                isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
+                sampledFrames: libraryStore.sampledFrames(for: video),
                 activeItemID: activeSceneItemID(for: video)
             )
             .equatable()
@@ -6492,9 +7903,9 @@ private struct PreviewPanelView: View {
                     isActive: isPlaying,
                     progress: progress
                 )
-                .frame(height: 36)
+                .frame(height: 58)
             }
-            .frame(height: 56, alignment: .center)
+            .frame(height: Self.exportRowContentHeight, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -6515,11 +7926,20 @@ private struct PreviewPanelView: View {
                 onDelete: {
                     deleteExportAudioClip(clip)
                 }
-            )
+            ) {
+                InlineTagEditorButton(
+                    title: "声音标签",
+                    tags: clip.tags,
+                    suggestedTags: libraryStore.allAudioTags,
+                    buttonSize: 22,
+                    onAdd: { libraryStore.addAudioTag($0, to: clip) },
+                    onRemove: { libraryStore.removeAudioTag($0, from: clip) }
+                )
+            }
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 10)
-        .frame(minHeight: 76)
+        .padding(.vertical, Self.exportRowVerticalPadding)
+        .frame(height: Self.exportRowHeight)
         .background(.white.opacity(isPlaying ? 0.075 : 0.055))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
@@ -6711,28 +8131,40 @@ private struct PreviewPanelView: View {
     /// 场景识别完成时返回每个场景的代表帧列表（index 0 = 片头帧，1…N = 切点首帧）。
     /// 未完成识别时返回 nil，FrameScrubberView 回退到均匀采样帧带。
     private func sceneStripImages(for video: VideoItem) -> [NSImage]? {
-        let path = video.url.path
-        guard
-            let cuts = libraryStore.sceneCutsByVideoPath[path],
-            !cuts.isEmpty
-        else { return nil }
+        guard let images = libraryStore.sceneStripImagesByVideoPath[video.url.path], !images.isEmpty else { return nil }
+        return images
+    }
 
-        let cutImages = cuts.map(\.thumbnailImage)
-        if cuts.first.map({ $0.time <= 0.001 }) == true {
-            return cutImages
+    private func activeTranscriptSegmentID(at elapsed: Double, in segments: [TranscriptSegment]) -> UUID? {
+        guard !segments.isEmpty else { return nil }
+        var lower = 0
+        var upper = segments.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if segments[middle].start <= elapsed {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
         }
-
-        guard
-            let firstFrame = libraryStore.frameStripImagesByVideoPath[path]?.first
-                ?? libraryStore.thumbnailImageByVideoPath[path]
-        else { return nil }
-
-        return [firstFrame] + cutImages
+        let index = lower - 1
+        return segments.indices.contains(index) ? segments[index].id : nil
     }
 
     private func activeSceneItemID(for video: VideoItem) -> String? {
         guard let cuts = libraryStore.sceneCutsByVideoPath[video.url.path], !cuts.isEmpty else { return nil }
-        let idx = cuts.lastIndex { $0.time <= controller.elapsed } ?? 0
+        let target = controller.elapsed
+        var lower = 0
+        var upper = cuts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cuts[middle].time <= target {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        let idx = max(0, lower - 1)
         return "cut-\(cuts[idx].id)"
     }
 
@@ -6774,9 +8206,6 @@ private struct PreviewPanelView: View {
 
     private func sceneStoryboardCuts(for video: VideoItem) -> [Double] {
         let cuts = normalizedSceneCuts(for: video)
-            .filter { $0.isFinite }
-            .map { min(1, max(0, $0)) }
-            .sorted()
         guard cuts.first.map({ $0 <= 0.001 }) == true else { return cuts }
         return Array(cuts.dropFirst())
     }
@@ -6787,10 +8216,21 @@ private struct PreviewPanelView: View {
             .map { min(1, max(0, $0.time / controller.duration)) }
     }
 
-    private func normalizedAnnotations(for video: VideoItem) -> [(progress: Double, text: String)] {
+    private var timelinePlayheadTint: Color {
+        audioInPoint != nil && audioOutPoint == nil ? .orange : .white.opacity(0.92)
+    }
+
+    private func normalizedAnnotations(for video: VideoItem, kind: AnnotationItem.Kind? = nil) -> [TimelineAnnotationMarker] {
         guard controller.duration > 0 else { return [] }
-        return libraryStore.annotations(for: video)
-            .map { (progress: min(1, max(0, $0.time / controller.duration)), text: $0.text) }
+        return libraryStore.annotations(for: video).compactMap { annotation in
+            guard kind == nil || annotation.kind == kind else { return nil }
+            return TimelineAnnotationMarker(
+                id: annotation.id,
+                progress: min(1, max(0, annotation.time / controller.duration)),
+                text: annotation.text,
+                kind: annotation.kind
+            )
+        }
     }
 
     private func prevSceneAction(cuts: [SceneCut]) -> (() -> Void)? {
@@ -6817,6 +8257,42 @@ private struct PreviewPanelView: View {
 
     private var timelineViewportSpan: Double {
         min(1, max(0.02, 1 / max(timelineZoom, 1)))
+    }
+
+    private func focusSceneTimelineOnOpeningIfNeeded() {
+        guard
+            activePreviewTab == .frames,
+            let video = libraryStore.selectedVideo,
+            timelineViewportSpan >= 0.999,
+            timelineOffset <= 0.0005
+        else { return }
+
+        let cuts = sceneStoryboardCuts(for: video)
+        guard !cuts.isEmpty else { return }
+
+        let key = sceneTimelineOpeningFocusKey(for: video, cuts: cuts)
+        guard sceneTimelineAutoFocusedKey != key else { return }
+
+        sceneTimelineAutoFocusedKey = key
+        guard let span = sceneTimelineOpeningSpan(from: cuts) else { return }
+
+        timelineZoom = min(Design.sceneTimelineAutoMaxZoom, max(1, 1 / span))
+        timelineOffset = 0
+    }
+
+    private func sceneTimelineOpeningFocusKey(for video: VideoItem, cuts: [Double]) -> String {
+        let first = Int(((cuts.first ?? 0) * 1_000_000).rounded())
+        let last = Int(((cuts.last ?? 0) * 1_000_000).rounded())
+        return "\(libraryStore.selectedVideoSelectionID.uuidString):\(video.url.path):\(cuts.count):\(first):\(last)"
+    }
+
+    private func sceneTimelineOpeningSpan(from cuts: [Double]) -> Double? {
+        let sceneCount = cuts.count + 1
+        guard sceneCount > Design.sceneTimelineAutoVisibleSceneLimit else { return nil }
+
+        let targetSpan = Double(Design.sceneTimelineAutoVisibleSceneLimit) / Double(sceneCount)
+        let maxZoomSpan = 1 / Design.sceneTimelineAutoMaxZoom
+        return min(1, max(maxZoomSpan, targetSpan))
     }
 
     private func panTimelineViewport(_ delta: Double) {
@@ -6899,6 +8375,12 @@ private struct PreviewPanelView: View {
         case .stepBackward:
             stopKeyboardShuttle()
             controller.stepFrame(by: -1)
+        case .previousSceneCut:
+            stopKeyboardShuttle()
+            seekSceneCut(for: selectedVideo, direction: -1)
+        case .nextSceneCut:
+            stopKeyboardShuttle()
+            seekSceneCut(for: selectedVideo, direction: 1)
         case .setAudioIn:
             setAudioInPoint()
         case .setAudioOut:
@@ -6913,6 +8395,25 @@ private struct PreviewPanelView: View {
         }
 
         return true
+    }
+
+    private func seekSceneCut(for video: VideoItem, direction: Int) {
+        let cuts = libraryStore.sceneCutsByVideoPath[video.url.path] ?? []
+        guard !cuts.isEmpty else { return }
+        let elapsed = controller.elapsed
+
+        if direction < 0 {
+            if let previous = cuts.last(where: { $0.time < elapsed - 0.1 }) {
+                controller.seekToSeconds(previous.time)
+            } else {
+                controller.seekToSeconds(0)
+            }
+            return
+        }
+
+        if let next = cuts.first(where: { $0.time > elapsed + 0.1 }) {
+            controller.seekToSeconds(next.time)
+        }
     }
 
     private func startKeyboardShuttle(direction: Int) {
@@ -6957,58 +8458,427 @@ private struct FramesWorkspaceView: View {
     @Binding var selectedVideoPath: String?
     @Binding var selectedFrameID: UUID?
     let goHome: (String, Double) -> Void
+    @AppStorage("frameBoardGridSize") private var frameBoardGridSize = 1
+    @State private var boardMode: FramesBoardMode = .byVideo
+    @State private var selectedFrameTags: Set<String> = []
+    @State private var isFrameTagFilterPresented = false
+    @State private var detailFrame: SampledFrame?
     @State private var frameAnalysisState: FrameAnalysisState = .idle
     @State private var analyzedFrameID: UUID?
     @State private var frameAnalysisTask: Task<Void, Never>?
 
-    private var filteredFrames: [SampledFrame] {
-        if let selectedVideoPath {
-            return libraryStore.sampledFrames
-                .filter { $0.videoPath == selectedVideoPath }
-                .sorted { $0.time < $1.time }
+    private var boardFrames: [SampledFrame] {
+        let frames: [SampledFrame]
+        if selectedFrameTags.isEmpty {
+            frames = libraryStore.collectedFrames
+        } else {
+            frames = libraryStore.collectedFrames.filter { frame in
+                let frameTags = Set(frame.tags)
+                return selectedFrameTags.allSatisfy { frameTags.contains($0) }
+            }
         }
-        return libraryStore.collectedFrames
+
+        switch boardMode {
+        case .storyboard:
+            return frames.sorted {
+                if $0.videoName == $1.videoName { return $0.time < $1.time }
+                return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+            }
+        case .byVideo:
+            return frames
+        case .byTag:
+            return frames.sorted {
+                if $0.videoName == $1.videoName { return $0.time < $1.time }
+                return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+            }
+        }
     }
 
-    private var selectedFrame: SampledFrame? {
-        filteredFrames.first { $0.id == selectedFrameID } ?? filteredFrames.first
+    private var videoSections: [(key: String, title: String, frames: [SampledFrame])] {
+        let groups = Dictionary(grouping: boardFrames, by: \.videoPath)
+        return groups.map { path, frames in
+            (
+                key: path,
+                title: frames.first?.videoName ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                frames: frames.sorted { $0.time < $1.time }
+            )
+        }
+        .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
-    private var titleText: String {
-        guard let selectedVideoPath,
-              let video = libraryStore.selectedVideo(for: selectedVideoPath)
-        else { return "全部画面" }
-        return video.name
+    private var tagSections: [(key: String, title: String, frames: [SampledFrame])] {
+        if selectedFrameTags.isEmpty {
+            var sections = libraryStore.allFrameTags.compactMap { tag -> (key: String, title: String, frames: [SampledFrame])? in
+                let frames = boardFrames
+                    .filter { $0.tags.contains(tag) }
+                    .sorted {
+                        if $0.videoName == $1.videoName { return $0.time < $1.time }
+                        return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+                    }
+                guard !frames.isEmpty else { return nil }
+                return (key: tag, title: tag, frames: frames)
+            }
+
+            let untaggedFrames = boardFrames
+                .filter { $0.tags.isEmpty }
+                .sorted {
+                    if $0.videoName == $1.videoName { return $0.time < $1.time }
+                    return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+                }
+            if !untaggedFrames.isEmpty {
+                sections.append((key: "__untagged", title: "未标记", frames: untaggedFrames))
+            }
+            return sections
+        }
+
+        return selectedFrameTags.sorted().compactMap { tag -> (key: String, title: String, frames: [SampledFrame])? in
+            let frames = boardFrames
+                .filter { $0.tags.contains(tag) }
+                .sorted {
+                    if $0.videoName == $1.videoName { return $0.time < $1.time }
+                    return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+                }
+            guard !frames.isEmpty else { return nil }
+            return (key: tag, title: tag, frames: frames)
+        }
+    }
+
+    private var gridColumns: [GridItem] {
+        let count = max(1, 3 - min(max(frameBoardGridSize, 0), 2))
+        return Array(
+            repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
+            count: count
+        )
     }
 
     var body: some View {
-        frameAnalysisPanel
+        ZStack {
+            frameBoard
+
+            if let frame = detailFrame {
+                frameDetailOverlay(frame)
+            }
+        }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(16)
-        .contentPanel()
+        .background(Design.sidebarBg)
         .onDisappear {
             frameAnalysisTask?.cancel()
         }
     }
 
-    private var frameAnalysisPanel: some View {
+    private var frameBoard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(titleText) · \(filteredFrames.count) 张已收集画面")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            frameBoardToolbar
+
+            if boardFrames.isEmpty {
+                AppEmptyState(
+                    title: selectedFrameTags.isEmpty ? "暂无已导出图片" : "没有匹配标签的画面",
+                    systemImage: "photo.on.rectangle",
+                    style: .large
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 14)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        switch boardMode {
+                        case .byVideo:
+                            ForEach(videoSections, id: \.key) { section in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    frameSectionDivider(section.title)
+                                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+                                        ForEach(section.frames) { frame in
+                                            frameBoardCard(frame)
+                                        }
+                                    }
+                                }
+                            }
+                        case .byTag:
+                            ForEach(tagSections, id: \.key) { section in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    frameSectionDivider(section.title)
+                                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+                                        ForEach(section.frames) { frame in
+                                            frameBoardCard(frame)
+                                        }
+                                    }
+                                }
+                            }
+                        case .storyboard:
+                            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+                                ForEach(boardFrames) { frame in
+                                    frameBoardCard(frame)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 14)
                 }
+                .scrollIndicators(.hidden)
+                .background(HiddenScrollIndicators())
+            }
+        }
+        .padding(.top, Design.libraryToolbarTop)
+        .padding(.bottom, 14)
+    }
+
+    private var frameBoardToolbar: some View {
+        HStack(spacing: 12) {
+            Spacer(minLength: 4)
+
+            HStack(spacing: Design.libraryToolbarButtonGap) {
+                frameTagFilterButton
+                frameBoardModeMenu
+            }
+            .frame(height: Design.libraryToolbarButtonSlotHeight)
+
+            frameGridSizeControl
+        }
+        .frame(minHeight: Design.libraryToolbarHeight)
+        .padding(.horizontal, 14)
+    }
+
+    private var frameTagFilterButton: some View {
+        Button {
+            isFrameTagFilterPresented.toggle()
+        } label: {
+            frameToolbarIcon(systemName: selectedFrameTags.isEmpty ? "tag" : "tag.fill", size: 12)
+                .overlay(alignment: .topTrailing) {
+                    if !selectedFrameTags.isEmpty {
+                        Text("\(selectedFrameTags.count)")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.orange)
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -3)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .contentShape(Rectangle())
+        .help("图片标签筛选")
+        .popover(isPresented: $isFrameTagFilterPresented, arrowEdge: .bottom) {
+            frameTagFilterPopover
+        }
+    }
+
+    private var frameBoardModeMenu: some View {
+        Menu {
+            Section("分类方法") {
+                ForEach(FramesBoardMode.allCases) { mode in
+                    Button {
+                        boardMode = mode
+                    } label: {
+                        Label(mode.rawValue, systemImage: boardMode == mode ? "checkmark" : "")
+                    }
+                }
+            }
+        } label: {
+            frameToolbarIcon(systemName: "arrow.up.arrow.down", size: 12)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .help("分类方法")
+    }
+
+    private var frameGridSizeControl: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "square.grid.3x3")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Slider(
+                value: Binding(
+                    get: { Double(frameBoardGridSize) },
+                    set: {
+                        let nextSize = Int($0.rounded())
+                        if frameBoardGridSize != nextSize {
+                            frameBoardGridSize = nextSize
+                        }
+                    }
+                ),
+                in: 0...2
+            )
+            .frame(width: 56)
+            .controlSize(.small)
+            .help("图片看板密度")
+
+            Image(systemName: "rectangle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var frameTagFilterPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("图片标签筛选")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
                 Spacer()
+                Button("全部") {
+                    selectedFrameTags.removeAll()
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+                .disabled(selectedFrameTags.isEmpty)
             }
 
-            if let frame = selectedFrame {
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        selectedFramePreview(frame)
+            if libraryStore.allFrameTags.isEmpty {
+                AppEmptyState(title: "暂无图片标签", style: .inline, alignment: .leading)
+                    .frame(minHeight: 36)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(libraryStore.allFrameTags, id: \.self) { tag in
+                            Button {
+                                toggleFrameTag(tag)
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Image(systemName: selectedFrameTags.contains(tag) ? "checkmark.square.fill" : "square")
+                                        .foregroundStyle(selectedFrameTags.contains(tag) ? Color.orange : .secondary)
+                                        .frame(width: 15)
+                                    VideoTagColorDot(tag: tag)
+                                    Text(tag)
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 5)
+                            .background(selectedFrameTags.contains(tag) ? Color.white.opacity(0.08) : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+                .scrollIndicators(.hidden)
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+    }
 
+    private func toggleFrameTag(_ tag: String) {
+        if selectedFrameTags.contains(tag) {
+            selectedFrameTags.remove(tag)
+        } else {
+            selectedFrameTags.insert(tag)
+        }
+    }
+
+    private func frameToolbarIcon(systemName: String, size: CGFloat) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(Design.libraryToolbarIconTint)
+            .frame(
+                width: Design.libraryToolbarButtonSlotWidth,
+                height: Design.libraryToolbarButtonSlotHeight,
+                alignment: .center
+            )
+    }
+
+    private func frameSectionDivider(_ title: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Rectangle()
+                .fill(.white.opacity(0.10))
+                .frame(height: 1)
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
+
+            Rectangle()
+                .fill(.white.opacity(0.10))
+                .frame(height: 1)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 10)
+    }
+
+    private func frameBoardCard(_ frame: SampledFrame) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Button {
+                selectedFrameID = frame.id
+                detailFrame = latestFrame(frame)
+            } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    ZStack(alignment: .bottomTrailing) {
+                        if let image = libraryStore.thumbnailImage(for: frame) {
+                            Image(nsImage: image)
+                                .resizable()
+                                .interpolation(.medium)
+                                .scaledToFill()
+                        } else {
+                            Color.black.opacity(0.26)
+                        }
+
+                        CardTimeBadge(text: clockText(frame.time), placeholder: clockText(frame.time))
+                            .padding(.trailing, CardTimeBadge.edgeInset)
+                            .padding(.bottom, CardTimeBadge.verticalInset)
+                    }
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                    Text(frame.videoName)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    HStack(spacing: 5) {
+                        Text(frame.kind == .screenshot ? "截图" : "场景")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ScaledCardTagCloud(tags: Array(frame.tags.prefix(3)))
+                    }
+                    .frame(height: 18, alignment: .leading)
+                }
+                .padding(8)
+                .background(.white.opacity(0.055))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(selectedFrameID == frame.id ? Design.captureFrameAccent.opacity(0.45) : .white.opacity(0.08), lineWidth: 0.8)
+                }
+            }
+            .buttonStyle(.plain)
+            .fullResolutionImageDrag {
+                libraryStore.fullResolutionFrameProvider(for: frame)
+            }
+
+            InlineTagEditorButton(
+                title: "图片标签",
+                tags: frame.tags,
+                suggestedTags: libraryStore.allFrameTags,
+                onAdd: { libraryStore.addFrameTag($0, to: frame) },
+                onRemove: { libraryStore.removeFrameTag($0, from: frame) }
+            )
+            .padding(8)
+        }
+    }
+
+    private func frameDetailOverlay(_ frame: SampledFrame) -> some View {
+        ZStack {
+            Color.black.opacity(0.52)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    detailFrame = nil
+                }
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(frame.videoName)
                             .font(.headline)
                             .lineLimit(1)
@@ -7016,39 +8886,69 @@ private struct FramesWorkspaceView: View {
                         Text("\(clockText(frame.time)) · \(frame.kind == .screenshot ? "手动截图帧" : "场景代表帧")")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        detailFrame = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                selectedFramePreview(frame)
+                    .frame(maxWidth: .infinity, maxHeight: 430)
+                    .background(Color.black.opacity(0.24))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        InlineTagEditorButton(
+                            title: "图片标签",
+                            tags: latestFrame(frame).tags,
+                            suggestedTags: libraryStore.allFrameTags,
+                            onAdd: { libraryStore.addFrameTag($0, to: frame); detailFrame = latestFrame(frame) },
+                            onRemove: { libraryStore.removeFrameTag($0, from: frame); detailFrame = latestFrame(frame) }
+                        )
 
                         Button {
+                            detailFrame = nil
                             goHome(frame.videoPath, frame.time)
                         } label: {
                             Label("回到原视频", systemImage: "arrowshape.turn.up.left.fill")
                         }
                         .buttonStyle(.borderedProminent)
-
-                        frameAnalysisView(for: frame)
                     }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                    ColorSwatches(imageData: frame.thumbnailData, orientation: .vertical)
-                        .frame(width: 92)
+                    ColorSwatches(imageData: frame.thumbnailData, orientation: .horizontal)
+                        .frame(maxWidth: .infinity)
                 }
-            } else {
-                AppEmptyState(
-                    title: "选择一张画面",
-                    systemImage: "photo.on.rectangle",
-                    description: "点击左侧画面预览查看色卡。",
-                    style: .large
-                )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
 
-            Spacer(minLength: 0)
+                frameAnalysisView(for: frame)
+            }
+            .padding(16)
+            .frame(width: 720)
+            .background(Design.sidebarBg)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.14), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.40), radius: 26, y: 16)
         }
+        .zIndex(10)
+        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+    }
+
+    private func latestFrame(_ frame: SampledFrame) -> SampledFrame {
+        libraryStore.sampledFrame(id: frame.id) ?? frame
     }
 
     @ViewBuilder
     private func selectedFramePreview(_ frame: SampledFrame) -> some View {
         Group {
-            if let image = NSImage(data: frame.thumbnailData) {
+            if let image = libraryStore.thumbnailImage(for: frame) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
@@ -7246,313 +9146,524 @@ private enum LocalFrameAnalyzer {
     }
 }
 
+private struct RecognizedMusicAsset: Identifiable {
+    var videoPath: String
+    var videoName: String
+    var song: MusicRecognitionItem
+
+    var id: String { "\(videoPath)-\(song.id.uuidString)" }
+}
+
 private struct AudioWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let goHome: (String, Double) -> Void
-    @State private var selectedClipVideoPath: String?
+    @State private var selectedSoundTags: Set<String> = []
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                musicSection
-                Divider().opacity(0.3)
-                clipsSection
+        VStack(alignment: .leading, spacing: 12) {
+            audioHeader
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    musicSection
+                    clipsSection
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
             }
-            .padding(16)
+            .scrollIndicators(.hidden)
+            .background(HiddenScrollIndicators())
         }
-        .contentPanel()
+        .padding(.top, Design.libraryToolbarTop)
+        .padding(.bottom, 14)
+        .background(Design.sidebarBg)
     }
 
-    // MARK: – Music recognition
+    private var audioHeader: some View {
+        HStack(spacing: Design.libraryToolbarButtonGap) {
+            Spacer(minLength: 4)
+
+            if !selectedSoundTags.isEmpty {
+                Button {
+                    selectedSoundTags.removeAll()
+                } label: {
+                    audioToolbarIcon(systemName: "xmark.circle", size: 12)
+                }
+                .buttonStyle(.plain)
+                .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+                .contentShape(Rectangle())
+                .help("清除标签筛选")
+            }
+
+            Menu {
+                Button {
+                    selectedSoundTags.removeAll()
+                } label: {
+                    HStack {
+                        if selectedSoundTags.isEmpty { Image(systemName: "checkmark") }
+                        Text("全部标签")
+                    }
+                }
+
+                if !soundFilterTags.isEmpty {
+                    Divider()
+                }
+
+                ForEach(soundFilterTags, id: \.self) { tag in
+                    Button {
+                        toggleSoundTag(tag)
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedSoundTags.contains(tag) ? "checkmark.square.fill" : "square")
+                            VideoTagColorDot(tag: tag)
+                            Text(tag)
+                        }
+                    }
+                }
+            } label: {
+                audioToolbarIcon(systemName: selectedSoundTags.isEmpty ? "tag" : "tag.fill", size: 12)
+                    .overlay(alignment: .topTrailing) {
+                        if !selectedSoundTags.isEmpty {
+                            Text("\(selectedSoundTags.count)")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 3)
+                                .padding(.vertical, 1)
+                                .background(Color.orange)
+                                .clipShape(Capsule())
+                                .offset(x: 4, y: -3)
+                        }
+                    }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+            .help("按标签筛选识别音乐和导出音效")
+        }
+        .frame(minHeight: Design.libraryToolbarHeight)
+        .padding(.horizontal, 14)
+    }
 
     @ViewBuilder
     private var musicSection: some View {
-        let video = libraryStore.selectedVideo
-        let path = video?.url.path ?? ""
-        let status = libraryStore.musicDetectionStatusByVideoPath[path]
-        let songs = libraryStore.musicsByVideoPath[path, default: []]
+        let items = filteredMusicAssets
 
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("音乐识别")
-                    .font(.title2.bold())
-                Spacer()
-                if let video {
-                    if case .running = status {
-                        Button {
-                            libraryStore.cancelMusicDetection(for: video)
-                        } label: {
-                            Image(systemName: "stop.circle")
-                                .foregroundStyle(.orange)
-                                .accessibilityLabel("停止音乐识别")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("停止音乐识别")
-                    } else {
-                        Button {
-                            libraryStore.detectMusic(for: video)
-                        } label: {
-                            Label(songs.isEmpty ? "识别音乐" : "重新识别", systemImage: "music.note.list")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("用 Shazam 识别视频中的所有背景音乐")
-                    }
-                }
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: "识别音乐", count: items.count, icon: "music.note.list")
 
-            if video == nil {
-                AppEmptyState(
-                    title: "选择一个视频",
-                    systemImage: "play.rectangle",
-                    description: "请先在左侧选择一个视频。",
-                    style: .compact,
-                    minHeight: 96
-                )
-            } else if case let .running(msg) = status {
-                RecognitionProgressRow(
-                    message: msg,
-                    progress: activityProgressValue(from: msg),
-                    showPercent: false,
-                    showStepCount: false
-                )
-                .recognitionProgressCard()
-
-                // Show partial results while still detecting
-                if !songs.isEmpty {
-                    musicList(songs: songs, videoPath: path)
-                }
-            } else if case .failed = status {
-                AppEmptyState(
-                    title: "暂无音乐识别结果",
-                    systemImage: "music.note",
-                    style: .large,
-                    minHeight: 128,
-                    showsBackground: true
-                )
-            } else if status == .completed, songs.isEmpty {
-                AppEmptyState(
-                    title: "暂无音乐识别结果",
-                    systemImage: "music.note",
-                    style: .large,
-                    minHeight: 128,
-                    showsBackground: true
-                )
-            } else if songs.isEmpty {
+            if musicAssets.isEmpty {
                 AppEmptyState(
                     title: "暂无音乐识别记录",
                     systemImage: "music.note",
-                    description: "点击「识别音乐」，自动扫描视频中的所有背景音乐。",
+                    description: "在主页或声音时间轴中识别后，这里会汇总所有音乐。",
                     style: .large,
-                    minHeight: 128
+                    minHeight: 126
                 )
                 .frame(maxWidth: .infinity)
-            } else {
-                musicList(songs: songs, videoPath: path)
-            }
-        }
-    }
-
-    private func musicList(songs: [MusicRecognitionItem], videoPath: String) -> some View {
-        LazyVStack(spacing: 8) {
-            ForEach(songs) { song in
-                MusicRecognitionRow(song: song) {
-                    goHome(videoPath, song.detectedAt)
-                }
-            }
-        }
-    }
-
-    // MARK: – Exported clips
-
-    @ViewBuilder
-    private var clipsSection: some View {
-        let filteredClips = filteredAudioClips
-
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("已导出片段")
-                    .font(.title2.bold())
-                Spacer()
-                if !clipVideoOptions.isEmpty {
-                    Menu {
-                        Button {
-                            selectedClipVideoPath = nil
-                        } label: {
-                            HStack {
-                                if selectedClipVideoPath == nil { Image(systemName: "checkmark") }
-                                Text("全部来源")
-                            }
-                        }
-
-                        Divider()
-
-                        ForEach(clipVideoOptions, id: \.path) { option in
-                            Button {
-                                selectedClipVideoPath = option.path
-                            } label: {
-                                HStack {
-                                    if selectedClipVideoPath == option.path { Image(systemName: "checkmark") }
-                                    Text(option.name)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(selectedClipVideoName, systemImage: "line.3.horizontal.decrease.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("按来源视频筛选声音片段")
-                }
-            }
-
-            if libraryStore.audioClips.isEmpty {
+            } else if items.isEmpty {
                 AppEmptyState(
-                    title: "暂无声音片段",
-                    systemImage: "waveform",
-                    description: "在主页设置 In / Out 后导出声音。",
-                    style: .compact,
-                    minHeight: 96
-                )
-            } else if filteredClips.isEmpty {
-                AppEmptyState(
-                    title: "此来源暂无声音片段",
-                    systemImage: "line.3.horizontal.decrease.circle",
+                    title: "没有匹配标签的音乐",
+                    systemImage: "tag",
                     style: .compact,
                     minHeight: 96
                 )
             } else {
                 LazyVStack(spacing: 8) {
-                    ForEach(filteredClips) { clip in
-                        HStack(spacing: 12) {
-                            Image(systemName: "waveform")
-                                .font(.title3)
-                                .foregroundStyle(.orange)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(clip.videoName)
-                                    .font(.headline)
-                                    .lineLimit(1)
-                                Text("\(clockText(clip.inTime)) - \(clockText(clip.outTime)) · \(formatDuration(clip.outTime - clip.inTime))")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if let filePath = clip.filePath {
-                                Button {
-                                    NSWorkspace.shared.open(URL(fileURLWithPath: filePath))
-                                } label: {
-                                    Image(systemName: "play.fill")
-                                }
-                                .help("播放片段")
-                            }
-                            Button {
-                                goHome(clip.videoPath, clip.inTime)
-                            } label: {
-                                Label("回到原视频", systemImage: "arrowshape.turn.up.left")
-                            }
-                        }
-                        .buttonStyle(.borderless)
-                        .padding(12)
-                        .background(.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    ForEach(items) { asset in
+                        musicAssetRow(asset)
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var clipsSection: some View {
+        let clips = filteredAudioClips
+
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: "导出音效", count: clips.count, icon: "waveform")
+
+            if libraryStore.audioClips.isEmpty {
+                AppEmptyState(
+                    title: "暂无导出音效",
+                    systemImage: "waveform",
+                    description: "在主页设置 In / Out 后导出声音。",
+                    style: .compact,
+                    minHeight: 96
+                )
+            } else if clips.isEmpty {
+                AppEmptyState(
+                    title: "没有匹配标签的音效",
+                    systemImage: "tag",
+                    style: .compact,
+                    minHeight: 96
+                )
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(clips) { clip in
+                        audioClipAssetRow(clip)
+                    }
+                }
+            }
+        }
+    }
+
+    private func sectionHeader(title: String, count: Int, icon: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.orange)
+            Text(title)
+                .font(.headline.weight(.semibold))
+            Text("\(count)")
+                .font(.caption2.monospacedDigit().weight(.bold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(.white.opacity(0.08))
+                .clipShape(Capsule())
+            Spacer()
+        }
+    }
+
+    private func audioToolbarIcon(systemName: String, size: CGFloat) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(Design.libraryToolbarIconTint)
+            .frame(
+                width: Design.libraryToolbarButtonSlotWidth,
+                height: Design.libraryToolbarButtonSlotHeight,
+                alignment: .center
+            )
+    }
+
+    private func musicAssetRow(_ asset: RecognizedMusicAsset) -> some View {
+        Button {
+            goHome(asset.videoPath, asset.song.detectedAt)
+        } label: {
+            HStack(spacing: 10) {
+                musicArtwork(asset.song)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(asset.song.title.isEmpty ? "未知音乐" : asset.song.title)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if !asset.song.artist.isEmpty {
+                            Text(asset.song.artist)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Text("\(asset.videoName) · 出现于 \(clockText(asset.song.detectedAt))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+
+                    let tags = sourceTags(for: asset.videoPath)
+                    if !tags.isEmpty {
+                        ScaledCardTagCloud(tags: tags)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                MusicRecognitionActionColumn(song: asset.song)
+            }
+            .padding(9)
+            .frame(minHeight: 64)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.white.opacity(0.07), lineWidth: 0.7)
+        }
+        .help("跳到视频中此段落")
+    }
+
+    private func audioClipAssetRow(_ clip: AudioClipItem) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                openAudioClip(clip)
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 28, height: 28)
+                    .background(.orange.opacity(0.13))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("播放音效")
+            .disabled(libraryStore.audioClipFileURL(for: clip) == nil)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(clip.videoName)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("\(clockText(clip.inTime)) - \(clockText(clip.outTime))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 8) {
+                    Text(formatDuration(clip.outTime - clip.inTime))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    let tags = combinedTags(for: clip)
+                    if !tags.isEmpty {
+                        ScaledCardTagCloud(tags: tags)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            InlineTagEditorButton(
+                title: "声音标签",
+                tags: clip.tags,
+                suggestedTags: audioTagSuggestions(for: clip),
+                buttonSize: 24,
+                onAdd: { libraryStore.addAudioTag($0, to: clip) },
+                onRemove: { libraryStore.removeAudioTag($0, from: clip) }
+            )
+
+            Button {
+                goHome(clip.videoPath, clip.inTime)
+            } label: {
+                Image(systemName: "arrowshape.turn.up.left")
+            }
+            .buttonStyle(.borderless)
+            .help("回到原视频")
+        }
+        .padding(10)
+        .frame(minHeight: 64)
+        .background(.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.white.opacity(0.07), lineWidth: 0.7)
+        }
+        .itemProviderDrag(audioClipDragProvider(for: clip))
+        .help("可拖出音效文件")
+    }
+
+    private func musicArtwork(_ song: MusicRecognitionItem) -> some View {
+        AsyncImage(url: URL(string: song.artworkURL)) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .failure, .empty:
+                Image(systemName: "music.note")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.pink.opacity(0.86))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.pink.opacity(0.12))
+            @unknown default:
+                Color.white.opacity(0.08)
+            }
+        }
+        .frame(width: 42, height: 42)
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+
+    private var musicAssets: [RecognizedMusicAsset] {
+        libraryStore.musicsByVideoPath.flatMap { path, songs in
+            let videoName = libraryStore.selectedVideo(for: path)?.name
+                ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            return songs.map { song in
+                RecognizedMusicAsset(videoPath: path, videoName: videoName, song: song)
+            }
+        }
+        .sorted { lhs, rhs in
+            if lhs.videoName == rhs.videoName {
+                return lhs.song.detectedAt < rhs.song.detectedAt
+            }
+            return lhs.videoName.localizedStandardCompare(rhs.videoName) == .orderedAscending
+        }
+    }
+
+    private var filteredMusicAssets: [RecognizedMusicAsset] {
+        guard !selectedSoundTags.isEmpty else { return musicAssets }
+        return musicAssets.filter { asset in
+            let tags = Set(sourceTags(for: asset.videoPath))
+            return selectedSoundTags.allSatisfy { tags.contains($0) }
         }
     }
 
     private var filteredAudioClips: [AudioClipItem] {
         libraryStore.audioClips
             .filter { clip in
-                guard let selectedClipVideoPath else { return true }
-                return clip.videoPath == selectedClipVideoPath
+                guard !selectedSoundTags.isEmpty else { return true }
+                let tags = Set(combinedTags(for: clip))
+                return selectedSoundTags.allSatisfy { tags.contains($0) }
             }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
-    private var clipVideoOptions: [(path: String, name: String)] {
-        var seen = Set<String>()
-        return libraryStore.audioClips.compactMap { clip in
-            guard seen.insert(clip.videoPath).inserted else { return nil }
-            return (path: clip.videoPath, name: clip.videoName)
+    private var soundFilterTags: [String] {
+        let audioSourcePaths = Set(libraryStore.audioClips.map(\.videoPath))
+        let musicSourcePaths = Set(libraryStore.musicsByVideoPath.keys)
+        let sourceTags = audioSourcePaths.union(musicSourcePaths).flatMap {
+            libraryStore.tagsByVideoPath[$0, default: []]
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return Array(Set(libraryStore.allAudioTags + sourceTags)).sorted()
     }
 
-    private var selectedClipVideoName: String {
-        guard let selectedClipVideoPath,
-              let option = clipVideoOptions.first(where: { $0.path == selectedClipVideoPath }) else {
-            return "全部来源"
+    private func sourceTags(for videoPath: String) -> [String] {
+        libraryStore.tagsByVideoPath[videoPath, default: []]
+    }
+
+    private func combinedTags(for clip: AudioClipItem) -> [String] {
+        Array(Set(clip.tags + sourceTags(for: clip.videoPath))).sorted()
+    }
+
+    private func audioTagSuggestions(for clip: AudioClipItem) -> [String] {
+        Array(Set(libraryStore.allAudioTags + sourceTags(for: clip.videoPath))).sorted()
+    }
+
+    private func toggleSoundTag(_ tag: String) {
+        if selectedSoundTags.contains(tag) {
+            selectedSoundTags.remove(tag)
+        } else {
+            selectedSoundTags.insert(tag)
         }
-        return option.name
+    }
+
+    private func openAudioClip(_ clip: AudioClipItem) {
+        guard let fileURL = libraryStore.audioClipFileURL(for: clip) else { return }
+        NSWorkspace.shared.open(fileURL)
+    }
+
+    private func audioClipDragProvider(for clip: AudioClipItem) -> (() -> NSItemProvider)? {
+        guard libraryStore.audioClipFileURL(for: clip) != nil else { return nil }
+        return {
+            libraryStore.audioClipFileProvider(for: clip) ?? NSItemProvider()
+        }
     }
 }
 
+private enum MusicRecognitionLayout {
+    static let actionButtonSize: CGFloat = 22
+    static let actionIconSize: CGFloat = 16
+    static let actionGlyphSize: CGFloat = 16
+    static let primaryContentHeight: CGFloat = 48
+}
+
 private struct MusicRecognitionActionColumn: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+
     let song: MusicRecognitionItem
 
-    private let buttonSize: CGFloat = 22
+    private let actionTint = Color.white.opacity(0.72)
 
     var body: some View {
         VStack(spacing: 4) {
-            if !song.appleMusicURL.isEmpty, let url = URL(string: song.appleMusicURL) {
-                Link(destination: url) {
-                    actionIcon("music.note.tv", tint: .pink)
-                }
-                .help("在 Apple Music 中打开")
-            }
-
             Button {
-                openYouTubeSearch(for: song)
+                openFirstYouTubeVideo(for: song)
             } label: {
-                actionIcon("magnifyingglass.circle", tint: .red.opacity(0.9))
+                actionIcon("play.rectangle.fill", glyphWidth: 18, glyphHeight: 14)
             }
             .buttonStyle(.plain)
-            .help("在浏览器中搜索 YouTube")
+            .help("在浏览器中打开 YouTube 第一个视频")
+
+            Menu {
+                Button {
+                    libraryStore.downloadMusic(song: song, type: .original)
+                } label: {
+                    Label("下载原曲", systemImage: "arrow.down.circle")
+                }
+
+                Button {
+                    libraryStore.downloadMusic(song: song, type: .instrumental)
+                } label: {
+                    Label("下载伴奏", systemImage: "waveform")
+                }
+            } label: {
+                actionIcon("arrow.down", glyphWidth: 14, glyphHeight: 16)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(
+                width: MusicRecognitionLayout.actionButtonSize,
+                height: MusicRecognitionLayout.actionButtonSize
+            )
+            .help("下载原曲或伴奏")
         }
-        .frame(width: buttonSize)
-        .frame(maxHeight: .infinity, alignment: .center)
+        .frame(width: MusicRecognitionLayout.actionButtonSize)
+        .frame(height: MusicRecognitionLayout.primaryContentHeight, alignment: .center)
     }
 
-    private func actionIcon(_ systemImage: String, tint: Color) -> some View {
+    private func actionIcon(
+        _ systemImage: String,
+        glyphWidth: CGFloat = MusicRecognitionLayout.actionGlyphSize,
+        glyphHeight: CGFloat = MusicRecognitionLayout.actionGlyphSize
+    ) -> some View {
         Image(systemName: systemImage)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: buttonSize, height: buttonSize)
+            .resizable()
+            .scaledToFit()
+            .font(.system(size: MusicRecognitionLayout.actionIconSize, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(actionTint)
+            .frame(width: glyphWidth, height: glyphHeight)
+            .frame(
+                width: MusicRecognitionLayout.actionButtonSize,
+                height: MusicRecognitionLayout.actionButtonSize
+            )
             .contentShape(Rectangle())
     }
 }
 
 private struct ExportMusicRecognitionRow: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+
     let song: MusicRecognitionItem
     let onJump: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 9) {
-                artwork
+        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
 
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 9) {
                 Button(action: onJump) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(song.title.isEmpty ? "未知音乐" : song.title)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        if !song.artist.isEmpty {
-                            Text(song.artist)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                    HStack(spacing: 9) {
+                        artwork
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(song.title.isEmpty ? "未知音乐" : song.title)
+                                .font(.caption.weight(.semibold))
                                 .lineLimit(1)
+                            if !song.artist.isEmpty {
+                                Text(song.artist)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Text("出现于 \(clockText(song.detectedAt))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
                         }
-                        Text("出现于 \(clockText(song.detectedAt))")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("跳到视频中此段落")
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 MusicRecognitionActionColumn(song: song)
             }
+
+            MusicDownloadExtensionStack(downloadJobs: downloadJobs)
         }
         .padding(7)
         .background(.white.opacity(0.055))
@@ -7580,79 +9691,126 @@ private struct ExportMusicRecognitionRow: View {
 }
 
 private struct MusicRecognitionRow: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+
     let song: MusicRecognitionItem
     let onJump: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 9) {
-                AsyncImage(url: URL(string: song.artworkURL)) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    case .failure, .empty:
-                        Image(systemName: "music.note")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.pink.opacity(0.86))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(.pink.opacity(0.12))
-                    @unknown default:
-                        Color.white.opacity(0.08)
-                    }
-                }
-                .frame(width: 42, height: 42)
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(song.title.isEmpty ? "未知音乐" : song.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    if !song.artist.isEmpty {
-                        Text(song.artist)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 9) {
+                Button(action: onJump) {
+                    HStack(spacing: 9) {
+                        AsyncImage(url: URL(string: song.artworkURL)) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            case .failure, .empty:
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.pink.opacity(0.86))
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .background(.pink.opacity(0.12))
+                            @unknown default:
+                                Color.white.opacity(0.08)
+                            }
+                        }
+                        .frame(width: 42, height: 42)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(song.title.isEmpty ? "未知音乐" : song.title)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            if !song.artist.isEmpty {
+                                Text(song.artist)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Text("出现于 \(clockText(song.detectedAt))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text("出现于 \(clockText(song.detectedAt))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help("跳到视频中此段落")
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 MusicRecognitionActionColumn(song: song)
             }
+            .frame(minHeight: 56)
+
+            MusicDownloadExtensionStack(downloadJobs: downloadJobs)
         }
         .padding(7)
-        .frame(minHeight: 56)
         .background(.white.opacity(0.055))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(.white.opacity(0.07), lineWidth: 0.7)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onJump)
-        .help("跳到视频中此段落")
     }
 
 }
 
-private func openYouTubeSearch(for song: MusicRecognitionItem) {
-    let query = [song.artist, song.title]
+private func youTubeMusicQuery(for song: MusicRecognitionItem) -> String {
+    [song.artist, song.title]
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
         .joined(separator: " ")
+}
+
+private func youTubeSearchURL(for query: String) -> URL? {
     guard
         !query.isEmpty,
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-        let url = URL(string: "https://www.youtube.com/results?search_query=\(encoded)")
-    else { return }
-    NSWorkspace.shared.open(url)
+        var components = URLComponents(string: "https://www.youtube.com/results")
+    else { return nil }
+    components.queryItems = [URLQueryItem(name: "search_query", value: query)]
+    return components.url
+}
+
+private func openFirstYouTubeVideo(for song: MusicRecognitionItem) {
+    let query = youTubeMusicQuery(for: song)
+    guard !query.isEmpty else { return }
+
+    Task {
+        let firstResultURL = await LibraryStore.firstYouTubeSearchResultURL(for: query)
+        guard let url = firstResultURL ?? youTubeSearchURL(for: query) else { return }
+        await MainActor.run {
+            _ = NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 private func latestMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
     MusicDownloadJob.DownloadType.allCases.compactMap { type in
         jobs.last { $0.type == type }
+    }
+}
+
+private func musicDownloadJobs(for song: MusicRecognitionItem, in jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
+    let songKey = "\(song.title)|\(song.artist)"
+    return latestMusicDownloadJobs(jobs.filter { $0.songKey == songKey })
+}
+
+private struct MusicDownloadExtensionStack: View {
+    let downloadJobs: [MusicDownloadJob]
+
+    var body: some View {
+        if !downloadJobs.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(downloadJobs) { job in
+                    MusicDownloadStatusView(job: job, isCompact: true)
+                }
+            }
+            .padding(.top, 7)
+        }
     }
 }
 
@@ -7730,6 +9888,108 @@ private struct MusicDownloadStatusView: View {
     let job: MusicDownloadJob
     var isCompact = false
 
+    @State private var previewPlayer: AVPlayer?
+    @State private var previewTimeObserver: Any?
+    @State private var previewEndObserver: NSObjectProtocol?
+    @State private var previewProgress: Double = 0
+    @State private var previewDuration: Double = 0
+    @State private var previewScrubProgress: Double?
+    @State private var loadedAudioDuration: Double = 0
+
+    private var previewFileURL: URL? {
+        guard
+            let filePath = job.filePath,
+            FileManager.default.fileExists(atPath: filePath)
+        else { return nil }
+        return URL(fileURLWithPath: filePath)
+    }
+
+    private var canPreviewAudio: Bool {
+        guard previewFileURL != nil else { return false }
+        if case .succeeded = job.status { return true }
+        return false
+    }
+
+    private var cleanedDisplayName: String {
+        let title = job.songKey
+            .split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let fallbackName: String
+        if case let .succeeded(filename) = job.status {
+            fallbackName = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+        } else {
+            fallbackName = job.type.label
+        }
+
+        let baseName = title?.isEmpty == false ? title! : fallbackName
+        return job.type == .instrumental ? "\(baseName)（伴奏版）" : baseName
+    }
+
+    private var cleanedSuggestedFilename: String? {
+        guard let previewFileURL else { return nil }
+        let stem = sanitizedMusicFilenameStem(cleanedDisplayName)
+        let fileExtension = previewFileURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fileExtension.isEmpty ? stem : "\(stem).\(fileExtension)"
+    }
+
+    private var audioFileDragProvider: (() -> NSItemProvider)? {
+        guard let previewFileURL else { return nil }
+        let suggestedName = cleanedSuggestedFilename ?? previewFileURL.lastPathComponent
+        return {
+            let provider = NSItemProvider()
+            provider.suggestedName = suggestedName
+            let typeIdentifier = UTType(filenameExtension: previewFileURL.pathExtension)?.identifier ?? UTType.audio.identifier
+
+            provider.registerFileRepresentation(
+                forTypeIdentifier: typeIdentifier,
+                fileOptions: .openInPlace,
+                visibility: .all
+            ) { completion in
+                let progress = Progress(totalUnitCount: 1)
+                guard FileManager.default.fileExists(atPath: previewFileURL.path) else {
+                    completion(nil, true, NSError(
+                        domain: "LapianBao.MusicDragExport",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "音频文件不存在"]
+                    ))
+                    return progress
+                }
+
+                progress.completedUnitCount = 1
+                completion(previewFileURL, true, nil)
+                return progress
+            }
+
+            provider.registerObject(previewFileURL as NSURL, visibility: .all)
+            return provider
+        }
+    }
+
+    private var isPreviewing: Bool {
+        previewPlayer != nil
+    }
+
+    private var effectiveAudioDuration: Double {
+        [loadedAudioDuration, previewDuration]
+            .filter { $0.isFinite && $0 > 0 }
+            .max() ?? 0
+    }
+
+    private var audioTimeText: String? {
+        let duration = effectiveAudioDuration
+        guard duration > 0 else { return nil }
+
+        if isPreviewing || previewScrubProgress != nil {
+            let progress = min(1, max(0, previewScrubProgress ?? previewProgress))
+            return clockText(duration * progress)
+        }
+
+        return clockText(duration)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: isCompact ? 5 : 7) {
             switch job.status {
@@ -7738,54 +9998,93 @@ private struct MusicDownloadStatusView: View {
                 if let progress = job.downloadProgress {
                     ProgressView(value: normalizedProgressFraction(progress))
                         .controlSize(.mini)
-                        .tint(.blue)
+                        .tint(.white)
                 } else {
                     ProgressView()
                         .controlSize(.mini)
-                        .tint(.blue)
+                        .tint(.white)
                 }
             case .transcoding:
                 progressHeader(text: "正在处理\(job.type.label)…", systemImage: "waveform")
                 ProgressView()
                     .controlSize(.mini)
-                    .tint(.blue)
+                    .tint(.white)
+            case .finalizing:
+                progressHeader(text: "正在整理\(job.type.label)…", systemImage: "checkmark.seal.fill")
+                if let progress = job.downloadProgress {
+                    ProgressView(value: normalizedProgressFraction(progress))
+                        .controlSize(.mini)
+                        .tint(.white)
+                } else {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.white)
+                }
             case .paused:
                 progressHeader(text: "\(job.type.label)已暂停", systemImage: "pause.circle.fill")
-            case let .succeeded(filename):
+            case .succeeded:
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                    Text("\(job.type.label)已保存")
+                    Button {
+                        toggleAudioPreview()
+                    } label: {
+                        Image(systemName: canPreviewAudio ? (isPreviewing ? "pause.circle.fill" : "play.circle.fill") : "checkmark.circle.fill")
+                            .font(.system(size: isCompact ? 18 : 20, weight: .semibold))
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(.white.opacity(canPreviewAudio ? 0.86 : 0.72))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canPreviewAudio)
+                    Text(cleanedDisplayName)
                         .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Spacer(minLength: 6)
-                    Text(filename)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    if let audioTimeText {
+                        Text(audioTimeText)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(isPreviewing || previewScrubProgress != nil ? .secondary : .tertiary)
+                            .lineLimit(1)
+                    }
                 }
 
                 if job.isPreparingWaveform {
                     GenerationProgressRow(
                         message: "正在生成波形",
                         progress: nil,
-                        tint: .blue,
+                        tint: .white,
                         systemImage: "waveform",
                         compact: true,
                         showPercent: false
                     )
                 } else if let samples = job.waveformSamples, !samples.isEmpty {
-                    DownloadedMusicWaveformView(samples: samples, isCompact: isCompact)
+                    DownloadedMusicWaveformView(
+                        samples: samples,
+                        isCompact: isCompact,
+                        isActive: isPreviewing || previewScrubProgress != nil,
+                        progress: previewScrubProgress ?? previewProgress,
+                        onScrubChanged: { progress in
+                            guard canPreviewAudio else { return }
+                            previewScrubProgress = progress
+                            previewProgress = progress
+                        },
+                        onScrubEnded: { progress in
+                            guard canPreviewAudio else { return }
+                            previewScrubProgress = progress
+                            previewProgress = progress
+                            seekAudioPreview(to: progress)
+                        }
+                    )
                 }
             case let .failed(message):
                 HStack(spacing: 6) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.white.opacity(0.72))
                     Text("\(job.type.label)下载失败")
                         .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.white.opacity(0.72))
                     Spacer(minLength: 6)
                     Text(message)
                         .font(.caption2)
@@ -7796,21 +10095,55 @@ private struct MusicDownloadStatusView: View {
                 EmptyView()
             }
         }
-        .padding(.horizontal, isCompact ? 7 : 9)
+        .padding(.horizontal, isCompact ? 0 : 9)
         .padding(.vertical, isCompact ? 6 : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(isCompact ? 0.045 : 0.055))
+        .background(.white.opacity(isCompact ? 0 : (isPreviewing ? 0.075 : 0.055)))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .help(job.filePath ?? "")
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(isCompact ? 0 : (isPreviewing ? 0.20 : 0.06)), lineWidth: 0.8)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if canPreviewAudio {
+                toggleAudioPreview()
+            }
+        }
+        .itemProviderDrag(audioFileDragProvider)
+        .help(canPreviewAudio ? (isPreviewing ? "暂停\(job.type.label)预览，可拖出音频文件" : "播放\(job.type.label)预览，可拖出音频文件") : (job.filePath ?? ""))
+        .onDisappear {
+            stopAudioPreview()
+        }
+        .onChange(of: job.filePath) { _, _ in
+            stopAudioPreview()
+            loadedAudioDuration = 0
+        }
+        .onChange(of: job.status) { _, _ in
+            if !canPreviewAudio {
+                stopAudioPreview()
+            }
+        }
+        .task(id: previewFileURL?.path) {
+            await loadAudioDuration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .lapianBaoMusicPreviewStarted)) { notification in
+            guard
+                let activeID = notification.userInfo?["id"] as? UUID,
+                activeID != job.id
+            else { return }
+            stopAudioPreview()
+        }
         .animation(.easeInOut(duration: 0.18), value: job.downloadProgress)
         .animation(.easeInOut(duration: 0.22), value: job.waveformSamples)
+        .animation(.easeInOut(duration: 0.18), value: isPreviewing)
     }
 
     private func progressHeader(text: String, systemImage: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
                 .font(.caption)
-                .foregroundStyle(.blue)
+                .foregroundStyle(.white.opacity(0.72))
             Text(text)
                 .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -7822,44 +10155,209 @@ private struct MusicDownloadStatusView: View {
             }
         }
     }
+
+    private func loadAudioDuration() async {
+        guard let previewFileURL else {
+            loadedAudioDuration = 0
+            return
+        }
+
+        do {
+            let asset = AVURLAsset(url: previewFileURL)
+            let duration = try await asset.load(.duration)
+            let seconds = duration.seconds
+            loadedAudioDuration = seconds.isFinite && seconds > 0 ? seconds : 0
+        } catch {
+            loadedAudioDuration = 0
+        }
+    }
+
+    private func sanitizedMusicFilenameStem(_ name: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "/\\:?%*|\"<>")
+        let sanitized = name
+            .components(separatedBy: forbidden)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return sanitized.isEmpty ? job.type.label : sanitized
+    }
+
+    private func toggleAudioPreview() {
+        if isPreviewing {
+            stopAudioPreview()
+        } else {
+            startAudioPreview()
+        }
+    }
+
+    private func startAudioPreview(at initialProgress: Double = 0) {
+        guard let previewFileURL else { return }
+        let clampedProgress = min(1, max(0, initialProgress))
+        stopAudioPreview()
+        NotificationCenter.default.post(name: .lapianBaoPausePreviewRequest, object: nil)
+        NotificationCenter.default.post(
+            name: .lapianBaoMusicPreviewStarted,
+            object: nil,
+            userInfo: ["id": job.id, "type": job.type.rawValue]
+        )
+
+        let item = AVPlayerItem(url: previewFileURL)
+        let player = AVPlayer(playerItem: item)
+        previewPlayer = player
+        previewProgress = clampedProgress
+        previewDuration = 0
+
+        previewTimeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.08, preferredTimescale: 600),
+            queue: .main
+        ) { time in
+            let elapsed = time.seconds
+            guard elapsed.isFinite else { return }
+            let duration = item.duration.seconds
+            if duration.isFinite, duration > 0 {
+                previewDuration = duration
+                previewProgress = min(1, max(0, elapsed / duration))
+            }
+        }
+
+        previewEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { _ in
+            stopAudioPreview()
+        }
+
+        if clampedProgress > 0 {
+            seekAudioPreview(to: clampedProgress)
+        } else {
+            player.play()
+        }
+    }
+
+    private func stopAudioPreview() {
+        if let previewTimeObserver, let previewPlayer {
+            previewPlayer.removeTimeObserver(previewTimeObserver)
+        }
+        previewTimeObserver = nil
+
+        previewPlayer?.pause()
+        previewPlayer = nil
+        previewProgress = 0
+        previewDuration = 0
+        previewScrubProgress = nil
+
+        if let previewEndObserver {
+            NotificationCenter.default.removeObserver(previewEndObserver)
+            self.previewEndObserver = nil
+        }
+    }
+
+    private func seekAudioPreview(to progress: Double) {
+        let clampedProgress = min(1, max(0, progress))
+
+        if previewPlayer == nil {
+            startAudioPreview(at: clampedProgress)
+            return
+        }
+
+        guard let player = previewPlayer, let item = player.currentItem else { return }
+        previewProgress = clampedProgress
+
+        Task { @MainActor in
+            do {
+                let duration = try await item.asset.load(.duration)
+                let durationSeconds = duration.seconds
+                guard durationSeconds.isFinite, durationSeconds > 0 else {
+                    previewScrubProgress = nil
+                    return
+                }
+
+                let target = CMTime(seconds: durationSeconds * clampedProgress, preferredTimescale: 600)
+                player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                    DispatchQueue.main.async {
+                        previewProgress = clampedProgress
+                        previewScrubProgress = nil
+                        player.play()
+                    }
+                }
+            } catch {
+                previewScrubProgress = nil
+            }
+        }
+    }
 }
 
 private struct DownloadedMusicWaveformView: View {
     let samples: [Double]
     var isCompact = false
+    var isActive = false
+    var progress: Double = 0
+    var onScrubChanged: ((Double) -> Void)?
+    var onScrubEnded: ((Double) -> Void)?
 
     var body: some View {
-        Canvas { context, size in
-            guard !samples.isEmpty, size.width > 0, size.height > 0 else { return }
+        GeometryReader { proxy in
+            Canvas { context, size in
+                guard !samples.isEmpty, size.width > 0, size.height > 0 else { return }
 
-            let step = size.width / CGFloat(samples.count)
-            let barWidth = max(1, min(isCompact ? 1.8 : 2.4, step * 0.72))
-            let midY = size.height / 2
+                let step = size.width / CGFloat(samples.count)
+                let barWidth = max(1, min(isCompact ? 1.8 : 2.4, step * 0.72))
+                let midY = size.height / 2
+                let clampedProgress = min(1, max(0, progress))
 
-            for (index, sample) in samples.enumerated() {
-                let value = min(1, max(0.04, sample))
-                let barHeight = max(2, CGFloat(value) * size.height * 0.82)
-                let rect = CGRect(
-                    x: CGFloat(index) * step + (step - barWidth) / 2,
-                    y: midY - barHeight / 2,
-                    width: barWidth,
-                    height: barHeight
-                )
-                var path = Path()
-                path.addRoundedRect(
-                    in: rect,
-                    cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2)
-                )
-                context.fill(path, with: .color(Color(red: 0.38, green: 0.78, blue: 0.96).opacity(0.78)))
+                for (index, sample) in samples.enumerated() {
+                    let value = min(1, max(0.04, sample))
+                    let barHeight = max(2, CGFloat(value) * size.height * 0.82)
+                    let rect = CGRect(
+                        x: CGFloat(index) * step + (step - barWidth) / 2,
+                        y: midY - barHeight / 2,
+                        width: barWidth,
+                        height: barHeight
+                    )
+                    var path = Path()
+                    path.addRoundedRect(
+                        in: rect,
+                        cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2)
+                    )
+                    let sampleProgress = Double(index + 1) / Double(samples.count)
+                    let played = isActive && sampleProgress <= clampedProgress
+                    let opacity = played ? 0.94 : (isActive ? 0.74 : 0.56)
+                    context.fill(path, with: .color(Color.white.opacity(opacity)))
+                }
+
+                if isActive {
+                    let headX = size.width * CGFloat(clampedProgress)
+                    var head = Path()
+                    head.addRoundedRect(
+                        in: CGRect(x: headX - 1, y: 2, width: 2, height: size.height - 4),
+                        cornerSize: CGSize(width: 1, height: 1)
+                    )
+                    context.fill(head, with: .color(Color.white.opacity(0.96)))
+                }
             }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        onScrubChanged?(scrubProgress(at: value.location.x, width: proxy.size.width))
+                    }
+                    .onEnded { value in
+                        onScrubEnded?(scrubProgress(at: value.location.x, width: proxy.size.width))
+                    }
+            )
         }
-        .frame(height: isCompact ? 24 : 34)
-        .background(Color.black.opacity(0.18))
+        .frame(height: isCompact ? 32 : 38)
+        .background(Color.black.opacity(isActive ? 0.24 : 0.18))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(.white.opacity(0.09), lineWidth: 1)
+                .stroke(.white.opacity(isActive ? 0.20 : 0.09), lineWidth: 1)
         }
+    }
+
+    private func scrubProgress(at x: CGFloat, width: CGFloat) -> Double {
+        guard width > 0 else { return 0 }
+        return min(1, max(0, Double(x / width)))
     }
 }
 
@@ -7927,7 +10425,7 @@ private enum LocalTranscriptTimelineAnalyzer {
         let text: String
     }
 
-    static func analyze(videoName: String, segments: [TranscriptSegment]) async throws -> [TranscriptTimelineChapter] {
+    static func analyze(videoName: String, videoAuthor: String? = nil, segments: [TranscriptSegment]) async throws -> [TranscriptTimelineChapter] {
         guard let firstSegment = segments.first, let lastSegment = segments.last else { return [] }
 
         var request = URLRequest(url: endpoint)
@@ -7937,7 +10435,7 @@ private enum LocalTranscriptTimelineAnalyzer {
 
         let body = RequestBody(
             model: model,
-            prompt: prompt(videoName: videoName, sourceLines: sourceLines(from: segments)),
+            prompt: prompt(videoName: videoName, videoAuthor: videoAuthor, sourceLines: sourceLines(from: segments)),
             stream: false,
             format: "json",
             think: false,
@@ -7981,13 +10479,17 @@ private enum LocalTranscriptTimelineAnalyzer {
         return "生成失败：\(error.localizedDescription)"
     }
 
-    private static func prompt(videoName: String, sourceLines: [SourceLine]) -> String {
+    private static func prompt(videoName: String, videoAuthor: String?, sourceLines: [SourceLine]) -> String {
         let transcript = sourceLines.map {
             "[\(clockText($0.start))-\(clockText($0.end))] \($0.text)"
         }.joined(separator: "\n")
+        let authorLine = videoAuthor
+            .map { "视频作者：\($0)\n" }
+            ?? ""
 
         return """
         你是剪辑师和口播稿结构分析助手。请根据带时间戳的口播转录稿，为视频《\(videoName)》生成内容时间线。
+        \(authorLine)视频作者只作为来源上下文，不要把作者名当作转录稿内容。
         只使用转录稿信息，不要猜画面、导演、摄影或外部资料。
         输出 4 到 12 个章节；如果内容很短，可以输出更少。
         每章 start 和 end 必须落在转录稿时间范围内，单位为秒；title 不超过 12 个中文字符；summary 不超过 45 个中文字符。
@@ -8113,7 +10615,7 @@ private struct ContentWorkspaceView: View {
                         Button {
                             libraryStore.exportTranscriptMarkdown(video: video)
                         } label: {
-                            Label("导出 Markdown", systemImage: "doc.text")
+                            Label("导出字幕", systemImage: "doc.text")
                         }
                     }
                 }
@@ -8459,11 +10961,16 @@ private struct ContentWorkspaceView: View {
 
     private func generateTranscriptTimeline(video: VideoItem, segments: [TranscriptSegment]) {
         guard !segments.isEmpty else { return }
+        let authorName = libraryStore.videoAuthorName(for: video)
         timelineStatus = .running(videoPath: video.url.path)
 
         Task {
             do {
-                let chapters = try await LocalTranscriptTimelineAnalyzer.analyze(videoName: video.name, segments: segments)
+                let chapters = try await LocalTranscriptTimelineAnalyzer.analyze(
+                    videoName: video.name,
+                    videoAuthor: authorName,
+                    segments: segments
+                )
                 await MainActor.run {
                     timelineStatus = .loaded(videoPath: video.url.path, chapters: chapters)
                 }
@@ -8539,6 +11046,7 @@ private struct SettingsWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @State private var selectedPanel: SettingsPanel = .recognition
     @State private var selectedRecognitionKind: RecognitionKind = .transcript
+    @State private var shortcutRefreshID = UUID()
     @AppStorage("contentAnalysisProvider") private var providerRawValue = ContentAnalysisAPIProvider.openAI.rawValue
     @AppStorage("openAIAPIKey") private var openAIAPIKey = ""
     @AppStorage("openAIBaseURL") private var openAIBaseURL = "https://api.openai.com/v1"
@@ -8564,29 +11072,24 @@ private struct SettingsWorkspaceView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            settingsSidebar
-                .frame(width: 220)
-                .background(Design.sidebarBg)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                recognitionPanel
 
-            Rectangle()
-                .fill(.white.opacity(0.06))
-                .frame(width: 1)
+                Divider().opacity(0.32)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
-                    activeSettingsPanel
-                }
-                .padding(.horizontal, 30)
-                .padding(.top, Design.railTopChromeHeight + 8)
-                .padding(.bottom, 30)
-                .frame(maxWidth: 860, alignment: .leading)
+                apiPanel
+
+                Divider().opacity(0.32)
+
+                shortcutsPanel
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 20)
+            .frame(maxWidth: 900, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .contentPanel()
+        .scrollIndicators(.hidden)
     }
 
     private var settingsSidebar: some View {
@@ -8697,17 +11200,20 @@ private struct SettingsWorkspaceView: View {
 
     private var apiPanel: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Picker("默认服务", selection: Binding(
-                get: { provider },
-                set: { provider = $0 }
-            )) {
-                ForEach(ContentAnalysisAPIProvider.allCases) { provider in
-                    Text(provider.title).tag(provider)
+            settingsSection("API 接入") {
+                Picker("供应商", selection: Binding(
+                    get: { provider },
+                    set: { provider = $0 }
+                )) {
+                    ForEach(ContentAnalysisAPIProvider.allCases) { provider in
+                        Text(provider.title).tag(provider)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+                .frame(maxWidth: 320)
 
-            activeProviderSettings
+                activeProviderSettings
+            }
         }
     }
 
@@ -8715,25 +11221,21 @@ private struct SettingsWorkspaceView: View {
     private var activeProviderSettings: some View {
         switch provider {
         case .openAI:
-            providerFields(title: "OpenAI", baseURL: $openAIBaseURL, apiKey: $openAIAPIKey, model: $openAIModel)
+            settingsSecureField("API Key", text: $openAIAPIKey)
         case .anthropic:
-            providerFields(title: "Claude", baseURL: $anthropicBaseURL, apiKey: $anthropicAPIKey, model: $anthropicModel)
+            settingsSecureField("API Key", text: $anthropicAPIKey)
         case .gemini:
-            providerFields(title: "Gemini", baseURL: nil, apiKey: $geminiAPIKey, model: $geminiModel)
+            settingsSecureField("API Key", text: $geminiAPIKey)
         case .deepSeek:
-            providerFields(title: "DeepSeek", baseURL: $deepSeekBaseURL, apiKey: $deepSeekAPIKey, model: $deepSeekModel)
+            settingsSecureField("API Key", text: $deepSeekAPIKey)
         case .custom:
-            settingsSection("自定义 OpenAI 兼容 API") {
-                settingsTextField("服务名", text: $customAPIProviderName)
-                settingsTextField("Base URL", text: $customAPIBaseURL)
-                settingsSecureField("API Key", text: $customAPIKey)
-                settingsTextField("模型", text: $customAPIModel)
-            }
+            settingsTextField("服务名", text: $customAPIProviderName)
+            settingsTextField("Base URL", text: $customAPIBaseURL)
+            settingsSecureField("API Key", text: $customAPIKey)
+            settingsTextField("模型", text: $customAPIModel)
         case .ollama:
-            settingsSection("本机 Ollama") {
-                settingsTextField("Endpoint", text: $ollamaEndpoint)
-                settingsTextField("文本模型", text: $ollamaTextModel)
-            }
+            settingsTextField("Endpoint", text: $ollamaEndpoint)
+            settingsTextField("文本模型", text: $ollamaTextModel)
         }
     }
 
@@ -8829,6 +11331,59 @@ private struct SettingsWorkspaceView: View {
                 .frame(maxWidth: 520)
         }
         .foregroundStyle(.secondary)
+    }
+
+    private var shortcutsPanel: some View {
+        settingsSection("快捷键") {
+            LazyVStack(alignment: .leading, spacing: 6) {
+                ForEach(PreviewShortcutAction.allCases) { action in
+                    shortcutRow(action)
+                }
+            }
+            .id(shortcutRefreshID)
+        }
+    }
+
+    private func shortcutRow(_ action: PreviewShortcutAction) -> some View {
+        let keyCode = action.keyCode
+        let hasConflict = PreviewShortcutAction.hasConflict(action: action, keyCode: keyCode)
+
+        return HStack(spacing: 10) {
+            Text(action.title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 120, alignment: .leading)
+
+            Picker(action.title, selection: Binding(
+                get: { action.keyCode },
+                set: { newKeyCode in
+                    if !PreviewShortcutAction.hasConflict(action: action, keyCode: newKeyCode) {
+                        action.setKeyCode(newKeyCode)
+                        shortcutRefreshID = UUID()
+                    }
+                }
+            )) {
+                ForEach(PreviewShortcutKeyOption.allCases) { option in
+                    Text(option.title).tag(option.rawValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 120)
+
+            if hasConflict {
+                Label("冲突", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.orange)
+            } else {
+                Text("当前 \(PreviewShortcutKeyOption.title(for: keyCode))")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 28)
     }
 
     private func recognitionManagementBlock<Content: View>(
@@ -9265,6 +11820,8 @@ private func formatDuration(_ seconds: Double) -> String {
 
 private extension Notification.Name {
     static let lapianBaoSeekRequest = Notification.Name("lapianBaoSeekRequest")
+    static let lapianBaoPausePreviewRequest = Notification.Name("lapianBaoPausePreviewRequest")
+    static let lapianBaoMusicPreviewStarted = Notification.Name("lapianBaoMusicPreviewStarted")
 }
 
 // MARK: - ResizeLeftRightCursorView

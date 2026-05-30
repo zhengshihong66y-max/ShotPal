@@ -8,6 +8,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
@@ -15,6 +16,14 @@ struct SceneCut: Identifiable {
     let id: String
     let time: Double
     let thumbnailImage: NSImage
+    let isPlaceholder: Bool
+
+    nonisolated init(id: String, time: Double, thumbnailImage: NSImage, isPlaceholder: Bool = false) {
+        self.id = id
+        self.time = time
+        self.thumbnailImage = thumbnailImage
+        self.isPlaceholder = isPlaceholder
+    }
 }
 
 struct VideoItem: Identifiable, Hashable {
@@ -106,6 +115,13 @@ struct VideoMetadata: Codable, Equatable {
     }
 }
 
+struct VideoSourceInfo: Codable, Equatable, Sendable {
+    var platform: String
+    var sourceURL: String?
+    var authorName: String?
+    var title: String? = nil
+}
+
 struct SampledFrame: Identifiable, Codable, Equatable {
     enum Kind: String, Codable {
         case sceneRepresentative
@@ -126,13 +142,78 @@ struct SampledFrame: Identifiable, Codable, Equatable {
 }
 
 struct AnnotationItem: Identifiable, Codable, Equatable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        case frame
+        case audio
+        case content
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .frame: return "画面"
+            case .audio: return "声音"
+            case .content: return "内容"
+            }
+        }
+    }
+
     var id: UUID = UUID()
     var videoPath: String
     var videoName: String
     var time: Double
+    var kind: Kind = .frame
     var text: String
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        videoPath: String,
+        videoName: String,
+        time: Double,
+        kind: Kind = .frame,
+        text: String,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.videoPath = videoPath
+        self.videoName = videoName
+        self.time = time
+        self.kind = kind
+        self.text = text
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, videoPath, videoName, time, kind, text, createdAt, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        videoPath = try container.decode(String.self, forKey: .videoPath)
+        videoName = try container.decode(String.self, forKey: .videoName)
+        time = try container.decode(Double.self, forKey: .time)
+        kind = try container.decodeIfPresent(Kind.self, forKey: .kind) ?? .frame
+        text = try container.decode(String.self, forKey: .text)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(videoPath, forKey: .videoPath)
+        try container.encode(videoName, forKey: .videoName)
+        try container.encode(time, forKey: .time)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(text, forKey: .text)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
 }
 
 struct AudioClipItem: Identifiable, Codable, Equatable {
@@ -147,7 +228,68 @@ struct AudioClipItem: Identifiable, Codable, Equatable {
     var waveformSamples: [Double]?
     var waveformVersion: Int?
     var note: String = ""
+    var tags: [String] = []
     var createdAt: Date = Date()
+
+    init(
+        id: UUID = UUID(),
+        videoPath: String,
+        videoName: String,
+        inTime: Double,
+        outTime: Double,
+        filePath: String? = nil,
+        waveformSamples: [Double]? = nil,
+        waveformVersion: Int? = nil,
+        note: String = "",
+        tags: [String] = [],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.videoPath = videoPath
+        self.videoName = videoName
+        self.inTime = inTime
+        self.outTime = outTime
+        self.filePath = filePath
+        self.waveformSamples = waveformSamples
+        self.waveformVersion = waveformVersion
+        self.note = note
+        self.tags = tags
+        self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, videoPath, videoName, inTime, outTime, filePath, waveformSamples, waveformVersion, note, tags, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        videoPath = try container.decode(String.self, forKey: .videoPath)
+        videoName = try container.decode(String.self, forKey: .videoName)
+        inTime = try container.decode(Double.self, forKey: .inTime)
+        outTime = try container.decode(Double.self, forKey: .outTime)
+        filePath = try container.decodeIfPresent(String.self, forKey: .filePath)
+        waveformSamples = try container.decodeIfPresent([Double].self, forKey: .waveformSamples)
+        waveformVersion = try container.decodeIfPresent(Int.self, forKey: .waveformVersion)
+        note = try container.decodeIfPresent(String.self, forKey: .note) ?? ""
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(videoPath, forKey: .videoPath)
+        try container.encode(videoName, forKey: .videoName)
+        try container.encode(inTime, forKey: .inTime)
+        try container.encode(outTime, forKey: .outTime)
+        try container.encodeIfPresent(filePath, forKey: .filePath)
+        try container.encodeIfPresent(waveformSamples, forKey: .waveformSamples)
+        try container.encodeIfPresent(waveformVersion, forKey: .waveformVersion)
+        try container.encode(note, forKey: .note)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(createdAt, forKey: .createdAt)
+    }
 }
 
 struct TranscriptSegment: Identifiable, Codable, Equatable {
@@ -156,6 +298,17 @@ struct TranscriptSegment: Identifiable, Codable, Equatable {
     var start: Double
     var end: Double
     var text: String
+}
+
+struct TranscriptExportItem: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var videoPath: String
+    var videoName: String
+    var filePath: String
+    var segmentCount: Int
+    var startTime: Double
+    var endTime: Double
+    var createdAt: Date = Date()
 }
 
 enum TranscriptJobStatus: Equatable {
@@ -234,6 +387,7 @@ struct RemoteImportJob: Identifiable, Equatable {
         case idle
         case importing
         case transcoding          // VP9/AV1 → H.264 后处理阶段
+        case finalizing
         case paused
         case succeeded(String)
         case failed(String)
@@ -270,6 +424,33 @@ nonisolated private final class SceneDetectionProcessRegistry: @unchecked Sendab
         if process?.isRunning == true {
             process?.terminate()
         }
+    }
+}
+
+private actor SceneDetectionGate {
+    static let shared = SceneDetectionGate()
+
+    private var isRunning = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !isRunning {
+            isRunning = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        guard !waiters.isEmpty else {
+            isRunning = false
+            return
+        }
+
+        waiters.removeFirst().resume()
     }
 }
 
@@ -378,21 +559,31 @@ final class LibraryStore: ObservableObject {
     var thumbnailImageByVideoPath: [String: NSImage] = [:]
     var durationByVideoPath: [String: Double] = [:]
     var metadataByVideoPath: [String: VideoMetadata] = [:]
+    var sourceInfoByVideoPath: [String: VideoSourceInfo] = [:]
     var playbackSupportByVideoPath: [String: VideoPlaybackSupport] = [:]
     @Published var waveformSamplesByVideoPath: [String: [Double]] = [:]
     @Published var frameStripByVideoPath: [String: [Data]] = [:]
     @Published var frameStripImagesByVideoPath: [String: [NSImage]] = [:]
+    @Published var sceneStripImagesByVideoPath: [String: [NSImage]] = [:]
     @Published var sceneCutsByVideoPath: [String: [SceneCut]] = [:]
     @Published var sceneCutProgressesByVideoPath: [String: [Double]] = [:]
+    @Published var sceneThumbnailVersionsByVideoPath: [String: Int] = [:]
     @Published var sceneDetectionProgress: [String: Double] = [:]
     @Published var sceneBatchJob = TranscriptBatchJob()
-    @Published var sampledFrames: [SampledFrame] = []
-    @Published var annotations: [AnnotationItem] = []
-    @Published var audioClips: [AudioClipItem] = []
+    @Published var sampledFrames: [SampledFrame] = [] {
+        didSet { rebuildSampledFrameIndexes() }
+    }
+    @Published var annotations: [AnnotationItem] = [] {
+        didSet { rebuildAnnotationIndexes() }
+    }
+    @Published var audioClips: [AudioClipItem] = [] {
+        didSet { rebuildAudioClipIndexes() }
+    }
     @Published var audioClipExportProgressByVideoPath: [String: Double] = [:]
     @Published var transcriptSegmentsByVideoPath: [String: [TranscriptSegment]] = [:]
     @Published var transcriptStatusByVideoPath: [String: TranscriptJobStatus] = [:]
     @Published var transcriptBatchJob = TranscriptBatchJob()
+    @Published var transcriptExports: [TranscriptExportItem] = []
     @Published var musicsByVideoPath: [String: [MusicRecognitionItem]] = [:]
     @Published var musicDetectionStatusByVideoPath: [String: TranscriptJobStatus] = [:]
     @Published var musicBatchJob = TranscriptBatchJob()
@@ -440,6 +631,7 @@ final class LibraryStore: ObservableObject {
         var annotations: [AnnotationItem]
         var audioClips: [AudioClipItem]
         var transcripts: [String: [TranscriptSegment]]
+        var transcriptExports: [TranscriptExportItem]?
         var musicsByVideoPath: [String: [MusicRecognitionItem]]? // optional for backward compat
     }
 
@@ -448,6 +640,8 @@ final class LibraryStore: ObservableObject {
     private var audioClipWaveformTasks: [UUID: Task<Void, Never>] = [:]
     private var frameStripTasks: [String: Task<Void, Never>] = [:]
     private var sceneDetectionTasks: [String: Task<Void, Never>] = [:]
+    private var sceneThumbnailHydrationTasks: [String: Task<Void, Never>] = [:]
+    private var sceneThumbnailHydrationNeeded = Set<String>()
     private var transcriptBatchTask: Task<Void, Never>?
     private var isTranscriptBatchPaused = false
     private var sceneBatchTask: Task<Void, Never>?
@@ -460,6 +654,14 @@ final class LibraryStore: ObservableObject {
     private var scopedLibraryURL: URL?
     private var sceneCutCache: [String: SceneCutCacheEntry] = [:]
     private(set) var filteredVideos: [VideoItem] = []
+    private var collectedFramesCache: [SampledFrame] = []
+    private var sampledFramesByVideoPath: [String: [SampledFrame]] = [:]
+    private var sampledFrameByID: [UUID: SampledFrame] = [:]
+    private var frameTagsCache: [String] = []
+    private var sampledFrameThumbnailImageByID: [UUID: NSImage] = [:]
+    private var annotationsByVideoPath: [String: [AnnotationItem]] = [:]
+    private var audioClipsByVideoPath: [String: [AudioClipItem]] = [:]
+    private var audioTagsCache: [String] = []
 
     nonisolated private static let transNetPythonPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/transnet-env/bin/python"
     nonisolated private static let transNetScriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/detect_scene_cuts_transnet.py"
@@ -475,11 +677,25 @@ final class LibraryStore: ObservableObject {
     nonisolated private static let exportRootFolderName = "LapianBaoExports"
     nonisolated private static let imageExportFolderName = "图片"
     nonisolated private static let soundEffectExportFolderName = "音效"
+    nonisolated private static let transcriptExportFolderName = "字幕"
     nonisolated private static let musicExportFolderName = "音乐"
+    nonisolated private static let knownSourcePlatforms = ["Instagram", "YouTube", "小红书", "Bilibili", "抖音"]
 
     nonisolated private static func normalizedProgress(_ progress: Double) -> Double {
         guard progress.isFinite else { return 0 }
         return min(1, max(0, progress))
+    }
+
+    nonisolated private static func remoteImportDownloadOverallProgress(_ progress: Double) -> Double {
+        0.02 + normalizedProgress(progress) * 0.86
+    }
+
+    nonisolated private static func remoteImportTranscodingOverallProgress(_ progress: Double?) -> Double {
+        0.90 + normalizedProgress(progress ?? 0) * 0.09
+    }
+
+    nonisolated private static func remoteImportFinalizingOverallProgress(_ progress: Double) -> Double {
+        0.89 + normalizedProgress(progress) * 0.09
     }
 
     nonisolated private static func exportFolder(in libraryURL: URL, named folderName: String) -> URL {
@@ -489,7 +705,7 @@ final class LibraryStore: ObservableObject {
     }
 
     nonisolated private static func ensureExportFolders(in libraryURL: URL) {
-        for folderName in [imageExportFolderName, soundEffectExportFolderName, musicExportFolderName] {
+        for folderName in [imageExportFolderName, soundEffectExportFolderName, transcriptExportFolderName, musicExportFolderName] {
             try? FileManager.default.createDirectory(
                 at: exportFolder(in: libraryURL, named: folderName),
                 withIntermediateDirectories: true
@@ -530,6 +746,51 @@ final class LibraryStore: ObservableObject {
     var allTags: [String] {
         let tags = tagsByVideoPath.values.flatMap { $0 }
         return Array(Set(tags)).sorted()
+    }
+
+    var allFrameTags: [String] {
+        frameTagsCache
+    }
+
+    var allAudioTags: [String] {
+        audioTagsCache
+    }
+
+    private func rebuildSampledFrameIndexes() {
+        collectedFramesCache = sampledFrames.sorted {
+            if $0.videoName == $1.videoName { return $0.time < $1.time }
+            return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+        }
+        sampledFramesByVideoPath = Dictionary(grouping: sampledFrames, by: \.videoPath).mapValues {
+            $0.sorted { lhs, rhs in
+                if abs(lhs.time - rhs.time) > 0.001 { return lhs.time < rhs.time }
+                return lhs.createdAt < rhs.createdAt
+            }
+        }
+        sampledFrameByID = Dictionary(uniqueKeysWithValues: sampledFrames.map { ($0.id, $0) })
+        frameTagsCache = Array(Set(sampledFrames.flatMap(\.tags))).sorted()
+
+        let liveIDs = Set(sampledFrames.map(\.id))
+        sampledFrameThumbnailImageByID = sampledFrameThumbnailImageByID.filter { liveIDs.contains($0.key) }
+    }
+
+    private func rebuildAnnotationIndexes() {
+        annotationsByVideoPath = Dictionary(grouping: annotations, by: \.videoPath).mapValues {
+            $0.sorted { lhs, rhs in
+                if abs(lhs.time - rhs.time) > 0.001 { return lhs.time < rhs.time }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+        }
+    }
+
+    private func rebuildAudioClipIndexes() {
+        audioClipsByVideoPath = Dictionary(grouping: audioClips, by: \.videoPath).mapValues {
+            $0.sorted { lhs, rhs in
+                if abs(lhs.inTime - rhs.inTime) > 0.001 { return lhs.inTime < rhs.inTime }
+                return lhs.createdAt < rhs.createdAt
+            }
+        }
+        audioTagsCache = Array(Set(audioClips.flatMap(\.tags))).sorted()
     }
 
     private func refreshFilteredVideos() {
@@ -595,16 +856,24 @@ final class LibraryStore: ObservableObject {
     }
 
     var collectedFrames: [SampledFrame] {
-        sampledFrames.sorted {
-            if $0.videoName == $1.videoName { return $0.time < $1.time }
-            return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
-        }
+        collectedFramesCache
     }
 
     func sampledFrames(for video: VideoItem) -> [SampledFrame] {
-        sampledFrames
-            .filter { $0.videoPath == video.url.path }
-            .sorted { $0.time < $1.time }
+        sampledFramesByVideoPath[video.url.path, default: []]
+    }
+
+    func sampledFrame(id: UUID) -> SampledFrame? {
+        sampledFrameByID[id]
+    }
+
+    func thumbnailImage(for frame: SampledFrame) -> NSImage? {
+        if let cached = sampledFrameThumbnailImageByID[frame.id] {
+            return cached
+        }
+        guard let image = NSImage(data: frame.thumbnailData) else { return nil }
+        sampledFrameThumbnailImageByID[frame.id] = image
+        return image
     }
 
     func fullResolutionFrameProvider(for frame: SampledFrame) -> NSItemProvider {
@@ -669,15 +938,11 @@ final class LibraryStore: ObservableObject {
     }
 
     func annotations(for video: VideoItem) -> [AnnotationItem] {
-        annotations
-            .filter { $0.videoPath == video.url.path }
-            .sorted { $0.time < $1.time }
+        annotationsByVideoPath[video.url.path, default: []]
     }
 
     func audioClips(for video: VideoItem) -> [AudioClipItem] {
-        audioClips
-            .filter { $0.videoPath == video.url.path }
-            .sorted { $0.inTime < $1.inTime }
+        audioClipsByVideoPath[video.url.path, default: []]
     }
 
     func selectedVideo(for path: String) -> VideoItem? {
@@ -776,7 +1041,7 @@ final class LibraryStore: ObservableObject {
     func clearFinishedRemoteImports() {
         remoteImportJobs.removeAll { job in
             switch job.status {
-            case .succeeded, .failed, .paused:
+            case .succeeded, .failed:
                 return true
             default:
                 return false
@@ -887,8 +1152,8 @@ final class LibraryStore: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     guard case .importing = job.status else { return }
-                    let normalized = Self.normalizedProgress(progress)
-                    job.downloadProgress = max(job.downloadProgress ?? 0, normalized)
+                    let normalized = Self.remoteImportDownloadOverallProgress(progress)
+                    job.downloadProgress = normalized
                     if let speed, !speed.isEmpty {
                         job.downloadSpeed = speed
                     }
@@ -900,7 +1165,16 @@ final class LibraryStore: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     job.status = .transcoding
-                    job.downloadProgress = progress.map(Self.normalizedProgress)
+                    job.downloadProgress = Self.remoteImportTranscodingOverallProgress(progress)
+                    job.downloadSpeed = nil
+                }
+            }
+        }
+        let finalizingCallback: @Sendable (Double) -> Void = { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    job.status = .finalizing
+                    job.downloadProgress = Self.remoteImportFinalizingOverallProgress(progress)
                     job.downloadSpeed = nil
                 }
             }
@@ -919,15 +1193,17 @@ final class LibraryStore: ObservableObject {
                 }
             }
             do {
-                let outputURL = try await Self.downloadVideo(
+                let downloadedVideo = try await Self.downloadVideo(
                     from: sourceURL,
                     into: libraryURL,
                     platform: platform,
                     endpoint: endpoint,
                     progressCallback: progressCallback,
                     transcodingCallback: transcodingCallback,
+                    finalizingCallback: finalizingCallback,
                     processCallback: processCallback
                 )
+                let outputURL = downloadedVideo.url
 
                 guard !Task.isCancelled else { return }
                 self?.updateRemoteImportJob(id: jobID) { job in
@@ -936,8 +1212,16 @@ final class LibraryStore: ObservableObject {
                     job.downloadSpeed = nil
                     job.outputPath = outputURL.path
                 }
+                self?.recordImportedVideoSource(
+                    videoURL: outputURL,
+                    sourceURL: sourceURL,
+                    platform: platform,
+                    authorName: downloadedVideo.authorName,
+                    sourceTitle: downloadedVideo.sourceTitle
+                )
                 self?.scanVideos(in: libraryURL)
                 if let importedVideo = self?.videos.first(where: { $0.url.path == outputURL.path }) {
+                    self?.addImportTags(to: importedVideo, platform: platform, authorName: downloadedVideo.authorName)
                     self?.selectVideo(importedVideo, autoplay: false)
                 }
             } catch {
@@ -955,6 +1239,51 @@ final class LibraryStore: ObservableObject {
     private func updateRemoteImportJob(id: UUID, mutate: (inout RemoteImportJob) -> Void) {
         guard let index = remoteImportJobs.firstIndex(where: { $0.id == id }) else { return }
         mutate(&remoteImportJobs[index])
+    }
+
+    private func addImportTags(to video: VideoItem, platform: String, authorName: String?) {
+        addImportTags(toPath: video.url.path, platform: platform, authorName: authorName)
+    }
+
+    private func addImportTags(toPath path: String, platform: String?, authorName: String?) {
+        var tags = tagsByVideoPath[path, default: []]
+        let candidates = [platform, authorName]
+            .compactMap { $0 }
+            .compactMap(Self.normalizedImportTag)
+
+        for tag in candidates where !tags.contains(tag) {
+            tags.append(tag)
+        }
+        tagsByVideoPath[path] = tags.sorted()
+        saveTagsJSON()
+    }
+
+    private func recordImportedVideoSource(
+        videoURL: URL,
+        sourceURL: URL,
+        platform: String,
+        authorName: String?,
+        sourceTitle: String?
+    ) {
+        let normalizedPlatform = Self.normalizedImportTag(platform) ?? platform
+        let normalizedAuthor = authorName.flatMap(Self.normalizedImportTag)
+        let normalizedTitle = sourceTitle.flatMap(Self.normalizedSourceTitle)
+        sourceInfoByVideoPath[videoURL.path] = VideoSourceInfo(
+            platform: normalizedPlatform,
+            sourceURL: sourceURL.absoluteString,
+            authorName: normalizedAuthor,
+            title: normalizedTitle
+        )
+        saveSourceInfoJSON()
+        addImportTags(toPath: videoURL.path, platform: normalizedPlatform, authorName: normalizedAuthor)
+    }
+
+    nonisolated private static func normalizedImportTag(_ rawValue: String) -> String? {
+        let tag = stripTrailingSourceID(normalizedSpaces(rawValue))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@ "))
+        guard !tag.isEmpty, tag.count <= 64 else { return nil }
+        guard URL(string: tag)?.scheme == nil else { return nil }
+        return tag
     }
 
     private func loadRemoteImportThumbnail(for jobID: UUID, sourceURL: URL) {
@@ -982,10 +1311,10 @@ final class LibraryStore: ObservableObject {
             .filter { seen.insert($0).inserted }
     }
 
-    static func platformName(for url: URL) -> String? {
+    nonisolated static func platformName(for url: URL) -> String? {
         guard let host = url.host?.lowercased() else { return nil }
-        if host == "instagram.com" || host == "www.instagram.com"
-            || host == "m.instagram.com" || host == "instagr.am" {
+        if host.contains("instagram.com") || host.contains("instagr.am")
+            || host.contains("sssinstagram.com") || host.contains("cdninstagram.com") {
             return "Instagram"
         }
         if host.contains("xiaohongshu.com") || host.contains("xhslink.com") {
@@ -993,7 +1322,7 @@ final class LibraryStore: ObservableObject {
         }
         if host == "youtube.com" || host == "www.youtube.com"
             || host == "m.youtube.com" || host == "youtu.be"
-            || host == "music.youtube.com" {
+            || host == "music.youtube.com" || host.contains("googlevideo.com") {
             return "YouTube"
         }
         if host.contains("bilibili.com") || host == "b23.tv" {
@@ -1088,12 +1417,17 @@ final class LibraryStore: ObservableObject {
         }
         selectedTags = []
         tagsByVideoPath = [:]
+        sourceInfoByVideoPath = [:]
         frameStripByVideoPath = [:]
         frameStripImagesByVideoPath = [:]
+        sceneStripImagesByVideoPath = [:]
         sceneCutProgressesByVideoPath = [:]
+        sceneThumbnailVersionsByVideoPath = [:]
         frameStripTasks.values.forEach { $0.cancel() }
         frameStripTasks.removeAll()
         loadTagsJSON()
+        loadSourceInfoJSON()
+        ensureVideoSourceInfoAndTags()
         loadProjectData()
         loadThumbnails(for: videos)
         loadSceneCutCache()
@@ -1121,9 +1455,13 @@ final class LibraryStore: ObservableObject {
             selectedVideoSelectionID = UUID()
         }
         tagsByVideoPath.removeValue(forKey: path)
+        sourceInfoByVideoPath.removeValue(forKey: path)
         sceneCutsByVideoPath.removeValue(forKey: path)
+        sceneStripImagesByVideoPath.removeValue(forKey: path)
+        sceneThumbnailVersionsByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress.removeValue(forKey: path)
         saveTagsJSON()
+        saveSourceInfoJSON()
         saveSceneCutCache()
     }
 
@@ -1196,6 +1534,11 @@ final class LibraryStore: ObservableObject {
         return libraryURL.appendingPathComponent(".lapianbaotags.json")
     }
 
+    private func sourceInfoJSONURL() -> URL? {
+        guard let libraryURL else { return nil }
+        return libraryURL.appendingPathComponent(".lapianbao_sources.json")
+    }
+
     func saveTagsJSON() {
         guard let url = tagsJSONURL(), let libraryURL else { return }
         let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
@@ -1205,6 +1548,22 @@ final class LibraryStore: ObservableObject {
             relative[key] = tags
         }
         if let data = try? JSONEncoder().encode(relative) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func saveSourceInfoJSON() {
+        guard let url = sourceInfoJSONURL(), let libraryURL else { return }
+        let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
+        var relative: [String: VideoSourceInfo] = [:]
+        for (absPath, info) in sourceInfoByVideoPath {
+            let key = absPath.hasPrefix(base) ? String(absPath.dropFirst(base.count)) : absPath
+            relative[key] = info
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(relative) {
             try? data.write(to: url, options: .atomic)
         }
     }
@@ -1220,6 +1579,7 @@ final class LibraryStore: ObservableObject {
             annotations: annotations,
             audioClips: audioClips,
             transcripts: transcriptSegmentsByVideoPath,
+            transcriptExports: transcriptExports.isEmpty ? nil : transcriptExports,
             musicsByVideoPath: musicsByVideoPath.isEmpty ? nil : musicsByVideoPath
         )
         let encoder = JSONEncoder()
@@ -1239,6 +1599,8 @@ final class LibraryStore: ObservableObject {
             annotations = []
             audioClips = []
             transcriptSegmentsByVideoPath = [:]
+            transcriptExports = []
+            musicsByVideoPath = [:]
             return
         }
 
@@ -1249,6 +1611,7 @@ final class LibraryStore: ObservableObject {
         annotations = decoded.annotations
         audioClips = decoded.audioClips
         transcriptSegmentsByVideoPath = decoded.transcripts
+        transcriptExports = decoded.transcriptExports ?? []
         musicsByVideoPath = decoded.musicsByVideoPath ?? [:]
     }
 
@@ -1266,6 +1629,488 @@ final class LibraryStore: ObservableObject {
             loadedTagsByVideoPath[absPath] = tags
         }
         tagsByVideoPath = loadedTagsByVideoPath
+    }
+
+    private func loadSourceInfoJSON() {
+        guard let url = sourceInfoJSONURL(), let libraryURL else { return }
+        guard
+            let data = try? Data(contentsOf: url),
+            let decoded = try? JSONDecoder().decode([String: VideoSourceInfo].self, from: data)
+        else { return }
+
+        let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
+        var loadedSourceInfoByVideoPath = sourceInfoByVideoPath
+        for (key, info) in decoded {
+            let absPath = key.hasPrefix("/") ? key : base + key
+            loadedSourceInfoByVideoPath[absPath] = info
+        }
+        sourceInfoByVideoPath = loadedSourceInfoByVideoPath
+    }
+
+    private struct VideoSourceInference {
+        var platform: String?
+        var sourceURL: URL?
+        var authorName: String?
+        var title: String?
+    }
+
+    private func ensureVideoSourceInfoAndTags() {
+        var updatedTagsByVideoPath = tagsByVideoPath
+        var updatedSourceInfoByVideoPath = sourceInfoByVideoPath
+        var didChangeTags = false
+        var didChangeSourceInfo = false
+
+        for video in videos {
+            let path = video.url.path
+            var tags = updatedTagsByVideoPath[path, default: []]
+            let sourceInfo = updatedSourceInfoByVideoPath[path]
+            let inference = inferredVideoSource(for: video, sourceInfo: sourceInfo, tags: tags)
+            let normalizedPlatform = inference.platform.flatMap(Self.canonicalSourcePlatform)
+            let normalizedAuthor = (sourceInfo?.authorName ?? inference.authorName).flatMap(Self.normalizedImportTag)
+            let normalizedTitle = (sourceInfo?.title ?? inference.title).flatMap(Self.normalizedSourceTitle)
+
+            if let normalizedPlatform {
+                let sourceURLString = Self.usefulSourceURLString(sourceInfo?.sourceURL)
+                    ?? inference.sourceURL?.absoluteString
+                let updatedInfo = VideoSourceInfo(
+                    platform: normalizedPlatform,
+                    sourceURL: sourceURLString,
+                    authorName: normalizedAuthor,
+                    title: normalizedTitle
+                )
+                if updatedInfo != sourceInfo {
+                    updatedSourceInfoByVideoPath[path] = updatedInfo
+                    didChangeSourceInfo = true
+                }
+            }
+
+            let candidates = [
+                normalizedPlatform,
+                normalizedAuthor
+            ]
+
+            for candidate in candidates.compactMap({ $0 }).compactMap(Self.normalizedImportTag) where !tags.contains(candidate) {
+                tags.append(candidate)
+            }
+
+            let sortedTags = tags.sorted()
+            if sortedTags != updatedTagsByVideoPath[path, default: []] {
+                updatedTagsByVideoPath[path] = sortedTags
+                didChangeTags = true
+            }
+        }
+
+        if didChangeSourceInfo {
+            sourceInfoByVideoPath = updatedSourceInfoByVideoPath
+            saveSourceInfoJSON()
+        }
+        if didChangeTags {
+            tagsByVideoPath = updatedTagsByVideoPath
+            saveTagsJSON()
+        }
+    }
+
+    func videoAuthorName(for video: VideoItem) -> String? {
+        sourceInfoByVideoPath[video.url.path]?.authorName
+    }
+
+    func videoSourceTitle(for video: VideoItem) -> String? {
+        sourceInfoByVideoPath[video.url.path]?.title.flatMap(Self.normalizedSourceTitle)
+    }
+
+    func videoSourcePlatform(for video: VideoItem) -> String? {
+        let tags = tagsByVideoPath[video.url.path, default: []]
+        return inferredVideoSource(
+            for: video,
+            sourceInfo: sourceInfoByVideoPath[video.url.path],
+            tags: tags
+        ).platform
+    }
+
+    private func sourceTag(forImportedVideo video: VideoItem) -> String? {
+        let components = video.url.pathComponents
+        guard
+            let importsIndex = components.lastIndex(of: "Imports"),
+            components.indices.contains(importsIndex + 1)
+        else { return nil }
+
+        let folder = components[importsIndex + 1]
+        return Self.canonicalSourcePlatform(folder)
+    }
+
+    private func inferredVideoSource(for video: VideoItem, sourceInfo: VideoSourceInfo?, tags: [String]) -> VideoSourceInference {
+        let whereFromURLs = Self.whereFromURLs(for: video.url)
+        let sourceURLs = Self.uniqueURLs(Self.sourceURLs(from: sourceInfo) + whereFromURLs)
+        let importedPlatform = sourceInfo?.platform
+        let importedAuthorName = sourceInfo?.authorName
+        let platform = [
+            importedPlatform.flatMap(Self.canonicalSourcePlatform),
+            Self.sourcePlatform(from: sourceURLs),
+            sourceTag(forImportedVideo: video),
+            Self.sourcePlatform(fromTags: tags),
+            Self.sourcePlatform(fromPathComponents: video.url.pathComponents),
+            Self.sourcePlatform(fromText: video.name)
+        ].compactMap { $0 }.first
+
+        let sourceURL = sourceURLs.first(where: Self.isUsefulSourceURL)
+        let authorName = importedAuthorName.flatMap(Self.normalizedImportTag)
+            ?? Self.sourceAuthorName(from: sourceURLs, fileName: video.url.lastPathComponent)
+        let title = sourceInfo?.title.flatMap(Self.normalizedSourceTitle)
+            ?? Self.sourceTitle(from: sourceURLs, fileName: video.url.lastPathComponent)
+
+        return VideoSourceInference(platform: platform, sourceURL: sourceURL, authorName: authorName, title: title)
+    }
+
+    nonisolated private static func sourceURLs(from sourceInfo: VideoSourceInfo?) -> [URL] {
+        guard
+            let sourceURL = sourceInfo?.sourceURL,
+            let url = URL(string: sourceURL)
+        else { return [] }
+        return [url]
+    }
+
+    nonisolated private static func sourcePlatform(from urls: [URL]) -> String? {
+        for url in urls {
+            if let platform = platformName(for: url) {
+                return platform
+            }
+            if let platform = sourcePlatform(fromText: url.absoluteString) {
+                return platform
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func sourcePlatform(fromTags tags: [String]) -> String? {
+        tags.compactMap(canonicalSourcePlatform).first
+    }
+
+    nonisolated private static func sourcePlatform(fromPathComponents components: [String]) -> String? {
+        components.compactMap(canonicalSourcePlatform).first
+    }
+
+    nonisolated private static func sourcePlatform(fromText text: String) -> String? {
+        let lowercased = text.lowercased()
+        if lowercased.contains("instagram.com")
+            || lowercased.contains("instagr.am")
+            || lowercased.contains("sssinstagram") {
+            return "Instagram"
+        }
+        if lowercased.contains("youtube.com") || lowercased.contains("youtu.be") {
+            return "YouTube"
+        }
+        if lowercased.contains("xiaohongshu.com")
+            || lowercased.contains("xhslink.com")
+            || text.contains("小红书") {
+            return "小红书"
+        }
+        if lowercased.contains("bilibili.com")
+            || lowercased.contains("b23.tv")
+            || lowercased.contains("bilibili")
+            || text.contains("哔哩哔哩")
+            || text.contains("B站")
+            || text.contains("b站")
+            || text.range(of: #"(?<![A-Za-z0-9])BV[0-9A-Za-z]{10}(?![A-Za-z0-9])"#, options: .regularExpression) != nil {
+            return "Bilibili"
+        }
+        if lowercased.contains("douyin.com")
+            || lowercased.contains("iesdouyin.com")
+            || lowercased.contains("tiktok.com")
+            || lowercased.contains("v.douyin.com")
+            || text.contains("抖音") {
+            return "抖音"
+        }
+        return nil
+    }
+
+    nonisolated private static func canonicalSourcePlatform(_ rawValue: String) -> String? {
+        let normalized = normalizedSpaces(rawValue)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " .-_/@#"))
+        guard !normalized.isEmpty else { return nil }
+
+        if let exact = knownSourcePlatforms.first(where: {
+            $0.caseInsensitiveCompare(normalized) == .orderedSame
+                || importFolderName(for: $0).caseInsensitiveCompare(normalized) == .orderedSame
+        }) {
+            return exact
+        }
+
+        let compact = normalized
+            .lowercased()
+            .replacingOccurrences(of: #"[\s._-]+"#, with: "", options: .regularExpression)
+        switch compact {
+        case "instagram", "insta", "ig", "reels", "instagramreels":
+            return "Instagram"
+        case "youtube", "yt", "youtubecom", "youtu", "youtu.be":
+            return "YouTube"
+        case "小红书", "xiaohongshu", "xhs", "rednote":
+            return "小红书"
+        case "bilibili", "bili", "哔哩哔哩", "b站":
+            return "Bilibili"
+        case "douyin", "抖音", "tiktok", "tik tok":
+            return "抖音"
+        default:
+            return nil
+        }
+    }
+
+    nonisolated private static func whereFromURLs(for fileURL: URL) -> [URL] {
+        let attributeName = "com.apple.metadata:kMDItemWhereFroms"
+        let length = getxattr(fileURL.path, attributeName, nil, 0, 0, 0)
+        guard length > 0 else { return [] }
+
+        var data = Data(count: length)
+        let result = data.withUnsafeMutableBytes { buffer in
+            getxattr(fileURL.path, attributeName, buffer.baseAddress, length, 0, 0)
+        }
+        guard result > 0 else { return [] }
+
+        let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        let values: [String]
+        if let strings = plist as? [String] {
+            values = strings
+        } else if let string = plist as? String {
+            values = [string]
+        } else {
+            values = []
+        }
+
+        return uniqueURLs(values.flatMap(sourceURLs(in:)))
+    }
+
+    nonisolated private static func sourceURLs(in text: String) -> [URL] {
+        var urls: [URL] = []
+        if let url = URL(string: text), url.scheme != nil {
+            urls.append(url)
+            urls.append(contentsOf: embeddedSourceURLs(in: url))
+        }
+        return urls
+    }
+
+    nonisolated private static func embeddedSourceURLs(in url: URL) -> [URL] {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return [] }
+        let sourceQueryNames = Set(["url", "u", "uri", "referer", "referrer", "source", "source_url"])
+        return components.queryItems?
+            .filter { sourceQueryNames.contains($0.name.lowercased()) }
+            .compactMap { $0.value }
+            .flatMap(sourceURLs(in:)) ?? []
+    }
+
+    nonisolated private static func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.absoluteString).inserted }
+    }
+
+    nonisolated private static func isUsefulSourceURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return platformName(for: url) != nil
+            && !host.contains("fbcdn.net")
+            && !host.contains("cdninstagram.com")
+            && !host.contains("sssinstagram.com")
+            && !host.contains("googlevideo.com")
+            && url.path != "/"
+            && !url.path.isEmpty
+    }
+
+    nonisolated private static func usefulSourceURLString(_ rawValue: String?) -> String? {
+        guard
+            let rawValue,
+            let url = URL(string: rawValue),
+            isUsefulSourceURL(url)
+        else { return nil }
+        return rawValue
+    }
+
+    nonisolated private static func sourceAuthorName(from urls: [URL], fileName: String) -> String? {
+        let queryHints = urls.flatMap { url -> [String] in
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return [] }
+            return components.queryItems?.compactMap(\.value) ?? []
+        }
+        let pathHints = urls.flatMap(sourceAuthorHints(from:))
+        let hints = [fileName] + queryHints + urls.map(\.absoluteString)
+        return hints.lazy.compactMap(firstMentionHandle).first
+            ?? pathHints.lazy.compactMap(normalizedImportTag).first
+            ?? instagramAuthorID(from: urls)
+    }
+
+    nonisolated private static func firstMentionHandle(in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: #"(?<![A-Za-z0-9_.])@([A-Za-z0-9_.]{2,30})"#) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard
+            let match = regex.firstMatch(in: text, range: range),
+            match.numberOfRanges > 1,
+            let captureRange = Range(match.range(at: 1), in: text)
+        else { return nil }
+        return normalizedImportTag(String(text[captureRange]))
+    }
+
+    nonisolated private static func sourceAuthorHints(from url: URL) -> [String] {
+        guard let host = url.host?.lowercased() else { return [] }
+        let components = url.path
+            .split(separator: "/")
+            .map(String.init)
+            .map(decodedSourceText)
+            .filter { !$0.isEmpty }
+        guard let first = components.first else { return [] }
+
+        if host.contains("youtube.com"), first.hasPrefix("@") {
+            return [String(first.dropFirst())]
+        }
+        if host.contains("tiktok.com"), first.hasPrefix("@") {
+            return [String(first.dropFirst())]
+        }
+        if host.contains("instagram.com") || host.contains("instagr.am") {
+            let reserved = Set(["p", "reel", "reels", "tv", "stories", "explore", "accounts"])
+            if !reserved.contains(first.lowercased()), first.range(of: #"^[A-Za-z0-9_.]{2,30}$"#, options: .regularExpression) != nil {
+                return [first]
+            }
+        }
+        return []
+    }
+
+    nonisolated private static func instagramAuthorID(from urls: [URL]) -> String? {
+        for url in urls {
+            let text = decodedSourceText(url.absoluteString)
+            let lowercased = text.lowercased()
+            guard lowercased.contains("instagram") || lowercased.contains("cdninstagram") else { continue }
+            let patterns = [
+                #"(?i)(?:^|[?&])vs=(\d{6,})_"#,
+                #"(?i)vs%3D(\d{6,})_"#
+            ]
+            for pattern in patterns {
+                guard
+                    let regex = try? NSRegularExpression(pattern: pattern),
+                    let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
+                    match.numberOfRanges > 1,
+                    let range = Range(match.range(at: 1), in: text)
+                else { continue }
+                let id = String(text[range])
+                return normalizedImportTag("Instagram ID \(id)")
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func sourceTitle(from urls: [URL], fileName: String) -> String? {
+        let titleQueryNames = Set([
+            "title", "name", "filename", "file", "file_name",
+            "video_title", "caption", "desc", "description"
+        ])
+        var candidates: [String] = []
+
+        for url in urls {
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                for item in components.queryItems ?? [] where titleQueryNames.contains(item.name.lowercased()) {
+                    guard let value = item.value, !value.isEmpty else { continue }
+                    let decoded = decodedSourceText(value)
+                    let queryName = item.name.lowercased()
+                    if queryName.contains("file") {
+                        candidates.append(fileStem(from: decoded))
+                    } else if queryName == "desc" || queryName == "description" || queryName == "caption" {
+                        candidates.append(cleanImportDescription(decoded))
+                    } else {
+                        candidates.append(decoded)
+                    }
+                }
+            }
+
+            if platformName(for: url) == nil || isDirectMediaURL(url) {
+                let lastComponent = decodedSourceText(url.lastPathComponent)
+                if !lastComponent.isEmpty {
+                    candidates.append(fileStem(from: lastComponent))
+                }
+            }
+        }
+
+        candidates.append(fileStem(from: fileName))
+        return candidates.lazy.compactMap(normalizedSourceTitle).first
+    }
+
+    nonisolated private static func normalizedSourceTitle(_ rawValue: String) -> String? {
+        let decoded = decodedSourceText(rawValue)
+        var title = stripTrailingSourceID(normalizedSpaces(decoded))
+        if title.contains("/") || title.contains("\\") {
+            title = fileStem(from: title)
+        }
+
+        let extensionPattern = #"(?i)\.(mp4|mov|m4v|webm|mkv|avi|m2ts|mts)$"#
+        title = title.replacingOccurrences(of: extensionPattern, with: "", options: .regularExpression)
+        title = sanitizeImportFileStem(title)
+
+        guard !isGenericImportTitle(title),
+              !looksLikeTechnicalSourceTitle(title),
+              canonicalSourcePlatform(title) == nil,
+              URL(string: title)?.scheme == nil
+        else { return nil }
+
+        return compactImportFileStem(title, maxLength: 118)
+    }
+
+    nonisolated private static func screenedSourceTitle(
+        rawTitle: String?,
+        description: String?,
+        sourceURL: URL
+    ) -> String? {
+        if let title = rawTitle.flatMap(normalizedSourceTitle) {
+            return title
+        }
+        if let title = normalizedSourceTitle(cleanImportDescription(description ?? "")) {
+            return title
+        }
+        return nil
+    }
+
+    nonisolated private static func isDirectMediaURL(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["mp4", "mov", "m4v", "webm", "mkv", "avi", "m2ts", "mts"].contains(ext)
+    }
+
+    nonisolated private static func looksLikeTechnicalSourceTitle(_ title: String) -> Bool {
+        let lowercased = title.lowercased()
+        if lowercased == "imported video"
+            || lowercased == "download"
+            || lowercased == "downloaded video"
+            || lowercased == "media"
+            || lowercased == "videoplayback"
+            || lowercased == "reel"
+            || lowercased == "reels"
+            || lowercased == "story" {
+            return true
+        }
+        if lowercased.range(of: #"^instagram-[0-9a-f-]{8,}$"#, options: .regularExpression) != nil {
+            return true
+        }
+        if lowercased.contains("fbcdn.net")
+            || lowercased.contains("cdninstagram")
+            || lowercased.contains("googlevideo")
+            || lowercased.contains("videoplayback") {
+            return true
+        }
+
+        let compact = title.replacingOccurrences(of: #"[\s._-]+"#, with: "", options: .regularExpression)
+        let isAlphanumeric = compact.range(of: #"^[A-Za-z0-9]+$"#, options: .regularExpression) != nil
+        let hasDigit = compact.range(of: #"[0-9]"#, options: .regularExpression) != nil
+        if compact.count >= 18, isAlphanumeric, hasDigit {
+            return true
+        }
+        if compact.range(of: #"^[0-9]{10,}$"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
+    }
+
+    nonisolated private static func decodedSourceText(_ text: String) -> String {
+        var current = text
+        for _ in 0..<2 {
+            guard let decoded = current.removingPercentEncoding, decoded != current else { break }
+            current = decoded
+        }
+        return current
+    }
+
+    nonisolated private static func importFolderName(for platform: String) -> String {
+        let safeFolder = platform.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+        return safeFolder.isEmpty ? "Other" : safeFolder
     }
 
     func toggleSidebar() {
@@ -1329,12 +2174,13 @@ final class LibraryStore: ObservableObject {
 
             self?.frameStripByVideoPath[path] = frames
             self?.frameStripImagesByVideoPath[path] = frames.compactMap { NSImage(data: $0) }
+            self?.updateSceneStripImages(for: path)
             self?.frameStripTasks[path] = nil
         }
     }
 
     nonisolated private static func makeFrameStrip(for url: URL, count: Int = 16) async -> [Data] {
-        await Task.detached(priority: .utility) {
+        let frameTask = Task.detached(priority: .utility) { () -> [Data] in
             let asset = AVURLAsset(url: url)
             guard let duration = try? await asset.load(.duration) else { return [] }
             let totalSeconds = CMTimeGetSeconds(duration)
@@ -1368,7 +2214,8 @@ final class LibraryStore: ObservableObject {
             }
 
             return results.sorted { $0.index < $1.index }.map(\.data)
-        }.value
+        }
+        return await frameTask.value
     }
 
     func detectSceneCuts(for video: VideoItem) {
@@ -1401,8 +2248,13 @@ final class LibraryStore: ObservableObject {
         let path = video.url.path
         sceneDetectionTasks[path]?.cancel()
         sceneDetectionTasks[path] = nil
+        sceneThumbnailHydrationTasks[path]?.cancel()
+        sceneThumbnailHydrationTasks[path] = nil
+        sceneThumbnailHydrationNeeded.remove(path)
         sceneCutsByVideoPath.removeValue(forKey: path)
+        sceneStripImagesByVideoPath.removeValue(forKey: path)
         sceneCutProgressesByVideoPath.removeValue(forKey: path)
+        sceneThumbnailVersionsByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress.removeValue(forKey: path)
         sceneCutCache.removeValue(forKey: relativeVideoPath(for: video.url))
         saveSceneCutCache()
@@ -1411,8 +2263,13 @@ final class LibraryStore: ObservableObject {
     func deleteAllSceneRecognitions() {
         sceneDetectionTasks.values.forEach { $0.cancel() }
         sceneDetectionTasks.removeAll()
+        sceneThumbnailHydrationTasks.values.forEach { $0.cancel() }
+        sceneThumbnailHydrationTasks.removeAll()
+        sceneThumbnailHydrationNeeded.removeAll()
         sceneCutsByVideoPath.removeAll()
+        sceneStripImagesByVideoPath.removeAll()
         sceneCutProgressesByVideoPath.removeAll()
+        sceneThumbnailVersionsByVideoPath.removeAll()
         sceneDetectionProgress.removeAll()
         sceneCutCache.removeAll()
         saveSceneCutCache()
@@ -1517,20 +2374,99 @@ final class LibraryStore: ObservableObject {
             return
         }
 
-        sceneDetectionTasks[path] = Task { [weak self] in
+        let placeholder = thumbnailImageByVideoPath[path] ?? Self.scenePlaceholderImage()
+        setSceneCuts(
+            Self.lightweightSceneCuts(from: cachedEntry.cutTimes, placeholderImage: placeholder),
+            for: path,
+            needsThumbnailHydration: true
+        )
+    }
+
+    func hydrateSceneThumbnailsIfNeeded(for video: VideoItem) {
+        let path = video.url.path
+        guard
+            sceneThumbnailHydrationNeeded.contains(path),
+            sceneThumbnailHydrationTasks[path] == nil,
+            let cachedEntry = validCachedSceneCutEntry(for: video),
+            !cachedEntry.cutTimes.isEmpty
+        else { return }
+
+        bumpSceneThumbnailVersion(for: path)
+        sceneThumbnailHydrationTasks[path] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else {
+                self?.sceneThumbnailHydrationTasks[path] = nil
+                self?.bumpSceneThumbnailVersion(for: path)
+                return
+            }
+
             let cuts = await Self.sceneCuts(from: cachedEntry.cutTimes, for: video.url)
             guard !Task.isCancelled else {
-                self?.sceneDetectionTasks[path] = nil
+                self?.sceneThumbnailHydrationTasks[path] = nil
+                self?.bumpSceneThumbnailVersion(for: path)
+                return
+            }
+            guard !cuts.isEmpty else {
+                self?.sceneThumbnailHydrationTasks[path] = nil
+                self?.bumpSceneThumbnailVersion(for: path)
                 return
             }
 
             self?.setSceneCuts(cuts, for: path)
-            self?.sceneDetectionTasks[path] = nil
+            self?.sceneThumbnailHydrationTasks[path] = nil
+            self?.bumpSceneThumbnailVersion(for: path)
         }
     }
 
-    private func setSceneCuts(_ cuts: [SceneCut], for path: String) {
+    func cancelSceneThumbnailHydration(for video: VideoItem) {
+        let path = video.url.path
+        sceneThumbnailHydrationTasks[path]?.cancel()
+        sceneThumbnailHydrationTasks[path] = nil
+        bumpSceneThumbnailVersion(for: path)
+    }
+
+    func cancelAllSceneThumbnailHydration() {
+        sceneThumbnailHydrationTasks.values.forEach { $0.cancel() }
+        sceneThumbnailHydrationTasks.removeAll()
+        for path in sceneThumbnailHydrationNeeded {
+            bumpSceneThumbnailVersion(for: path)
+        }
+    }
+
+    private static func lightweightSceneCuts(from cutTimes: [Double], placeholderImage: NSImage) -> [SceneCut] {
+        stableSceneCutTimes(from: cutTimes).enumerated().map { index, time in
+            SceneCut(
+                id: sceneCutID(index: index, time: time),
+                time: time,
+                thumbnailImage: placeholderImage,
+                isPlaceholder: true
+            )
+        }
+    }
+
+    private static func scenePlaceholderImage() -> NSImage {
+        let size = NSSize(width: 200, height: 113)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor(calibratedWhite: 0.16, alpha: 1).setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    private func setSceneCuts(
+        _ cuts: [SceneCut],
+        for path: String,
+        needsThumbnailHydration: Bool = false
+    ) {
         sceneCutsByVideoPath[path] = cuts
+        if needsThumbnailHydration {
+            sceneThumbnailHydrationNeeded.insert(path)
+        } else {
+            sceneThumbnailHydrationNeeded.remove(path)
+        }
+        updateSceneStripImages(for: path)
+        bumpSceneThumbnailVersion(for: path)
         let progresses = Self.normalizedSceneCutProgresses(
             from: cuts.map(\.time),
             duration: durationByVideoPath[path] ?? 0
@@ -1542,13 +2478,74 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func addAnnotation(video: VideoItem, time: Double, text: String) {
+    private func updateSceneStripImages(for path: String) {
+        guard let cuts = sceneCutsByVideoPath[path], !cuts.isEmpty else {
+            sceneStripImagesByVideoPath.removeValue(forKey: path)
+            bumpSceneThumbnailVersion(for: path)
+            return
+        }
+
+        let cutImages = cuts.compactMap { displaySceneCutImage(for: path, cut: $0) }
+        guard cutImages.count == cuts.count else {
+            sceneStripImagesByVideoPath.removeValue(forKey: path)
+            bumpSceneThumbnailVersion(for: path)
+            return
+        }
+
+        if cuts.first.map({ $0.time <= 0.001 }) == true {
+            sceneStripImagesByVideoPath[path] = cutImages
+            bumpSceneThumbnailVersion(for: path)
+            return
+        }
+
+        guard let firstFrame = frameStripImagesByVideoPath[path]?.first ?? thumbnailImageByVideoPath[path] else {
+            sceneStripImagesByVideoPath.removeValue(forKey: path)
+            bumpSceneThumbnailVersion(for: path)
+            return
+        }
+        sceneStripImagesByVideoPath[path] = [firstFrame] + cutImages
+        bumpSceneThumbnailVersion(for: path)
+    }
+
+    func sceneThumbnailsNeedHydration(for video: VideoItem) -> Bool {
+        sceneThumbnailHydrationNeeded.contains(video.url.path)
+    }
+
+    func isHydratingSceneThumbnails(for video: VideoItem) -> Bool {
+        sceneThumbnailHydrationTasks[video.url.path] != nil
+    }
+
+    func displaySceneCutImage(for video: VideoItem, cut: SceneCut) -> NSImage? {
+        displaySceneCutImage(for: video.url.path, cut: cut)
+    }
+
+    private func displaySceneCutImage(for path: String, cut: SceneCut) -> NSImage? {
+        guard cut.isPlaceholder else { return cut.thumbnailImage }
+        return approximateFrameStripImage(for: path, at: cut.time)
+            ?? thumbnailImageByVideoPath[path]
+    }
+
+    private func approximateFrameStripImage(for path: String, at time: Double) -> NSImage? {
+        guard let images = frameStripImagesByVideoPath[path], !images.isEmpty else { return nil }
+        let duration = durationByVideoPath[path] ?? 0
+        guard duration > 0, images.count > 1 else { return images.first }
+        let progress = min(1, max(0, time / duration))
+        let index = min(images.count - 1, max(0, Int((progress * Double(images.count - 1)).rounded())))
+        return images[index]
+    }
+
+    private func bumpSceneThumbnailVersion(for path: String) {
+        sceneThumbnailVersionsByVideoPath[path, default: 0] += 1
+    }
+
+    func addAnnotation(video: VideoItem, time: Double, text: String, kind: AnnotationItem.Kind = .frame) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         annotations.append(AnnotationItem(
             videoPath: video.url.path,
             videoName: video.name,
             time: max(0, time),
+            kind: kind,
             text: trimmed
         ))
         saveProjectData()
@@ -1579,34 +2576,85 @@ final class LibraryStore: ObservableObject {
         saveProjectData()
     }
 
-    func markSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) {
-        guard
-            let data = Self.jpegData(from: cut.thumbnailImage),
-            saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg") != nil
-        else { return }
-
-        if let index = sampledFrames.firstIndex(where: {
-            $0.videoPath == video.url.path &&
-            abs($0.time - cut.time) < 0.02 &&
-            $0.kind == .sceneRepresentative
-        }) {
-            sampledFrames[index].isExported = true
-        } else {
-            sampledFrames.append(SampledFrame(
-                videoPath: video.url.path,
-                videoName: video.name,
-                time: cut.time,
-                sceneIndex: sceneIndex,
-                kind: .sceneRepresentative,
-                isExported: true,
-                note: "",
-                tags: [],
-                thumbnailData: data
-            ))
+    func addFrameTag(_ rawTag: String, to frame: SampledFrame) {
+        updateFrameTags(frame) { tags in
+            appendTag(rawTag, to: &tags)
         }
-        sampledFrames.sort { $0.time < $1.time }
+    }
+
+    func removeFrameTag(_ tag: String, from frame: SampledFrame) {
+        updateFrameTags(frame) { tags in
+            tags.removeAll { $0 == tag }
+        }
+    }
+
+    func addAudioTag(_ rawTag: String, to clip: AudioClipItem) {
+        updateAudioTags(clip) { tags in
+            appendTag(rawTag, to: &tags)
+        }
+    }
+
+    func removeAudioTag(_ tag: String, from clip: AudioClipItem) {
+        updateAudioTags(clip) { tags in
+            tags.removeAll { $0 == tag }
+        }
+    }
+
+    private func updateFrameTags(_ frame: SampledFrame, mutate: (inout [String]) -> Void) {
+        guard let index = sampledFrames.firstIndex(where: { $0.id == frame.id }) else { return }
+        var tags = sampledFrames[index].tags
+        mutate(&tags)
+        sampledFrames[index].tags = tags.sorted()
         writeFrameIndex()
         saveProjectData()
+    }
+
+    private func updateAudioTags(_ clip: AudioClipItem, mutate: (inout [String]) -> Void) {
+        guard let index = audioClips.firstIndex(where: { $0.id == clip.id }) else { return }
+        var tags = audioClips[index].tags
+        mutate(&tags)
+        audioClips[index].tags = tags.sorted()
+        saveProjectData()
+    }
+
+    private func appendTag(_ rawTag: String, to tags: inout [String]) {
+        let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty, !tags.contains(tag) else { return }
+        tags.append(tag)
+    }
+
+    func markSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) {
+        Task { [weak self] in
+            let data = await Self.renderFrameData(for: video.url, at: cut.time)
+                ?? Self.jpegData(from: cut.thumbnailImage)
+            guard
+                let data,
+                self?.saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg") != nil
+            else { return }
+
+            if let index = self?.sampledFrames.firstIndex(where: {
+                $0.videoPath == video.url.path &&
+                abs($0.time - cut.time) < 0.02 &&
+                $0.kind == .sceneRepresentative
+            }) {
+                self?.sampledFrames[index].isExported = true
+            } else {
+                self?.sampledFrames.append(SampledFrame(
+                    videoPath: video.url.path,
+                    videoName: video.name,
+                    time: cut.time,
+                    sceneIndex: sceneIndex,
+                    kind: .sceneRepresentative,
+                    isExported: true,
+                    note: "",
+                    tags: [],
+                    thumbnailData: data
+                ))
+            }
+            self?.sampledFrames.sort { $0.time < $1.time }
+            self?.writeFrameIndex()
+            self?.saveProjectData()
+        }
     }
 
     func captureCurrentFrame(video: VideoItem, time: Double) {
@@ -2126,7 +3174,8 @@ final class LibraryStore: ObservableObject {
         processRegistry: ToolProcessRegistry,
         progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        let sources = musicDownloadSources(for: query)
+        progressCallback?(0.02)
+        let sources = await musicDownloadSources(for: query)
         var failures: [String] = []
 
         for (index, source) in sources.enumerated() {
@@ -2156,11 +3205,231 @@ final class LibraryStore: ObservableObject {
         )
     }
 
-    nonisolated private static func musicDownloadSources(for query: String) -> [MusicDownloadSource] {
+    nonisolated private static func musicDownloadSources(for query: String) async -> [MusicDownloadSource] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return [] }
 
-        return [MusicDownloadSource(name: "YouTube 搜索", target: "ytsearch1:\(trimmedQuery)")]
+        var sources: [MusicDownloadSource] = []
+        if let firstResultURL = await firstYouTubeSearchResultURL(for: trimmedQuery) {
+            sources.append(MusicDownloadSource(name: "YouTube 播放页", target: firstResultURL.absoluteString))
+        }
+        sources.append(MusicDownloadSource(name: "YouTube 搜索兜底", target: "ytsearch1:\(trimmedQuery)"))
+        return sources
+    }
+
+    nonisolated static func firstYouTubeSearchResultURL(for query: String) async -> URL? {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return nil }
+
+        if let ytdlpURL = await firstYouTubeSearchResultURLWithYTDLP(for: trimmedQuery) {
+            return ytdlpURL
+        }
+        return await firstYouTubeSearchResultURLFromSearchPage(for: trimmedQuery)
+    }
+
+    nonisolated private static func firstYouTubeSearchResultURLWithYTDLP(for query: String) async -> URL? {
+        guard let ytdlp = localYTDLPURL() else { return nil }
+
+        let processRegistry = ToolProcessRegistry()
+        return await withTaskCancellationHandler {
+            await withTaskGroup(of: URL?.self) { group in
+                group.addTask {
+                    await runFirstYouTubeSearchResultYTDLP(
+                        executableURL: ytdlp,
+                        query: query,
+                        processRegistry: processRegistry
+                    )
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 18_000_000_000)
+                    processRegistry.cancelRunningProcess()
+                    return nil
+                }
+
+                let result = await group.next() ?? nil
+                group.cancelAll()
+                return result
+            }
+        } onCancel: {
+            processRegistry.cancelRunningProcess()
+        }
+    }
+
+    nonisolated private static func runFirstYouTubeSearchResultYTDLP(
+        executableURL: URL,
+        query: String,
+        processRegistry: ToolProcessRegistry
+    ) async -> URL? {
+        await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = executableURL
+            process.environment = downloaderProcessEnvironment()
+            process.arguments = [
+                "--no-playlist",
+                "--skip-download",
+                "--no-warnings",
+                "--socket-timeout", "12",
+                "--retries", "1",
+                "--default-search", "ytsearch",
+                "--remote-components", "ejs:github",
+                "--print", "%(webpage_url)s",
+                "ytsearch1:\(query)"
+            ]
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            let outputCollector = PipeDataCollector()
+            let errorCollector = PipeDataCollector()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                outputCollector.append(handle.availableData)
+            }
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                errorCollector.append(handle.availableData)
+            }
+
+            do {
+                try process.run()
+            } catch {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                return nil
+            }
+
+            processRegistry.set(process)
+            process.waitUntilExit()
+            processRegistry.set(nil)
+
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+
+            if Task.isCancelled {
+                if process.isRunning { process.terminate() }
+                return nil
+            }
+            guard process.terminationStatus == 0 else { return nil }
+
+            let output = String(data: outputCollector.data, encoding: .utf8) ?? ""
+            return firstYouTubeWatchURL(fromYTDLPOutput: output)
+        }.value
+    }
+
+    nonisolated private static func firstYouTubeSearchResultURLFromSearchPage(for query: String) async -> URL? {
+        guard var components = URLComponents(string: "https://www.youtube.com/results") else { return nil }
+
+        components.queryItems = [URLQueryItem(name: "search_query", value: query)]
+        guard let searchURL = components.url else { return nil }
+
+        var request = URLRequest(url: searchURL)
+        request.timeoutInterval = 12
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("zh-CN,zh;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<400).contains(httpResponse.statusCode) {
+                return nil
+            }
+            guard
+                let html = String(data: data, encoding: .utf8),
+                let url = firstYouTubeWatchURL(in: html)
+            else { return nil }
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated private static func firstYouTubeWatchURL(fromYTDLPOutput output: String) -> URL? {
+        for line in output.split(whereSeparator: \.isNewline) {
+            let rawURLString = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let url = normalizedYouTubeWatchURL(from: rawURLString) {
+                return url
+            }
+        }
+        return firstYouTubeWatchURL(in: output)
+    }
+
+    nonisolated private static func firstYouTubeWatchURL(in text: String) -> URL? {
+        let patterns = [
+            #""videoRenderer"\s*:\s*\{\s*"videoId"\s*:\s*"([A-Za-z0-9_-]{11})""#,
+            #""videoId"\s*:\s*"([A-Za-z0-9_-]{11})""#,
+            #"watch\?v=([A-Za-z0-9_-]{11})"#,
+            #"%2Fwatch%3Fv%3D([A-Za-z0-9_-]{11})"#,
+            #"/shorts/([A-Za-z0-9_-]{11})"#
+        ]
+        let nsText = text as NSString
+        let searchRange = NSRange(location: 0, length: nsText.length)
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: text, range: searchRange) where match.numberOfRanges > 1 {
+                let videoID = nsText.substring(with: match.range(at: 1))
+                if let url = youTubeWatchURL(videoID: videoID) {
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func normalizedYouTubeWatchURL(from rawURLString: String) -> URL? {
+        guard
+            let url = URL(string: rawURLString),
+            let videoID = youTubeVideoID(from: url)
+        else { return nil }
+        return youTubeWatchURL(videoID: videoID)
+    }
+
+    nonisolated private static func youTubeVideoID(from url: URL) -> String? {
+        let host = (url.host ?? "").lowercased()
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+
+        if host == "youtu.be",
+           let videoID = pathComponents.first,
+           isValidYouTubeVideoID(videoID) {
+            return videoID
+        }
+
+        guard host == "youtube.com" || host.hasSuffix(".youtube.com") else { return nil }
+
+        if let videoID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "v" })?
+            .value,
+           isValidYouTubeVideoID(videoID) {
+            return videoID
+        }
+
+        for marker in ["shorts", "embed"] {
+            if let markerIndex = pathComponents.firstIndex(of: marker) {
+                let videoIndex = pathComponents.index(after: markerIndex)
+                if pathComponents.indices.contains(videoIndex) {
+                    let videoID = pathComponents[videoIndex]
+                    if isValidYouTubeVideoID(videoID) {
+                        return videoID
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func youTubeWatchURL(videoID: String) -> URL? {
+        guard isValidYouTubeVideoID(videoID) else { return nil }
+        return URL(string: "https://www.youtube.com/watch?v=\(videoID)")
+    }
+
+    nonisolated private static func isValidYouTubeVideoID(_ videoID: String) -> Bool {
+        videoID.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil
     }
 
     nonisolated private static func runMusicYTDLPDownloadWithTimeout(
@@ -2240,22 +3509,27 @@ final class LibraryStore: ObservableObject {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
-            let outputCollector = PipeDataCollector()
-            let errorCollector = PipeDataCollector()
+            let outputCollector = PipeLineCollector()
+            let errorCollector = PipeLineCollector()
+            let progressTracker = YTDLPProgressTracker(
+                expectedPartCount: 1,
+                downloadCompletionProgress: 0.94,
+                postProcessingProgress: 0.98
+            )
+            let handleProgressLines: @Sendable ([String]) -> Void = { lines in
+                for line in lines {
+                    if let update = progressTracker.update(from: line) {
+                        progressCallback?(update.progress)
+                    }
+                }
+            }
 
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
-                outputCollector.append(handle.availableData)
+                handleProgressLines(outputCollector.append(handle.availableData))
             }
 
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                guard !chunk.isEmpty else { return }
-                errorCollector.append(chunk)
-                if let text = String(data: chunk, encoding: .utf8) {
-                    for line in text.components(separatedBy: .newlines) {
-                        if let p = parseYTDLPProgressLine(line) { progressCallback?(p) }
-                    }
-                }
+                handleProgressLines(errorCollector.append(handle.availableData))
             }
 
             try process.run()
@@ -2264,8 +3538,8 @@ final class LibraryStore: ObservableObject {
                 processRegistry.set(nil)
                 outputPipe.fileHandleForReading.readabilityHandler = nil
                 errorPipe.fileHandleForReading.readabilityHandler = nil
-                outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-                errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+                handleProgressLines(outputCollector.finish(with: outputPipe.fileHandleForReading.readDataToEndOfFile()))
+                handleProgressLines(errorCollector.finish(with: errorPipe.fileHandleForReading.readDataToEndOfFile()))
                 if Task.isCancelled, process.isRunning {
                     process.terminate()
                 }
@@ -2582,18 +3856,36 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func exportTranscriptMarkdown(video: VideoItem) {
-        guard let libraryURL else { return }
+    @discardableResult
+    func exportTranscriptMarkdown(video: VideoItem) -> TranscriptExportItem? {
+        guard let libraryURL else { return nil }
         let segments = transcriptSegmentsByVideoPath[video.url.path, default: []]
-        guard !segments.isEmpty else { return }
-        let folder = libraryURL
-            .appendingPathComponent("LapianBaoExports", isDirectory: true)
-            .appendingPathComponent("Transcripts", isDirectory: true)
+        guard !segments.isEmpty else { return nil }
+        let folder = Self.exportFolder(in: libraryURL, named: Self.transcriptExportFolderName)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent("\(Self.safeFileStem(video.name))-transcript.md")
         let body = segments.map { "[\(Self.clockText($0.start))] \($0.text)" }.joined(separator: "\n")
         let md = "# \(video.name)\n\n## 原脚本\n\n\(body)\n"
-        try? md.write(to: url, atomically: true, encoding: .utf8)
+        guard (try? md.write(to: url, atomically: true, encoding: .utf8)) != nil else { return nil }
+
+        let startTime = segments.map(\.start).min() ?? 0
+        let endTime = segments.map(\.end).max() ?? startTime
+        let export = TranscriptExportItem(
+            videoPath: video.url.path,
+            videoName: video.name,
+            filePath: url.path,
+            segmentCount: segments.count,
+            startTime: startTime,
+            endTime: endTime
+        )
+
+        if let index = transcriptExports.firstIndex(where: { $0.videoPath == video.url.path }) {
+            transcriptExports[index] = export
+        } else {
+            transcriptExports.append(export)
+        }
+        saveProjectData()
+        return export
     }
 
     private func sceneIndex(for video: VideoItem, at time: Double) -> Int? {
@@ -2708,7 +4000,16 @@ final class LibraryStore: ObservableObject {
         for url: URL,
         progressCallback: @escaping (Double) -> Void
     ) async -> [SceneCut] {
-        await Task.detached(priority: .utility) {
+        await SceneDetectionGate.shared.acquire()
+        defer {
+            Task {
+                await SceneDetectionGate.shared.release()
+            }
+        }
+
+        guard !Task.isCancelled else { return [] }
+
+        let detectionTask = Task.detached(priority: .utility) { () -> [SceneCut] in
             let asset = AVURLAsset(url: url)
 
             guard let duration = try? await asset.load(.duration) else { return [] }
@@ -2782,7 +4083,8 @@ final class LibraryStore: ObservableObject {
             guard !cutTimes.isEmpty else { return [] }
 
             return await makeSceneCuts(for: asset, cutTimes: cutTimes)
-        }.value
+        }
+        return await detectionTask.value
     }
 
     nonisolated private struct TransNetDetectionResult: Decodable {
@@ -2812,11 +4114,11 @@ final class LibraryStore: ObservableObject {
             "cpu"
         ]
         var environment = ProcessInfo.processInfo.environment
-        environment["OMP_NUM_THREADS"] = "2"
-        environment["OPENBLAS_NUM_THREADS"] = "2"
-        environment["MKL_NUM_THREADS"] = "2"
-        environment["VECLIB_MAXIMUM_THREADS"] = "2"
-        environment["NUMEXPR_NUM_THREADS"] = "2"
+        environment["OMP_NUM_THREADS"] = "1"
+        environment["OPENBLAS_NUM_THREADS"] = "1"
+        environment["MKL_NUM_THREADS"] = "1"
+        environment["VECLIB_MAXIMUM_THREADS"] = "1"
+        environment["NUMEXPR_NUM_THREADS"] = "1"
         process.environment = environment
 
         let outputPipe = Pipe()
@@ -3305,11 +4607,115 @@ final class LibraryStore: ObservableObject {
         var title: String?
         var description: String?
         var uploader: String?
+        var uploaderID: String?
         var channel: String?
+        var channelID: String?
         var creator: String?
+        var playlistUploader: String?
+        var playlistUploaderID: String?
+        var artist: String?
+        var albumArtist: String?
+        var requestedFormats: [YTDLPRequestedFormat]?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, title, description, uploader, channel, creator, artist
+            case uploaderID = "uploader_id"
+            case channelID = "channel_id"
+            case playlistUploader = "playlist_uploader"
+            case playlistUploaderID = "playlist_uploader_id"
+            case albumArtist = "album_artist"
+            case requestedFormats = "requested_formats"
+        }
 
         var bestUploader: String? {
-            uploader ?? channel ?? creator
+            [
+                uploader,
+                channel,
+                creator,
+                playlistUploader,
+                artist,
+                albumArtist,
+                uploaderID,
+                channelID,
+                playlistUploaderID
+            ]
+            .compactMap { normalizedImportTag($0 ?? "") }
+            .first
+        }
+
+        var expectedDownloadPartCount: Int? {
+            guard let count = requestedFormats?.count, count > 0 else { return nil }
+            return min(max(count, 1), 3)
+        }
+    }
+
+    nonisolated private struct YTDLPRequestedFormat: Decodable {
+        var formatID: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case formatID = "format_id"
+        }
+    }
+
+    nonisolated private struct YTDLPDownloaderFailure: LocalizedError {
+        var message: String
+        var authorName: String?
+
+        var errorDescription: String? {
+            message
+        }
+    }
+
+    nonisolated private struct DownloadedVideoResult: Sendable {
+        var url: URL
+        var authorName: String?
+        var sourceTitle: String? = nil
+    }
+
+    nonisolated private final class YTDLPProgressTracker: @unchecked Sendable {
+        private let lock = NSLock()
+        private let expectedPartCount: Int
+        private let downloadCompletionProgress: Double
+        private let postProcessingProgress: Double
+        private var partIndex = 0
+        private var lastRawProgress = 0.0
+        private var lastOverallProgress = 0.0
+        private var hasSeenProgress = false
+
+        init(
+            expectedPartCount: Int,
+            downloadCompletionProgress: Double = 1,
+            postProcessingProgress: Double = 1
+        ) {
+            self.expectedPartCount = max(1, expectedPartCount)
+            self.downloadCompletionProgress = LibraryStore.normalizedProgress(downloadCompletionProgress)
+            self.postProcessingProgress = LibraryStore.normalizedProgress(postProcessingProgress)
+        }
+
+        func update(from line: String) -> DownloadProgressUpdate? {
+            lock.lock()
+            defer { lock.unlock() }
+
+            if LibraryStore.isYTDLPPostProcessingLine(line) {
+                lastOverallProgress = max(lastOverallProgress, postProcessingProgress)
+                return DownloadProgressUpdate(progress: lastOverallProgress, speed: nil)
+            }
+
+            guard let update = LibraryStore.parseYTDLPProgressUpdate(line) else { return nil }
+            let rawProgress = LibraryStore.normalizedProgress(update.progress)
+            if hasSeenProgress,
+               rawProgress + 0.12 < lastRawProgress,
+               lastRawProgress > 0.65 {
+                partIndex += 1
+            }
+
+            hasSeenProgress = true
+            lastRawProgress = rawProgress
+
+            let partCount = max(expectedPartCount, partIndex + 1)
+            let estimatedProgress = (Double(partIndex) + rawProgress) / Double(partCount) * downloadCompletionProgress
+            lastOverallProgress = max(lastOverallProgress, min(downloadCompletionProgress, estimatedProgress))
+            return DownloadProgressUpdate(progress: lastOverallProgress, speed: update.speed)
         }
     }
 
@@ -3326,16 +4732,19 @@ final class LibraryStore: ObservableObject {
         endpoint: String,
         progressCallback: (@Sendable (Double, String?) -> Void)? = nil,
         transcodingCallback: (@Sendable (Double?) -> Void)? = nil,
+        finalizingCallback: (@Sendable (Double) -> Void)? = nil,
         processCallback: (@Sendable (Process?) -> Void)? = nil
-    ) async throws -> URL {
-        let safeFolder = platform.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+    ) async throws -> DownloadedVideoResult {
+        let safeFolder = importFolderName(for: platform)
         let destinationDirectory = libraryURL
             .appendingPathComponent("Imports", isDirectory: true)
-            .appendingPathComponent(safeFolder.isEmpty ? "Other" : safeFolder, isDirectory: true)
+            .appendingPathComponent(safeFolder, isDirectory: true)
 
         try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
 
         var rawURL: URL?
+        var authorName: String?
+        var sourceTitle: String?
 
         var ytdlpFailure: Error?
 
@@ -3345,7 +4754,7 @@ final class LibraryStore: ObservableObject {
             let attempts = ytdlpArgumentAttempts(for: sourceURL)
             for attempt in attempts {
                 do {
-                    rawURL = try await runYTDLPOnce(
+                    let result = try await runYTDLPOnce(
                         executableURL: ytdlp,
                         sourceURL: sourceURL,
                         destinationDirectory: destinationDirectory,
@@ -3354,10 +4763,16 @@ final class LibraryStore: ObservableObject {
                         progressCallback: progressCallback,
                         processCallback: processCallback
                     )
+                    rawURL = result.url
+                    authorName = result.authorName
+                    sourceTitle = result.sourceTitle
                     break
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
+                    if let failure = error as? YTDLPDownloaderFailure {
+                        authorName = authorName ?? failure.authorName
+                    }
                     ytdlpFailure = error
                 }
             }
@@ -3373,7 +4788,9 @@ final class LibraryStore: ObservableObject {
                destinationDirectory: destinationDirectory,
                progressCallback: progressCallback
            ) {
-            rawURL = result
+            rawURL = result.url
+            authorName = authorName ?? result.authorName
+            sourceTitle = sourceTitle ?? result.sourceTitle
         }
 
         // 3. 用户自定义 API
@@ -3385,6 +4802,7 @@ final class LibraryStore: ObservableObject {
                progressCallback: progressCallback
            ) {
             rawURL = result
+            sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
         }
 
         // 4. cobalt.tools 兜底（对 Instagram / YouTube 有效，需要服务可用）
@@ -3395,6 +4813,7 @@ final class LibraryStore: ObservableObject {
                progressCallback: progressCallback
            ) {
             rawURL = result
+            sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
         }
 
         guard let downloadedURL = rawURL else {
@@ -3405,7 +4824,14 @@ final class LibraryStore: ObservableObject {
         }
 
         // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264
-        return await transcodeToH264IfNeeded(downloadedURL, progressCallback: transcodingCallback) ?? downloadedURL
+        finalizingCallback?(0)
+        let finalURL = await transcodeToH264IfNeeded(downloadedURL, progressCallback: transcodingCallback) ?? downloadedURL
+        finalizingCallback?(1)
+        return DownloadedVideoResult(
+            url: finalURL,
+            authorName: authorName,
+            sourceTitle: sourceTitle ?? Self.sourceTitle(from: [], fileName: finalURL.lastPathComponent)
+        )
     }
 
     // MARK: - VP9/AV1 → H.264 转码（解决 macOS 播放兼容性）
@@ -3456,7 +4882,7 @@ final class LibraryStore: ObservableObject {
             // 先输出到临时文件，避免和原文件重名冲突
             let stem = url.deletingPathExtension().lastPathComponent
             let tmpURL = url.deletingLastPathComponent()
-                .appendingPathComponent("\(stem)-transcoding-tmp.mp4")
+                .appendingPathComponent("\(stem).transcoding.tmp.mp4")
 
             let ffmpegProcess = Process()
             ffmpegProcess.executableURL = URL(fileURLWithPath: ffmpegPath)
@@ -3508,14 +4934,17 @@ final class LibraryStore: ObservableObject {
             }
             progressCallback?(1)
 
-            // 删除原 VP9 文件，把临时文件重命名回原名
-            try? FileManager.default.removeItem(at: url)
             let finalURL = url.deletingLastPathComponent()
                 .appendingPathComponent("\(stem).mp4")
+            if finalURL.path != url.path {
+                try? FileManager.default.removeItem(at: finalURL)
+            }
+            try? FileManager.default.removeItem(at: url)
             if (try? FileManager.default.moveItem(at: tmpURL, to: finalURL)) != nil {
                 return finalURL
             }
-            return tmpURL
+            try? FileManager.default.removeItem(at: tmpURL)
+            return nil
         }.value
     }
 
@@ -3535,7 +4964,7 @@ final class LibraryStore: ObservableObject {
         from sourceURL: URL,
         destinationDirectory: URL,
         progressCallback: (@Sendable (Double, String?) -> Void)? = nil
-    ) async throws -> URL {
+    ) async throws -> DownloadedVideoResult {
         // 解析 note ID（去掉 query string）
         let noteId = sourceURL.lastPathComponent.components(separatedBy: "?").first
             ?? sourceURL.lastPathComponent
@@ -3612,19 +5041,50 @@ final class LibraryStore: ObservableObject {
         dlReq.setValue("https://www.xiaohongshu.com", forHTTPHeaderField: "Referer")
         dlReq.timeoutInterval = 180
 
+        let authorName = xiaoHongShuAuthorName(from: noteObj)
+        let sourceTitle = screenedSourceTitle(
+            rawTitle: noteObj["title"] as? String,
+            description: noteObj["desc"] as? String,
+            sourceURL: sourceURL
+        )
         let outputURL = cleanedImportVideoURL(
             in: destinationDirectory,
             sourceURL: sourceURL,
             rawTitle: noteObj["title"] as? String,
             description: noteObj["desc"] as? String,
-            uploader: nil,
+            uploader: authorName,
             preferredExtension: "mp4"
         )
-        return try await downloadRemoteFile(
+        let fileURL = try await downloadRemoteFile(
             request: dlReq,
             to: outputURL,
             progressCallback: progressCallback
         )
+        return DownloadedVideoResult(
+            url: fileURL,
+            authorName: normalizedImportTag(authorName ?? ""),
+            sourceTitle: sourceTitle
+        )
+    }
+
+    nonisolated private static func xiaoHongShuAuthorName(from noteObject: [String: Any]) -> String? {
+        for containerKey in ["user", "userInfo", "author", "owner"] {
+            guard let container = noteObject[containerKey] as? [String: Any] else { continue }
+            for nameKey in ["nickname", "nickName", "name", "userName", "username", "userId", "user_id"] {
+                if let value = container[nameKey] as? String,
+                   let author = normalizedImportTag(value) {
+                    return author
+                }
+            }
+        }
+
+        for nameKey in ["nickname", "nickName", "userName", "username"] {
+            if let value = noteObject[nameKey] as? String,
+               let author = normalizedImportTag(value) {
+                return author
+            }
+        }
+        return nil
     }
 
     nonisolated private static func localYTDLPURL() -> URL? {
@@ -3641,6 +5101,14 @@ final class LibraryStore: ObservableObject {
         .map(URL.init(fileURLWithPath:))
     }
 
+    nonisolated private static func ytdlpFormatSelectionArguments() -> [String] {
+        [
+            "-f", "bv*[vcodec^=avc1]+ba/b[ext=mp4]/bestvideo+bestaudio/best",
+            "-S", "res,codec:h264:m4a",
+            "--merge-output-format", "mp4"
+        ]
+    }
+
     nonisolated private static func runYTDLPOnce(
         executableURL: URL,
         sourceURL: URL,
@@ -3649,7 +5117,7 @@ final class LibraryStore: ObservableObject {
         destinationProgressFloor: Double = 0.01,
         progressCallback: (@Sendable (Double, String?) -> Void)? = nil,
         processCallback: (@Sendable (Process?) -> Void)? = nil
-    ) async throws -> URL {
+    ) async throws -> DownloadedVideoResult {
         try await Task.detached(priority: .utility) {
             let process = Process()
             defer { processCallback?(nil) }
@@ -3664,7 +5132,18 @@ final class LibraryStore: ObservableObject {
             let videoInfo = fetchYTDLPVideoInfo(
                 executableURL: executableURL,
                 sourceURL: sourceURL,
-                environment: env
+                environment: env,
+                extraArguments: extraArguments
+            )
+            let authorName = normalizedImportTag(videoInfo?.bestUploader ?? "")
+            let sourceTitle = screenedSourceTitle(
+                rawTitle: videoInfo?.title,
+                description: videoInfo?.description,
+                sourceURL: sourceURL
+            )
+            let expectedPartCount = videoInfo?.expectedDownloadPartCount ?? (videoInfo == nil ? 2 : 1)
+            let progressTracker = YTDLPProgressTracker(
+                expectedPartCount: expectedPartCount
             )
             let outputURL = cleanedImportVideoURL(
                 in: destinationDirectory,
@@ -3678,9 +5157,6 @@ final class LibraryStore: ObservableObject {
 
             var arguments = [
                 "--no-playlist",
-                "-f", "bv*[vcodec^=avc1]+ba/b[ext=mp4]/bestvideo+bestaudio/best",
-                "-S", "res,codec:h264:m4a",
-                "--merge-output-format", "mp4",
                 "--ffmpeg-location", "/opt/homebrew/bin",
                 "--socket-timeout", "20",
                 "--retries", "2",
@@ -3690,6 +5166,7 @@ final class LibraryStore: ObservableObject {
                 "--no-colors",  // 去掉 ANSI 转义码，方便文本解析
                 "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             ]
+            arguments += ytdlpFormatSelectionArguments()
             arguments += extraArguments
             arguments += ytdlpRemoteComponentArguments(for: sourceURL)
             if isBilibiliURL(sourceURL) {
@@ -3715,8 +5192,8 @@ final class LibraryStore: ObservableObject {
             let errorCollector = PipeLineCollector()
             let handleProgressLines: @Sendable ([String]) -> Void = { lines in
                 for line in lines {
-                    if let update = parseYTDLPProgressUpdate(line) {
-                        progressCallback?(min(update.progress, 0.96), update.speed)
+                    if let update = progressTracker.update(from: line) {
+                        progressCallback?(update.progress, update.speed)
                     }
                 }
             }
@@ -3746,7 +5223,7 @@ final class LibraryStore: ObservableObject {
             let errorOutput = String(data: errorCollector.data, encoding: .utf8) ?? ""
 
             guard process.terminationStatus == 0 else {
-                throw RemoteImportError.downloaderFailed(errorOutput)
+                throw YTDLPDownloaderFailure(message: errorOutput, authorName: authorName)
             }
 
             let outputPath = output
@@ -3760,10 +5237,14 @@ final class LibraryStore: ObservableObject {
                 !outputPath.isEmpty,
                 FileManager.default.fileExists(atPath: outputPath)
             else {
-                throw RemoteImportError.downloaderFailed(errorOutput)
+                throw YTDLPDownloaderFailure(message: errorOutput, authorName: authorName)
             }
 
-            return URL(fileURLWithPath: outputPath)
+            return DownloadedVideoResult(
+                url: URL(fileURLWithPath: outputPath),
+                authorName: authorName,
+                sourceTitle: sourceTitle
+            )
         }.value
     }
 
@@ -3776,7 +5257,8 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func fetchYTDLPVideoInfo(
         executableURL: URL,
         sourceURL: URL,
-        environment: [String: String]
+        environment: [String: String],
+        extraArguments: [String] = []
     ) -> YTDLPVideoInfo? {
         let process = Process()
         process.executableURL = executableURL
@@ -3787,6 +5269,8 @@ final class LibraryStore: ObservableObject {
             "--dump-single-json",
             "--no-warnings",
         ]
+        arguments += ytdlpFormatSelectionArguments()
+        arguments += extraArguments
         arguments += ytdlpRemoteComponentArguments(for: sourceURL)
         arguments += [
             sourceURL.absoluteString
@@ -3794,6 +5278,7 @@ final class LibraryStore: ObservableObject {
         process.arguments = arguments
 
         let outputPipe = Pipe()
+        let outputCollector = PipeDataCollector()
         process.standardOutput = outputPipe
         process.standardError = Pipe()
 
@@ -3804,6 +5289,9 @@ final class LibraryStore: ObservableObject {
         }
 
         let semaphore = DispatchSemaphore(value: 0)
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            outputCollector.append(handle.availableData)
+        }
         DispatchQueue.global(qos: .utility).async {
             process.waitUntilExit()
             semaphore.signal()
@@ -3813,12 +5301,14 @@ final class LibraryStore: ObservableObject {
             if process.isRunning {
                 process.terminate()
             }
+            outputPipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
 
+        outputPipe.fileHandleForReading.readabilityHandler = nil
+        outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
         guard process.terminationStatus == 0 else { return nil }
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        return try? JSONDecoder().decode(YTDLPVideoInfo.self, from: data)
+        return try? JSONDecoder().decode(YTDLPVideoInfo.self, from: outputCollector.data)
     }
 
     nonisolated private struct YTDLPArgumentAttempt: Sendable {
@@ -3931,6 +5421,17 @@ final class LibraryStore: ObservableObject {
             }
         }
         return nil
+    }
+
+    nonisolated private static func isYTDLPPostProcessingLine(_ line: String) -> Bool {
+        let lowercased = line.lowercased()
+        return lowercased.contains("[merger]")
+            || lowercased.contains("[extractaudio]")
+            || lowercased.contains("[fixup")
+            || lowercased.contains("[movefiles]")
+            || lowercased.contains("[videoconvertor]")
+            || lowercased.contains("[videoremuxer]")
+            || lowercased.contains("merging formats")
     }
 
     nonisolated private static func parseYTDLPSpeed(from line: String) -> String? {
@@ -4269,6 +5770,9 @@ final class LibraryStore: ObservableObject {
         frameStripTasks.removeAll()
         sceneDetectionTasks.values.forEach { $0.cancel() }
         sceneDetectionTasks.removeAll()
+        sceneThumbnailHydrationTasks.values.forEach { $0.cancel() }
+        sceneThumbnailHydrationTasks.removeAll()
+        sceneThumbnailHydrationNeeded.removeAll()
 
         objectWillChange.send()
         thumbnailDataByVideoPath.removeAll()
@@ -4279,8 +5783,10 @@ final class LibraryStore: ObservableObject {
         waveformSamplesByVideoPath.removeAll()
         frameStripByVideoPath.removeAll()
         frameStripImagesByVideoPath.removeAll()
+        sceneStripImagesByVideoPath.removeAll()
         sceneCutsByVideoPath.removeAll()
         sceneCutProgressesByVideoPath.removeAll()
+        sceneThumbnailVersionsByVideoPath.removeAll()
         sceneDetectionProgress.removeAll()
 
         for video in videos {
@@ -4309,6 +5815,7 @@ final class LibraryStore: ObservableObject {
         if let data = videoMetadata.thumbnailData {
             thumbnailDataByVideoPath[path] = data
             thumbnailImageByVideoPath[path] = NSImage(data: data)
+            updateSceneStripImages(for: path)
         }
 
         if let duration = videoMetadata.duration {
@@ -4494,7 +6001,7 @@ final class LibraryStore: ObservableObject {
             let asset = AVURLAsset(url: url)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 1280, height: 720)
+            generator.maximumSize = CGSize(width: 4096, height: 4096)
             generator.requestedTimeToleranceBefore = .zero
             generator.requestedTimeToleranceAfter = CMTime(seconds: 0.08, preferredTimescale: 600)
             guard let image = await sceneThumbnailImage(from: generator, at: CMTime(seconds: max(0, seconds), preferredTimescale: 600)) else { return nil }
@@ -4505,7 +6012,7 @@ final class LibraryStore: ObservableObject {
     nonisolated private static func jpegData(from image: NSImage) -> Data? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let bitmap = NSBitmapImageRep(cgImage: cgImage)
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.82])
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
     }
 
     nonisolated private static func frameDragItemProvider(

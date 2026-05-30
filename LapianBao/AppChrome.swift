@@ -10,11 +10,199 @@ enum PreviewKeyboardCommand {
     case increaseShuttleSpeed
     case stepForward
     case stepBackward
+    case previousSceneCut
+    case nextSceneCut
     case setAudioIn
     case setAudioOut
     case clearAudioSelection
     case captureCurrentFrame
     case exportAudioSelection
+}
+
+enum PreviewShortcutAction: String, CaseIterable, Identifiable {
+    case togglePlayback
+    case shuttleSpeed
+    case shuttleBackward
+    case shuttleForward
+    case stepBackward
+    case stepForward
+    case previousSceneCut
+    case nextSceneCut
+    case setAudioIn
+    case setAudioOut
+    case clearAudioSelection
+    case captureCurrentFrame
+    case exportAudioSelection
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .togglePlayback: return "播放/暂停"
+        case .shuttleSpeed: return "播放/加速"
+        case .shuttleBackward: return "倒放穿梭"
+        case .shuttleForward: return "正放穿梭"
+        case .stepBackward: return "后退一帧"
+        case .stepForward: return "前进一帧"
+        case .previousSceneCut: return "上一个剪辑点"
+        case .nextSceneCut: return "下一个剪辑点"
+        case .setAudioIn: return "设置 In 点"
+        case .setAudioOut: return "设置 Out 点"
+        case .clearAudioSelection: return "清除声音选区"
+        case .captureCurrentFrame: return "导出当前画面"
+        case .exportAudioSelection: return "导出声音选区"
+        }
+    }
+
+    var defaultKeyCode: UInt16 {
+        switch self {
+        case .togglePlayback: return 49
+        case .shuttleSpeed: return 40
+        case .shuttleBackward: return 38
+        case .shuttleForward: return 37
+        case .stepBackward: return 123
+        case .stepForward: return 124
+        case .previousSceneCut: return 126
+        case .nextSceneCut: return 125
+        case .setAudioIn: return 34
+        case .setAudioOut: return 31
+        case .clearAudioSelection: return 32
+        case .captureCurrentFrame: return 14
+        case .exportAudioSelection: return 35
+        }
+    }
+
+    private var defaultsKey: String {
+        "previewShortcut.\(rawValue).keyCode"
+    }
+
+    var keyCode: UInt16 {
+        let stored = UserDefaults.standard.integer(forKey: defaultsKey)
+        guard stored > 0, stored < Int(UInt16.max) else { return defaultKeyCode }
+        return UInt16(stored)
+    }
+
+    func setKeyCode(_ keyCode: UInt16) {
+        UserDefaults.standard.set(Int(keyCode), forKey: defaultsKey)
+    }
+
+    func command(isShuttling: Bool) -> PreviewKeyboardCommand {
+        switch self {
+        case .togglePlayback:
+            return .togglePlayback
+        case .shuttleSpeed:
+            return isShuttling ? .increaseShuttleSpeed : .togglePlayback
+        case .shuttleBackward:
+            return .shuttleBackward
+        case .shuttleForward:
+            return .shuttleForward
+        case .stepBackward:
+            return .stepBackward
+        case .stepForward:
+            return .stepForward
+        case .previousSceneCut:
+            return .previousSceneCut
+        case .nextSceneCut:
+            return .nextSceneCut
+        case .setAudioIn:
+            return .setAudioIn
+        case .setAudioOut:
+            return .setAudioOut
+        case .clearAudioSelection:
+            return .clearAudioSelection
+        case .captureCurrentFrame:
+            return .captureCurrentFrame
+        case .exportAudioSelection:
+            return .exportAudioSelection
+        }
+    }
+
+    static func action(for keyCode: UInt16) -> PreviewShortcutAction? {
+        allCases.first { $0.keyCode == keyCode }
+    }
+
+    static func actions(for keyCode: UInt16) -> [PreviewShortcutAction] {
+        allCases.filter { $0.keyCode == keyCode }
+    }
+
+    static func hasConflict(action: PreviewShortcutAction, keyCode: UInt16) -> Bool {
+        allCases.contains { $0 != action && $0.keyCode == keyCode }
+    }
+}
+
+enum PreviewShortcutKeyOption: UInt16, CaseIterable, Identifiable {
+    case space = 49
+    case a = 0
+    case s = 1
+    case d = 2
+    case f = 3
+    case h = 4
+    case g = 5
+    case z = 6
+    case x = 7
+    case c = 8
+    case v = 9
+    case b = 11
+    case q = 12
+    case w = 13
+    case e = 14
+    case r = 15
+    case y = 16
+    case t = 17
+    case one = 18
+    case two = 19
+    case three = 20
+    case four = 21
+    case six = 22
+    case five = 23
+    case equal = 24
+    case nine = 25
+    case seven = 26
+    case minus = 27
+    case eight = 28
+    case zero = 29
+    case o = 31
+    case u = 32
+    case i = 34
+    case p = 35
+    case l = 37
+    case j = 38
+    case k = 40
+    case n = 45
+    case m = 46
+    case leftArrow = 123
+    case rightArrow = 124
+    case downArrow = 125
+    case upArrow = 126
+
+    var id: UInt16 { rawValue }
+
+    var title: String {
+        switch self {
+        case .space: return "Space"
+        case .leftArrow: return "←"
+        case .rightArrow: return "→"
+        case .downArrow: return "↓"
+        case .upArrow: return "↑"
+        case .one: return "1"
+        case .two: return "2"
+        case .three: return "3"
+        case .four: return "4"
+        case .five: return "5"
+        case .six: return "6"
+        case .seven: return "7"
+        case .eight: return "8"
+        case .nine: return "9"
+        case .zero: return "0"
+        case .minus: return "-"
+        case .equal: return "="
+        default: return String(describing: self).uppercased()
+        }
+    }
+
+    static func title(for keyCode: UInt16) -> String {
+        Self(rawValue: keyCode)?.title ?? "Key \(keyCode)"
+    }
 }
 
 @MainActor
@@ -36,34 +224,18 @@ enum PreviewKeyboardCommandDispatcher {
 }
 
 enum PreviewKeyboardEventRouter {
-    private enum KeyCode {
-        static let space: UInt16 = 49
-        static let i: UInt16 = 34
-        static let o: UInt16 = 31
-        static let e: UInt16 = 14
-        static let u: UInt16 = 32
-        static let p: UInt16 = 35
-        static let j: UInt16 = 38
-        static let k: UInt16 = 40
-        static let l: UInt16 = 37
-        static let leftArrow: UInt16 = 123
-        static let rightArrow: UInt16 = 124
-
-        static let handled: Set<UInt16> = [
-            space, i, o, e, u, p, j, k, l, leftArrow, rightArrow
-        ]
-    }
-
     static func isHandledKeyCode(_ keyCode: UInt16) -> Bool {
-        KeyCode.handled.contains(keyCode)
+        PreviewShortcutAction.action(for: keyCode) != nil
     }
 
     static func isShuttleKeyCode(_ keyCode: UInt16) -> Bool {
-        keyCode == KeyCode.j || keyCode == KeyCode.l
+        keyCode == PreviewShortcutAction.shuttleBackward.keyCode
+            || keyCode == PreviewShortcutAction.shuttleForward.keyCode
     }
 
     static func isShuttling(_ pressedKeyCodes: Set<UInt16>) -> Bool {
-        pressedKeyCodes.contains(KeyCode.j) || pressedKeyCodes.contains(KeyCode.l)
+        pressedKeyCodes.contains(PreviewShortcutAction.shuttleBackward.keyCode)
+            || pressedKeyCodes.contains(PreviewShortcutAction.shuttleForward.keyCode)
     }
 
     static func isPlainShortcutEvent(_ event: NSEvent) -> Bool {
@@ -71,32 +243,7 @@ enum PreviewKeyboardEventRouter {
     }
 
     static func command(for keyCode: UInt16, isShuttling: Bool) -> PreviewKeyboardCommand? {
-        switch keyCode {
-        case KeyCode.space:
-            return .togglePlayback
-        case KeyCode.k:
-            return isShuttling ? .increaseShuttleSpeed : .togglePlayback
-        case KeyCode.i:
-            return .setAudioIn
-        case KeyCode.o:
-            return .setAudioOut
-        case KeyCode.u:
-            return .clearAudioSelection
-        case KeyCode.e:
-            return .captureCurrentFrame
-        case KeyCode.p:
-            return .exportAudioSelection
-        case KeyCode.l:
-            return .shuttleForward
-        case KeyCode.j:
-            return .shuttleBackward
-        case KeyCode.rightArrow:
-            return .stepForward
-        case KeyCode.leftArrow:
-            return .stepBackward
-        default:
-            return nil
-        }
+        PreviewShortcutAction.action(for: keyCode)?.command(isShuttling: isShuttling)
     }
 
     static func post(_ command: PreviewKeyboardCommand) {
@@ -201,8 +348,7 @@ struct WindowConfigurator: NSViewRepresentable {
             guard let window else { return }
             if configuredWindow !== window {
                 configuredWindow = window
-                window.styleMask.remove(.fullSizeContentView)
-                window.styleMask.insert([.titled, .resizable, .closable, .miniaturizable])
+                window.styleMask.insert([.titled, .resizable, .closable, .miniaturizable, .fullSizeContentView])
                 window.titleVisibility = .hidden
                 window.titlebarAppearsTransparent = true
                 window.backgroundColor = .clear

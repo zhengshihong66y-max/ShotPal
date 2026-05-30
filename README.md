@@ -298,7 +298,8 @@ static let railWidth: CGFloat = 56
 static let railIconInset: CGFloat = 8
 static let railButtonHeight: CGFloat = 34
 static let railIconBoxSize: CGFloat = 24
-static let railButtonVisualOffsetX: CGFloat = 6
+static let railButtonVisualOffsetX: CGFloat = 3.5
+static let railSelectionGuideX: CGFloat = railIconInset + railButtonVisualOffsetX
 static let libraryToolbarVisualGap: CGFloat = 14
 static let libraryToolbarHeight: CGFloat = 22
 static let trafficLightSize: CGFloat = 12
@@ -317,9 +318,10 @@ static let centeredWaveformViewportSpan: Double = 0.22
 
 - `libraryToolbarTop = 14`。
 - `railTopChromeHeight = 36`，来自 `14 + 22`。
-- `trafficLightGuideX = 14`，来自 `8 + 6`。
+- `trafficLightGuideX = 14`，标准窗口按钮左距，不随 rail 图标光学校正值变化。
 - `trafficLightGuideY = 19`，来自 `14 + (22 - 12) / 2`。
 - `trafficLightClusterWidth = 48`，来自 `12 * 3 + 6 * 2`。
+- `railSelectionGuideX = 11.5`，让导航选中块左缘和红黄绿按钮的可见左缘视觉对齐。
 - `timelineLaneVisualGap = 7`，来自 `(100 - 24 * 3) / 4`。
 - `timelineLaneContentHeight = 86`，来自 `100 - 7 * 2`。
 
@@ -340,6 +342,7 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 - 紧凑布局阈值：窗口宽度 `< 900pt`。
 - 主页预览区右侧导出栏显示阈值：工作区宽度 `>= 720pt`。
 - 主页导出栏宽度：`max(240, min(320, width * 0.20))`。
+- 主页窄屏导出浮层宽度：`min(available, max(260, width / 3))`。
 - 主页播放器最小宽度：`360pt`。
 - 主页播放器最小高度：`220pt`。
 - 主页 header 高度：`38pt`。
