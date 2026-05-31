@@ -19,6 +19,7 @@ Output (NDJSON, one JSON object per line):
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -122,25 +123,57 @@ def extract_segment(video_path: str, start: float, duration: float, out_path: st
 
 def itunes_enrich(title: str, artist: str) -> dict:
     """
-    Query iTunes Search API for Apple Music URL and high-res artwork.
+    Query iTunes Search API for Apple Music URL, high-res artwork, and genre.
     Returns {} on failure.
     """
     try:
         resp = requests.get(
             "https://itunes.apple.com/search",
-            params={"term": f"{artist} {title}", "entity": "song", "limit": 5},
+            params={"term": f"{artist} {title}", "media": "music", "entity": "song", "limit": 5},
             timeout=ITUNES_TIMEOUT,
         )
         for r in resp.json().get("results", []):
             if r.get("kind") == "song":
-                artwork = r.get("artworkUrl100", "").replace("100x100", "600x600")
+                artwork = normalize_itunes_artwork_url(r.get("artworkUrl100", ""))
                 return {
                     "apple_music_url": r.get("trackViewUrl", ""),
                     "artwork_url": artwork,
+                    "artist": r.get("artistName", ""),
+                    "genre": r.get("primaryGenreName", ""),
                 }
     except Exception:
         pass
     return {}
+
+
+def normalize_itunes_artwork_url(url: str) -> str:
+    """Promote iTunes artwork URLs to a stable square size."""
+    artwork = str(url or "").strip()
+    if not artwork:
+        return ""
+    artwork = artwork.replace("100x100", "600x600")
+    return re.sub(r"\d+x\d+bb", "600x600bb", artwork)
+
+
+def clean_music_tags(*values: str) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        tag = " ".join(str(value or "").replace("/", " / ").split()).strip()
+        if not tag or tag.casefold() in seen:
+            continue
+        seen.add(tag.casefold())
+        tags.append(tag)
+    return sorted(tags)
+
+
+def shazam_genre(track: dict) -> str:
+    genres = track.get("genres", {})
+    if isinstance(genres, dict):
+        primary = genres.get("primary")
+        if primary:
+            return str(primary)
+    return ""
 
 
 def parse_apple_music_url(track: dict) -> str:
@@ -176,12 +209,15 @@ async def recognize(shazam: Shazam, seg_path: str, timeout: float = RECOGNIZE_TI
     images = track.get("images", {})
     artwork = images.get("coverarthq") or images.get("coverart", "")
     apple_music_url = parse_apple_music_url(track)
+    genre = shazam_genre(track)
 
     return {
         "title": title,
         "artist": artist,
         "artwork_url": artwork,
         "apple_music_url": apple_music_url,
+        "genre": genre,
+        "tags": clean_music_tags(artist, genre),
     }
 
 
@@ -251,15 +287,20 @@ async def main() -> None:
                 if song:
                     key = f"{song['title'].casefold()}|{song['artist'].casefold()}"
                     if key not in found:
-                        # Enrich with iTunes data if Shazam didn't give us everything
-                        if not song["apple_music_url"] or not song["artwork_url"]:
-                            extra = itunes_enrich(song["title"], song["artist"])
-                            if not song["apple_music_url"]:
-                                song["apple_music_url"] = extra.get("apple_music_url", "")
-                            if not song["artwork_url"]:
-                                song["artwork_url"] = extra.get("artwork_url", "")
+                        # Prefer iTunes artwork: it is more consistently decodable
+                        # by the macOS UI than some Shazam CDN variants.
+                        extra = itunes_enrich(song["title"], song["artist"])
+                        if not song.get("artist"):
+                            song["artist"] = extra.get("artist", "")
+                        if not song["apple_music_url"]:
+                            song["apple_music_url"] = extra.get("apple_music_url", "")
+                        if extra.get("artwork_url"):
+                            song["artwork_url"] = extra.get("artwork_url", "")
+                        if not song.get("genre"):
+                            song["genre"] = extra.get("genre", "")
 
                         song["detected_at"] = start
+                        song["tags"] = clean_music_tags(song.get("artist", ""), song.get("genre", ""))
                         found[key] = song
                         emit({"type": "found", "song": song})
 

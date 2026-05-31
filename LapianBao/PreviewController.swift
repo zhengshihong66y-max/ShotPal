@@ -3,6 +3,37 @@ import Combine
 import CryptoKit
 import Foundation
 
+@MainActor
+struct PlaybackClockValue: Equatable {
+    var elapsed = 0.0
+    var progress = 0.0
+}
+
+@MainActor
+final class PlaybackClock: ObservableObject {
+    @Published var progress = 0.0
+    @Published private(set) var value = PlaybackClockValue()
+
+    var elapsed: Double { value.elapsed }
+
+    func update(elapsed: Double, progress: Double) {
+        let next = PlaybackClockValue(elapsed: elapsed, progress: progress)
+        guard next != value else { return }
+        if self.progress != next.progress {
+            self.progress = next.progress
+        }
+        value = next
+    }
+
+    func setElapsed(_ elapsed: Double) {
+        update(elapsed: elapsed, progress: progress)
+    }
+
+    func setProgress(_ progress: Double) {
+        update(elapsed: value.elapsed, progress: progress)
+    }
+}
+
 // MARK: - PreviewController
 /// 持有 AVPlayer 和播放状态。作为 @StateObject 存在，
 /// 播放中定期同步 AVPlayer 状态。视频画面由 AVPlayerLayer 自己刷新，
@@ -12,15 +43,25 @@ final class PreviewController: ObservableObject {
     private static let sharedPlayer = AVPlayer()
     private static let playbackStateInterval = 1.0 / 12.0
 
-    // ── Published（播放中高频变化）────────────────
+    // 播放时间单独发布给时间线小组件，避免整块 PreviewPanelView 高频重算。
+    let clock = PlaybackClock()
+
+    // ── Published（低频/状态变化）────────────────
     @Published var isPlaying     = false
-    @Published var elapsed       = 0.0
     @Published var duration      = 0.0
-    var progress      = 0.0
     @Published var frameRate     = 30.0
     @Published var playbackRate  = 0.0
     @Published var playbackMessage: String?
 
+    var elapsed: Double {
+        get { clock.elapsed }
+        set { clock.setElapsed(newValue) }
+    }
+
+    var progress: Double {
+        get { clock.progress }
+        set { clock.setProgress(newValue) }
+    }
 
     let player: AVPlayer
 
@@ -232,8 +273,14 @@ final class PreviewController: ObservableObject {
         let shouldSnap = snapToFrame ?? !isPlaying
         let raw = min(d, max(0, seconds))
         let t = shouldSnap ? nearestFrameTime(raw, duration: d) : raw
-        elapsed = t
+        let playerTime = player.currentTime().seconds
+        if abs(t - elapsed) <= 0.0005,
+           playerTime.isFinite,
+           abs(t - playerTime) <= max(0.01, frameDuration / 2) {
+            return
+        }
         progress = min(1, max(0, t / d))
+        elapsed = t
         player.seek(
             to: CMTime(seconds: t, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero
@@ -271,8 +318,15 @@ final class PreviewController: ObservableObject {
         let t = player.currentTime().seconds
         if t.isFinite, duration > 0 {
             let next = min(max(0, t), duration)
-            assign(&elapsed, next, tol: 0.001)
-            assign(&progress, min(1, max(0, next / duration)), tol: 0.0001)
+            let nextProgress = min(1, max(0, next / duration))
+            let shouldUpdateProgress = abs(progress - nextProgress) > 0.0001
+            let shouldUpdateElapsed = abs(elapsed - next) > 0.001
+            if shouldUpdateProgress || shouldUpdateElapsed {
+                clock.update(
+                    elapsed: shouldUpdateElapsed ? next : elapsed,
+                    progress: shouldUpdateProgress ? nextProgress : progress
+                )
+            }
         }
 
         let nextRate = Double(player.rate)
@@ -285,11 +339,11 @@ final class PreviewController: ObservableObject {
         isPlaying = false
         playbackRate = 0
         if let d = effectiveDuration, d > 0 {
-            elapsed = d
             progress = 1
+            elapsed = d
         } else {
-            elapsed = 0
             progress = 0
+            elapsed = 0
         }
     }
 
@@ -297,8 +351,8 @@ final class PreviewController: ObservableObject {
         let d = effectiveDuration; guard let d, d > 0 else { return }
         let snapped = nearestFrameTime(elapsed, duration: d)
         guard abs(snapped - elapsed) > 0.0001 else { return }
-        elapsed = snapped
         progress = min(1, max(0, snapped / d))
+        elapsed = snapped
         player.seek(
             to: CMTime(seconds: snapped, preferredTimescale: frameTimeScale),
             toleranceBefore: .zero, toleranceAfter: .zero
@@ -355,8 +409,8 @@ final class PreviewController: ObservableObject {
 
     private func beginReversePlaybackFromEnd(rate: Double, duration: Double) {
         let target = nearestFrameTime(duration, duration: duration)
-        elapsed = target
         progress = 1
+        elapsed = target
         player.seek(
             to: CMTime(seconds: target, preferredTimescale: frameTimeScale),
             toleranceBefore: .zero,
@@ -530,6 +584,9 @@ final class PreviewController: ObservableObject {
             let outputURL = reverseProxyURL(for: sourceURL)
             let folderURL = outputURL.deletingLastPathComponent()
             let tmpURL = folderURL.appendingPathComponent(outputURL.deletingPathExtension().lastPathComponent + ".tmp.mp4")
+            let process = Process()
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
 
             do {
                 try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
@@ -537,7 +594,6 @@ final class PreviewController: ObservableObject {
                     try FileManager.default.removeItem(at: tmpURL)
                 }
 
-                let process = Process()
                 process.executableURL = ffmpegURL
                 process.arguments = [
                     "-y",
@@ -559,11 +615,20 @@ final class PreviewController: ObservableObject {
                 var env = ProcessInfo.processInfo.environment
                 env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
                 process.environment = env
-                process.standardOutput = Pipe()
-                process.standardError = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+
+                outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                    _ = handle.availableData
+                }
+                errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                    _ = handle.availableData
+                }
 
                 try process.run()
                 process.waitUntilExit()
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
                 guard process.terminationStatus == 0,
                       FileManager.default.fileExists(atPath: tmpURL.path) else {
                     try? FileManager.default.removeItem(at: tmpURL)
@@ -576,6 +641,8 @@ final class PreviewController: ObservableObject {
                 try FileManager.default.moveItem(at: tmpURL, to: outputURL)
                 return outputURL
             } catch {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
                 try? FileManager.default.removeItem(at: tmpURL)
                 return nil
             }

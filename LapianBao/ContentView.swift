@@ -133,6 +133,44 @@ enum Design {
     static let annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 }
 
+private func floatingExportButtonIcon(
+    systemImage: String = "square.and.arrow.up",
+    size: CGFloat = 24,
+    iconSize: CGFloat? = nil
+) -> some View {
+    Image(systemName: systemImage)
+        .font(.system(size: iconSize ?? min(13, size * 0.48), weight: .semibold))
+        .foregroundStyle(Design.captureFrameAccent)
+        .frame(width: size, height: size)
+        .background(.white.opacity(0.18))
+        .clipShape(Circle())
+        .overlay {
+            Circle()
+                .stroke(.white.opacity(0.28), lineWidth: 0.8)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+        .contentShape(Circle())
+}
+
+private func cardOverlayExportButtonIcon(
+    systemImage: String = "square.and.arrow.up"
+) -> some View {
+    let shape = RoundedRectangle(cornerRadius: Design.innerRadius, style: .continuous)
+
+    return Image(systemName: systemImage)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.88))
+        .frame(width: 24, height: 24)
+        .background(.black.opacity(0.48))
+        .clipShape(shape)
+        .overlay {
+            shape
+                .stroke(.white.opacity(0.12), lineWidth: 0.7)
+        }
+        .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
+        .contentShape(shape)
+}
+
 private enum PreviewTab: String, CaseIterable {
     case frames = "提取画面"
     case audio  = "提取声音"
@@ -152,12 +190,14 @@ private enum ExportPanelItem: Identifiable {
     case frame(SampledFrame)
     case audio(AudioClipItem)
     case transcript(TranscriptExportItem)
+    case transcriptProgress(TranscriptExportJob)
 
     var id: String {
         switch self {
         case .frame(let frame): return "frame-\(frame.id.uuidString)"
         case .audio(let clip): return "audio-\(clip.id.uuidString)"
         case .transcript(let export): return "transcript-\(export.id.uuidString)"
+        case .transcriptProgress(let job): return "transcript-progress-\(job.videoPath)"
         }
     }
 
@@ -166,6 +206,7 @@ private enum ExportPanelItem: Identifiable {
         case .frame(let frame): return frame.createdAt
         case .audio(let clip): return clip.createdAt
         case .transcript(let export): return export.createdAt
+        case .transcriptProgress(let job): return job.createdAt
         }
     }
 }
@@ -187,20 +228,37 @@ private enum AppWorkspace: String, CaseIterable, Identifiable {
     case home
     case frames
     case audio
+    case music
     case content
     case settings
 
     static var allCases: [AppWorkspace] {
-        [.home, .frames, .audio, .settings]
+        railCases
     }
 
+    static let railCases: [AppWorkspace] = [.home, .frames, .audio, .music, .settings]
+
     var id: String { rawValue }
+
+    var canRestoreFromUserDefaults: Bool {
+        Self.railCases.contains(self)
+    }
+
+    var canRestoreDuringLaunch: Bool {
+        switch self {
+        case .home:
+            return true
+        case .frames, .audio, .music, .content, .settings:
+            return false
+        }
+    }
 
     var title: String {
         switch self {
         case .home: return "主页"
         case .frames: return "画面"
-        case .audio: return "声音"
+        case .audio: return "音效"
+        case .music: return "AM 库"
         case .content: return "内容"
         case .settings: return "设置"
         }
@@ -211,6 +269,7 @@ private enum AppWorkspace: String, CaseIterable, Identifiable {
         case .home: return "play.rectangle.fill"
         case .frames: return "photo.on.rectangle.angled"
         case .audio: return "waveform"
+        case .music: return "music.note.list"
         case .content: return "text.quote"
         case .settings: return "gearshape"
         }
@@ -218,7 +277,7 @@ private enum AppWorkspace: String, CaseIterable, Identifiable {
 
     var railIconOffset: CGFloat {
         switch self {
-        case .home, .audio, .content, .settings:
+        case .home, .audio, .music, .content, .settings:
             return 0
         case .frames:
             return 0.5
@@ -227,11 +286,17 @@ private enum AppWorkspace: String, CaseIterable, Identifiable {
 }
 
 private enum FramesBoardMode: String, CaseIterable, Identifiable {
-    case storyboard = "分镜模式"
-    case byVideo = "按视频精选"
-    case byTag = "按标签精选"
+    case storyboard = "分镜"
+    case collection = "收藏"
 
     var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .storyboard: return "rectangle.stack"
+        case .collection: return "photo.on.rectangle"
+        }
+    }
 }
 
 private struct VideoDateSection: Identifiable {
@@ -294,7 +359,9 @@ private enum VideoTagPalette {
 
     static func color(for tag: String) -> Color {
         let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return colors[0] }
+        guard !trimmed.isEmpty else {
+            return colors.first ?? Color(red: 0.62, green: 0.66, blue: 0.72)
+        }
 
         var hash: UInt64 = 14_695_981_039_346_656_037
         for scalar in trimmed.lowercased().unicodeScalars {
@@ -1453,34 +1520,51 @@ private struct ScaledCardTagCloud: View {
 }
 
 private struct HiddenScrollIndicators: NSViewRepresentable {
+    final class Coordinator {
+        weak var configuredScrollView: NSScrollView?
+        var isLookupScheduled = false
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        Self.scheduleHideScrollIndicators(from: view)
+        Self.configureSoon(from: view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        Self.scheduleHideScrollIndicators(from: nsView)
+        Self.configureSoon(from: nsView, coordinator: context.coordinator)
     }
 
-    private static func scheduleHideScrollIndicators(from view: NSView) {
-        for delay in [0.0, 0.05, 0.2, 0.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                hideScrollIndicators(from: view)
-            }
+    private static func configureSoon(from view: NSView, coordinator: Coordinator) {
+        if configureIfAvailable(from: view, coordinator: coordinator) {
+            return
+        }
+
+        guard !coordinator.isLookupScheduled else { return }
+        coordinator.isLookupScheduled = true
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let view, let coordinator else { return }
+            coordinator.isLookupScheduled = false
+            _ = configureIfAvailable(from: view, coordinator: coordinator)
         }
     }
 
-    private static func hideScrollIndicators(from view: NSView) {
-        if let scrollView = nearestScrollView(from: view) {
+    private static func configureIfAvailable(from view: NSView, coordinator: Coordinator) -> Bool {
+        if let scrollView = coordinator.configuredScrollView {
             configure(scrollView)
+            return true
         }
 
-        var root: NSView? = view
-        while root?.superview != nil {
-            root = root?.superview
+        guard let scrollView = nearestScrollView(from: view) else {
+            return false
         }
-        root.map { configureDescendantScrollViews(in: $0) }
+        coordinator.configuredScrollView = scrollView
+        configure(scrollView)
+        return true
     }
 
     private static func nearestScrollView(from view: NSView) -> NSScrollView? {
@@ -1494,21 +1578,28 @@ private struct HiddenScrollIndicators: NSViewRepresentable {
         return nil
     }
 
-    private static func configureDescendantScrollViews(in view: NSView) {
-        if let scrollView = view as? NSScrollView {
-            configure(scrollView)
-        }
-        view.subviews.forEach { configureDescendantScrollViews(in: $0) }
-    }
-
     private static func configure(_ scrollView: NSScrollView) {
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.scrollerStyle = .overlay
-        scrollView.drawsBackground = false
-        scrollView.verticalScroller?.isHidden = true
-        scrollView.horizontalScroller?.isHidden = true
+        if scrollView.hasVerticalScroller {
+            scrollView.hasVerticalScroller = false
+        }
+        if scrollView.hasHorizontalScroller {
+            scrollView.hasHorizontalScroller = false
+        }
+        if !scrollView.autohidesScrollers {
+            scrollView.autohidesScrollers = true
+        }
+        if scrollView.scrollerStyle != .overlay {
+            scrollView.scrollerStyle = .overlay
+        }
+        if scrollView.drawsBackground {
+            scrollView.drawsBackground = false
+        }
+        if scrollView.verticalScroller?.isHidden == false {
+            scrollView.verticalScroller?.isHidden = true
+        }
+        if scrollView.horizontalScroller?.isHidden == false {
+            scrollView.horizontalScroller?.isHidden = true
+        }
     }
 }
 
@@ -2562,6 +2653,12 @@ struct ContentView: View {
     @State private var isSettingsSheetPresented = false
     @State private var importURLText = ""
     @State private var importEndpointText = ""
+    @State private var isInstagramSavedSyncing = false
+    @State private var instagramSavedSyncMessage: String?
+    @State private var instagramSavedSyncIsError = false
+    @State private var isXiaohongshuSavedSyncing = false
+    @State private var xiaohongshuSavedSyncMessage: String?
+    @State private var xiaohongshuSavedSyncIsError = false
     @State private var observedPasteboardChangeCount = NSPasteboard.general.changeCount
     @State private var isImportDropTargeted = false
     @State private var isTagFilterMenuPresented = false
@@ -2570,13 +2667,21 @@ struct ContentView: View {
     @State private var mediaPanelDragStartWidth: Double?
     @State private var mediaPanelDragStartX: CGFloat?
     @State private var isDividerHovered = false
+    @State private var canRestorePersistedWorkspace = false
 
     private var appWorkspace: AppWorkspace {
         get {
             let stored = AppWorkspace(rawValue: appWorkspaceRawValue) ?? .home
-            return stored == .settings || stored == .content ? .home : stored
+            return stored.canRestoreFromUserDefaults ? stored : .home
         }
-        nonmutating set { appWorkspaceRawValue = newValue.rawValue }
+        nonmutating set {
+            canRestorePersistedWorkspace = true
+            appWorkspaceRawValue = newValue.rawValue
+        }
+    }
+
+    private var presentedAppWorkspace: AppWorkspace {
+        canRestorePersistedWorkspace ? appWorkspace : .home
     }
 
     var body: some View {
@@ -2625,6 +2730,7 @@ struct ContentView: View {
         } message: {
             Text("重命名后，所有含此标签的视频都会同步更新")
         }
+        .onAppear(perform: restorePersistedWorkspaceAfterFirstFrame)
     }
 
     private static let clipboardProbeTimer = Timer.publish(every: 0.8, on: .main, in: .common).autoconnect()
@@ -2640,12 +2746,22 @@ struct ContentView: View {
         Design.contentBg.ignoresSafeArea()
     }
 
+    private func restorePersistedWorkspaceAfterFirstFrame() {
+        guard !canRestorePersistedWorkspace else { return }
+        let storedRawValue = UserDefaults.standard.string(forKey: "appWorkspace") ?? AppWorkspace.home.rawValue
+        let stored = AppWorkspace(rawValue: storedRawValue) ?? .home
+        guard stored.canRestoreDuringLaunch else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            canRestorePersistedWorkspace = true
+        }
+    }
+
     @ViewBuilder
     private func mainLayout(isCompact: Bool, containerWidth: CGFloat) -> some View {
         let activeMediaPanelWidth = resolvedMediaPanelWidth(containerWidth: containerWidth)
 
         HStack(spacing: Design.panelSpacing) {
-            if appWorkspace == .audio || appWorkspace == .frames {
+            if presentedAppWorkspace == .audio || presentedAppWorkspace == .frames || presentedAppWorkspace == .music {
                 navigationRail
                     .frame(width: Design.railWidth, alignment: .leading)
                     .background(Design.sidebarBg)
@@ -2683,7 +2799,7 @@ struct ContentView: View {
     }
 
     private func resolvedMediaPanelWidth(containerWidth: CGFloat) -> CGFloat {
-        if appWorkspace == .frames {
+        if presentedAppWorkspace == .frames {
             let defaultWidth = containerWidth * 0.5
             return clampedMediaPanelWidth(frameMediaPanelWidth ?? defaultWidth, containerWidth: containerWidth)
         }
@@ -2696,7 +2812,7 @@ struct ContentView: View {
 
     private func clampedMediaPanelWidth(_ width: CGFloat, containerWidth: CGFloat) -> CGFloat {
         let minimumSidebarWidth: CGFloat = 320
-        let maximumSidebarWidth: CGFloat = appWorkspace == .frames
+        let maximumSidebarWidth: CGFloat = presentedAppWorkspace == .frames
             ? max(minimumSidebarWidth, containerWidth - 260)
             : 660
         return min(maximumSidebarWidth, max(minimumSidebarWidth, width))
@@ -2708,7 +2824,7 @@ struct ContentView: View {
                 .frame(width: Design.railWidth, alignment: .leading)
                 .zIndex(1)
 
-            if appWorkspace == .frames {
+            if presentedAppWorkspace == .frames {
                 frameVideoFilterColumn(isCompact: isCompact)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -2756,7 +2872,7 @@ struct ContentView: View {
     }
 
     private func navigationRailButton(_ workspace: AppWorkspace) -> some View {
-        let isSelected = workspace == .settings ? isSettingsSheetPresented : appWorkspace == workspace
+        let isSelected = workspace == .settings ? isSettingsSheetPresented : presentedAppWorkspace == workspace
         let selectionWidth = Design.railWidth - Design.railIconInset * 2
 
         return Button {
@@ -2816,14 +2932,14 @@ struct ContentView: View {
                         (mediaPanelDragStartWidth ?? resolvedMediaPanelWidth(containerWidth: containerWidth)) + delta,
                         containerWidth: containerWidth
                     )
-                    if appWorkspace == .frames {
+                    if presentedAppWorkspace == .frames {
                         frameMediaPanelWidth = nextWidth
                     } else {
                         mediaPanelWidth = nextWidth
                     }
                 }
                 .onEnded { _ in
-                    if appWorkspace == .frames {
+                    if presentedAppWorkspace == .frames {
                         UserDefaults.standard.set(frameMediaPanelWidth, forKey: "frameMediaPanelWidth")
                     } else {
                         UserDefaults.standard.set(mediaPanelWidth, forKey: "mediaPanelWidth")
@@ -2837,7 +2953,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var workspaceView: some View {
-        switch appWorkspace {
+        switch presentedAppWorkspace {
         case .home:
             PreviewPanelView(openWorkspace: { appWorkspace = $0 })
         case .frames:
@@ -2848,6 +2964,8 @@ struct ContentView: View {
             )
         case .audio:
             AudioWorkspaceView(goHome: jumpToVideo)
+        case .music:
+            MusicWorkspaceView(goHome: jumpToVideo)
         case .content:
             ContentWorkspaceView(goHome: jumpToVideo)
         case .settings:
@@ -2914,7 +3032,7 @@ struct ContentView: View {
                 sidebarItem(
                     icon: workspace.icon,
                     label: workspace.title,
-                    isSelected: appWorkspace == workspace
+                    isSelected: presentedAppWorkspace == workspace
                 ) {
                     appWorkspace = workspace
                 }
@@ -3152,9 +3270,9 @@ struct ContentView: View {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
                             .stroke(
                                 frameSelectedFrameID == frame.id
-                                    ? Design.currentFrameAccent.opacity(0.85)
-                                    : Design.captureFrameAccent.opacity(0.36),
-                                lineWidth: frameSelectedFrameID == frame.id ? 1.2 : 0.7
+                                    ? .white.opacity(0.42)
+                                    : .white.opacity(0.08),
+                                lineWidth: frameSelectedFrameID == frame.id ? 1.1 : 0.7
                             )
                     }
                 }
@@ -3622,8 +3740,8 @@ struct ContentView: View {
     }
 
     private func importOverlay(containerSize: CGSize) -> some View {
-        let panelWidth = max(420, min(containerSize.width - 80, 520))
-        let panelHeight = max(340, min(containerSize.height - 80, 420))
+        let panelWidth = max(560, min(containerSize.width - 48, 980))
+        let panelHeight = max(430, min(containerSize.height - 56, 720))
 
         return ZStack {
             Color.black.opacity(0.44)
@@ -3649,8 +3767,8 @@ struct ContentView: View {
     }
 
     private func settingsOverlay(containerSize: CGSize) -> some View {
-        let panelWidth = max(420, min(containerSize.width - 80, 520))
-        let panelHeight = max(360, min(containerSize.height - 80, 460))
+        let panelWidth = max(560, min(containerSize.width - 48, 980))
+        let panelHeight = max(430, min(containerSize.height - 56, 720))
 
         return ZStack {
             Color.black.opacity(0.44)
@@ -3777,6 +3895,54 @@ struct ContentView: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
+                    Button {
+                        syncLatestInstagramSaved()
+                    } label: {
+                        Label(
+                            isInstagramSavedSyncing ? "同步中" : "同步 IG 收藏前 10 条",
+                            systemImage: "bookmark.fill"
+                        )
+                        .lineLimit(1)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isInstagramSavedSyncing || libraryStore.libraryURL == nil)
+                    .help("从已登录的 Google Chrome 读取 Instagram 收藏页链接")
+
+                    Button {
+                        syncLatestXiaohongshuSavedVideos()
+                    } label: {
+                        Label(
+                            isXiaohongshuSavedSyncing ? "同步中" : "同步小红书视频前 10 条",
+                            systemImage: "play.rectangle.fill"
+                        )
+                        .lineLimit(1)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isXiaohongshuSavedSyncing || libraryStore.libraryURL == nil)
+                    .help("从已登录的 Google Chrome 读取小红书收藏页里的视频笔记链接")
+
+                    Spacer(minLength: 0)
+                }
+
+                if let instagramSavedSyncMessage {
+                    Text(instagramSavedSyncMessage)
+                        .font(.caption)
+                        .foregroundStyle(instagramSavedSyncIsError ? Color.red.opacity(0.86) : .secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let xiaohongshuSavedSyncMessage {
+                    Text(xiaohongshuSavedSyncMessage)
+                        .font(.caption)
+                        .foregroundStyle(xiaohongshuSavedSyncIsError ? Color.red.opacity(0.86) : .secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             HStack(alignment: .center, spacing: 10) {
                 if !importURLTokens.isEmpty {
                     HStack(spacing: 6) {
@@ -3850,6 +4016,8 @@ struct ContentView: View {
             } else {
                 if let progress = activeImportOverallProgress {
                     importLinearProgress(progress, tint: Color(red: 0.36, green: 0.70, blue: 1.00))
+                } else {
+                    importIndeterminateProgress(tint: Color(red: 0.36, green: 0.70, blue: 1.00))
                 }
 
                 ScrollView {
@@ -3935,6 +4103,68 @@ struct ContentView: View {
         importURLText = ""
     }
 
+    private func syncLatestInstagramSaved() {
+        guard !isInstagramSavedSyncing else { return }
+
+        isInstagramSavedSyncing = true
+        instagramSavedSyncIsError = false
+        instagramSavedSyncMessage = "正在读取 Chrome 收藏页..."
+
+        Task { @MainActor in
+            defer { isInstagramSavedSyncing = false }
+
+            do {
+                let result = try await libraryStore.importLatestInstagramSavedFromChrome(limit: 10)
+                instagramSavedSyncIsError = false
+                instagramSavedSyncMessage = instagramSavedSyncStatusText(result)
+            } catch {
+                instagramSavedSyncIsError = true
+                instagramSavedSyncMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func syncLatestXiaohongshuSavedVideos() {
+        guard !isXiaohongshuSavedSyncing else { return }
+
+        isXiaohongshuSavedSyncing = true
+        xiaohongshuSavedSyncIsError = false
+        xiaohongshuSavedSyncMessage = "正在读取 Chrome 小红书收藏页..."
+
+        Task { @MainActor in
+            defer { isXiaohongshuSavedSyncing = false }
+
+            do {
+                let result = try await libraryStore.importLatestXiaohongshuSavedVideosFromChrome(limit: 10)
+                xiaohongshuSavedSyncIsError = false
+                xiaohongshuSavedSyncMessage = xiaohongshuSavedSyncStatusText(result)
+            } catch {
+                xiaohongshuSavedSyncIsError = true
+                xiaohongshuSavedSyncMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func instagramSavedSyncStatusText(_ result: InstagramSavedImportResult) -> String {
+        if result.queuedCount > 0 {
+            return "发现 \(result.foundCount) 条，新加入 \(result.queuedCount) 条"
+        }
+        if result.skippedCount > 0 {
+            return "发现 \(result.foundCount) 条，均已在库中"
+        }
+        return "没有新的收藏链接"
+    }
+
+    private func xiaohongshuSavedSyncStatusText(_ result: InstagramSavedImportResult) -> String {
+        if result.queuedCount > 0 {
+            return "发现 \(result.foundCount) 条视频，新加入 \(result.queuedCount) 条"
+        }
+        if result.skippedCount > 0 {
+            return "发现 \(result.foundCount) 条视频，均已在库中"
+        }
+        return "没有新的视频收藏链接"
+    }
+
     private var detectedImportPlatform: String {
         guard
             let firstLink = importURLTokens.first,
@@ -4007,15 +4237,16 @@ struct ContentView: View {
         }
 
         let progress = activeImportOverallProgress
-        guard let progress else { return "\(activeImportJobs.count) 个任务进行中" }
-        return "\(activeImportJobs.count) 个任务进行中 · 总体 \(progressPercentText(progress))"
+        guard let progress else { return "\(activeImportJobs.count) 个任务进行中 · 等待准确进度" }
+        return "\(activeImportJobs.count) 个任务进行中 · 可追踪 \(progressPercentText(progress))"
     }
 
     private var activeImportOverallProgress: Double? {
         guard !activeImportJobs.isEmpty else { return nil }
-        let progressValues = activeImportJobs.map { job in
-            normalizedProgressFraction(job.downloadProgress ?? 0)
+        let progressValues = activeImportJobs.compactMap { job in
+            job.downloadProgress.map(normalizedProgressFraction)
         }
+        guard progressValues.count == activeImportJobs.count else { return nil }
         return progressValues.reduce(0, +) / Double(progressValues.count)
     }
 
@@ -4091,7 +4322,7 @@ struct ContentView: View {
             return "等待下载"
         case .importing:
             guard let progressText = importStatusProgressText(for: job) else {
-                return "等待下载器返回进度"
+                return "正在处理下载任务 · 等待准确进度"
             }
             return "正在下载 \(job.platform) · \(progressText)"
         case .transcoding:
@@ -4336,19 +4567,19 @@ struct ContentView: View {
             if let progress = job.downloadProgress {
                 importLinearProgress(progress, tint: Color(red: 0.36, green: 0.70, blue: 1.00))
             } else {
-                EmptyView()
+                importIndeterminateProgress(tint: Color(red: 0.36, green: 0.70, blue: 1.00))
             }
         case .transcoding:
             if let progress = job.downloadProgress {
                 importLinearProgress(progress, tint: Design.captureFrameAccent)
             } else {
-                EmptyView()
+                importIndeterminateProgress(tint: Design.captureFrameAccent)
             }
         case .finalizing:
             if let progress = job.downloadProgress {
                 importLinearProgress(progress, tint: Color(red: 0.42, green: 0.78, blue: 0.48))
             } else {
-                EmptyView()
+                importIndeterminateProgress(tint: Color(red: 0.42, green: 0.78, blue: 0.48))
             }
         case .succeeded:
             EmptyView()
@@ -4369,6 +4600,13 @@ struct ContentView: View {
             .transaction { transaction in
                 transaction.animation = nil
             }
+    }
+
+    private func importIndeterminateProgress(tint: Color) -> some View {
+        ProgressView()
+            .progressViewStyle(.linear)
+            .controlSize(.small)
+            .tint(tint)
     }
 
     private var gridSizeControl: some View {
@@ -4434,6 +4672,9 @@ struct ContentView: View {
             dragItemProvider: { videoDragItemProvider(for: video) }
         )
         .equatable()
+        .onAppear {
+            libraryStore.loadMetadataIfNeeded(for: video)
+        }
     }
 
     private func thumbnailImage(for video: VideoItem) -> NSImage? {
@@ -4990,8 +5231,8 @@ private struct SceneGridItem: Identifiable {
 }
 
 /// Equatable 视图：只有视频、场景数据或选中状态变化时才重新渲染 body。
-/// Timer 每 250ms 触发 PreviewController.objectWillChange，
-/// PreviewPanelView 重渲后将相同的播放状态传给本视图，
+/// 播放时钟只驱动时间线小组件；PreviewPanelView 的低频重渲
+/// 将相同的播放状态传给本视图，
 /// .equatable() 比较相等 → body 完全跳过，场景网格不参与渲染循环。
 private struct ScenePanelView: View, Equatable {
     let video: VideoItem
@@ -5094,8 +5335,7 @@ private struct ScenePanelView: View, Equatable {
                     get: { Double(sceneGridSize) },
                     set: { sceneGridSize = Int($0.rounded()) }
                 ),
-                in: 0...2,
-                step: 1
+                in: 0...2
             )
             .frame(width: 64)
             .controlSize(.small)
@@ -5243,6 +5483,13 @@ private struct ScenePanelView: View, Equatable {
         Int((time * 50).rounded())
     }
 
+    private func normalizedSceneCutProgresses(for video: VideoItem) -> [Double] {
+        let path = video.url.path
+        guard let duration = libraryStore.durationByVideoPath[path], duration > 0 else { return [] }
+        return libraryStore.sceneCutsByVideoPath[path, default: []]
+            .map { min(1, max(0, $0.time / duration)) }
+    }
+
     private func collectAction(for item: SceneGridItem) -> (() -> Void)? {
         guard let cut = item.cut, item.sample?.isExported != true else { return nil }
         return {
@@ -5290,6 +5537,45 @@ private struct ScenePanelView: View, Equatable {
             ? String(format: "%d:%02d:%02d", h, m, sec)
             : String(format: "%d:%02d", m, sec)
     }
+}
+
+private struct PlaybackClockSnapshot {
+    let elapsed: Double
+    let progress: Double
+
+    var timecodeText: String {
+        previewPlaybackTimecode(elapsed)
+    }
+}
+
+private struct PlaybackClockDrivenView<Content: View>: View {
+    @ObservedObject var clock: PlaybackClock
+    private let content: (PlaybackClockSnapshot) -> Content
+
+    init(clock: PlaybackClock, @ViewBuilder content: @escaping (PlaybackClockSnapshot) -> Content) {
+        self.clock = clock
+        self.content = content
+    }
+
+    var body: some View {
+        let value = clock.value
+        content(PlaybackClockSnapshot(
+            elapsed: value.elapsed,
+            progress: value.progress
+        ))
+    }
+}
+
+private func previewPlaybackTimecode(_ seconds: Double) -> String {
+    let totalSeconds = max(0, Int(seconds.rounded()))
+    let hours = totalSeconds / 3600
+    let minutes = (totalSeconds % 3600) / 60
+    let secs = totalSeconds % 60
+
+    if hours > 0 {
+        return String(format: "%d:%02d:%02d", hours, minutes, secs)
+    }
+    return String(format: "%d:%02d", minutes, secs)
 }
 
 // MARK: - PreviewPanelView
@@ -5344,6 +5630,8 @@ private struct PreviewPanelView: View {
     @State private var keyboardShuttleTask: Task<Void, Never>?
     @State private var keyboardShuttleDirection = 0
     @State private var keyboardShuttleFrameStep = 2
+    @State private var keyboardShuttleLastCommandAt = Date.distantPast
+    @State private var lastTimelineAutoScrollAt = Date.distantPast
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -5418,15 +5706,8 @@ private struct PreviewPanelView: View {
                 hydrateSceneThumbnailsForFrameTimelineIfIdle()
             }
         }
-        .onChange(of: controller.elapsed) { _, elapsed in
-            keepTimelineProgressVisible(controller.progress)
-
-            guard let video = libraryStore.selectedVideo else { return }
-            let segs = libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []]
-            let segmentID = activeTranscriptSegmentID(at: elapsed, in: segs)
-            if segmentID != activeTranscriptSegmentID {
-                activeTranscriptSegmentID = segmentID
-            }
+        .onReceive(controller.clock.$value) { value in
+            handlePlaybackClockTick(value.elapsed)
         }
         .onChange(of: visibleTimelineDetailTab) { _, _ in
             startRecognitionForVisibleTimelineIfNeeded()
@@ -5639,14 +5920,22 @@ private struct PreviewPanelView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: Design.previewExportOverlayButtonIconSize, weight: .semibold))
-                .frame(
-                    width: Design.previewExportOverlayButtonSize,
-                    height: Design.previewExportOverlayButtonSize
+            if systemImage.hasPrefix("square.and.arrow") {
+                floatingExportButtonIcon(
+                    systemImage: "square.and.arrow.up",
+                    size: Design.previewExportOverlayButtonSize,
+                    iconSize: Design.previewExportOverlayButtonIconSize
                 )
-                .background(.black.opacity(0.44))
-                .clipShape(Circle())
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: Design.previewExportOverlayButtonIconSize, weight: .semibold))
+                    .frame(
+                        width: Design.previewExportOverlayButtonSize,
+                        height: Design.previewExportOverlayButtonSize
+                    )
+                    .background(.black.opacity(0.44))
+                    .clipShape(Circle())
+            }
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(0.88))
@@ -5731,6 +6020,10 @@ private struct PreviewPanelView: View {
                                     exportTranscriptRow(export, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
                                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                                case .transcriptProgress(let job):
+                                    exportTranscriptProgressRow(job, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
+                                        .id(item.id)
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 }
                             }
                         }
@@ -5776,11 +6069,17 @@ private struct PreviewPanelView: View {
         }
     }
 
-    private func exportPanelItems(frames: [SampledFrame], clips: [AudioClipItem], transcripts: [TranscriptExportItem] = []) -> [ExportPanelItem] {
+    private func exportPanelItems(
+        frames: [SampledFrame],
+        clips: [AudioClipItem],
+        transcripts: [TranscriptExportItem] = [],
+        transcriptJobs: [TranscriptExportJob] = []
+    ) -> [ExportPanelItem] {
         let frameItems = frames.map(ExportPanelItem.frame)
         let clipItems = clips.map(ExportPanelItem.audio)
         let transcriptItems = transcripts.map(ExportPanelItem.transcript)
-        return (frameItems + clipItems + transcriptItems).sorted { $0.createdAt < $1.createdAt }
+        let transcriptProgressItems = transcriptJobs.map(ExportPanelItem.transcriptProgress)
+        return (frameItems + clipItems + transcriptItems + transcriptProgressItems).sorted { $0.createdAt < $1.createdAt }
     }
 
     private func recentExportPanelItems() -> [ExportPanelItem] {
@@ -5788,7 +6087,8 @@ private struct PreviewPanelView: View {
         return exportPanelItems(
             frames: libraryStore.sampledFrames.filter { visibleVideoPaths.contains($0.videoPath) },
             clips: libraryStore.audioClips.filter { visibleVideoPaths.contains($0.videoPath) },
-            transcripts: libraryStore.transcriptExports.filter { visibleVideoPaths.contains($0.videoPath) }
+            transcripts: libraryStore.transcriptExports.filter { visibleVideoPaths.contains($0.videoPath) },
+            transcriptJobs: libraryStore.transcriptExportJobs.values.filter { visibleVideoPaths.contains($0.videoPath) }
         )
     }
 
@@ -6046,6 +6346,60 @@ private struct PreviewPanelView: View {
             libraryStore.loadAudioClipWaveformIfNeeded(clip)
         }
         .itemProviderDrag(audioClipDragProvider(for: clip))
+    }
+
+    private func exportTranscriptProgressRow(_ job: TranscriptExportJob, highlightIntensity: Double = 0) -> some View {
+        let highlight = min(1, max(0, highlightIntensity))
+        let progress = normalizedProgressFraction(job.progress)
+        let isFailed = job.isFailed
+        let tint = isFailed ? Design.currentFrameAccent : Design.annotationAccent
+
+        return HStack(alignment: .center, spacing: 10) {
+            Image(systemName: isFailed ? "exclamationmark.triangle.fill" : "doc.text")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: Self.exportTranscriptIconWidth, height: Self.exportRowContentHeight)
+                .background(.white.opacity(0.075))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(job.videoName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.86))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Spacer(minLength: 0)
+
+                    Text(isFailed ? "失败" : progressPercentText(progress))
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(isFailed ? tint.opacity(0.86) : .white.opacity(0.58))
+                }
+
+                Text(job.errorMessage ?? "正在生成分镜字幕索引")
+                    .font(.caption2)
+                    .foregroundStyle(isFailed ? tint.opacity(0.78) : .white.opacity(0.48))
+                    .lineLimit(1)
+
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(tint)
+                    .frame(height: 4)
+            }
+            .frame(height: Self.exportRowContentHeight, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, Self.exportRowVerticalPadding)
+        .frame(height: Self.exportRowHeight)
+        .background(exportRowBackground(isActive: true, progress: progress, highlightIntensity: highlight))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: tint.opacity(0.22)), lineWidth: 0.8 + 0.4 * highlight)
+        }
+        .help(isFailed ? "字幕导出失败" : "字幕导出中")
     }
 
     private func exportTranscriptRow(_ export: TranscriptExportItem, highlightIntensity: Double = 0) -> some View {
@@ -6332,7 +6686,7 @@ private struct PreviewPanelView: View {
             .recognitionProgressCard()
 
             ForEach(songs) { song in
-                ExportMusicRecognitionRow(song: song) {
+                ExportMusicRecognitionRow(song: song, videoPath: path) {
                     controller.pause()
                     controller.seekToSeconds(song.detectedAt)
                 }
@@ -6363,7 +6717,7 @@ private struct PreviewPanelView: View {
             )
         } else {
             ForEach(songs) { song in
-                ExportMusicRecognitionRow(song: song) {
+                ExportMusicRecognitionRow(song: song, videoPath: path) {
                     controller.pause()
                     controller.seekToSeconds(song.detectedAt)
                 }
@@ -6517,7 +6871,9 @@ private struct PreviewPanelView: View {
         let isExpanded = expandedPreviewTab != nil
         let height = isExpanded ? expandedHeight : collapsedHeight
 
-        return compositeTimelineStack(for: video, expandedHeight: height)
+        return PlaybackClockDrivenView(clock: controller.clock) { clock in
+            compositeTimelineStack(for: video, expandedHeight: height, clock: clock)
+        }
             .frame(maxWidth: .infinity)
             .frame(height: height, alignment: .top)
             .clipped()
@@ -6532,14 +6888,18 @@ private struct PreviewPanelView: View {
     }
 
     @ViewBuilder
-    private func compositeTimelineStack(for video: VideoItem, expandedHeight: CGFloat? = nil) -> some View {
+    private func compositeTimelineStack(
+        for video: VideoItem,
+        expandedHeight: CGFloat? = nil,
+        clock: PlaybackClockSnapshot
+    ) -> some View {
         let detailHeight = expandedHeight.map { height in
             expandedTimelineDetailHeight(for: height)
         } ?? Design.expandedTimelineDetailHeight
 
         VStack(spacing: timelineLaneGap) {
             ForEach(timelineLaneOrder, id: \.self) { tab in
-                timelineLaneSlot(tab, for: video, detailHeight: detailHeight)
+                timelineLaneSlot(tab, for: video, detailHeight: detailHeight, clock: clock)
             }
         }
     }
@@ -6670,9 +7030,10 @@ private struct PreviewPanelView: View {
     private func timelineLaneSlot(
         _ tab: PreviewTab,
         for video: VideoItem,
-        detailHeight: CGFloat
+        detailHeight: CGFloat,
+        clock: PlaybackClockSnapshot
     ) -> some View {
-        timelineLaneForTab(tab, for: video, detailHeight: detailHeight)
+        timelineLaneForTab(tab, for: video, detailHeight: detailHeight, clock: clock)
             .frame(height: timelineSlotHeight(for: tab, detailHeight: detailHeight), alignment: .top)
             .clipped()
             .transition(.identity)
@@ -6699,7 +7060,8 @@ private struct PreviewPanelView: View {
         _ tab: PreviewTab,
         for video: VideoItem,
         detailHeight: CGFloat = Design.expandedTimelineDetailHeight,
-        regularLaneHeight: CGFloat? = nil
+        regularLaneHeight: CGFloat? = nil,
+        clock: PlaybackClockSnapshot
     ) -> some View {
         switch tab {
         case .frames:
@@ -6721,7 +7083,7 @@ private struct PreviewPanelView: View {
                     }
                 },
                 content: {
-                    frameTimeline(for: video)
+                    frameTimeline(for: video, clock: clock)
                 },
                 detail: {
                     timelineDetailContent(.frames, for: video)
@@ -6744,7 +7106,7 @@ private struct PreviewPanelView: View {
                     }
                 },
                 content: {
-                    audioTimeline(for: video)
+                    audioTimeline(for: video, clock: clock)
                 },
                 detail: {
                     audioTimelineDetailContent(for: video)
@@ -6758,7 +7120,7 @@ private struct PreviewPanelView: View {
                 detailHeight: detailHeight,
                 regularLaneHeight: regularLaneHeight,
                 actions: {
-                    trackHeaderButton(icon: "square.and.arrow.down", help: "导出字幕") {
+                    trackHeaderButton(icon: "square.and.arrow.up", help: "导出字幕") {
                         exportCurrentTranscript(for: video)
                     }
                     .disabled(libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []].isEmpty)
@@ -6770,7 +7132,7 @@ private struct PreviewPanelView: View {
                     }
                 },
                 content: {
-                    contentTimeline(for: video)
+                    contentTimeline(for: video, clock: clock)
                 },
                 detail: {
                     timelineDetailContent(.content, for: video)
@@ -6931,7 +7293,7 @@ private struct PreviewPanelView: View {
     }
 
     private func exportCurrentTranscript(for video: VideoItem) {
-        guard libraryStore.exportTranscriptMarkdown(video: video) != nil else { return }
+        guard libraryStore.exportTranscriptMarkdown(video: video) else { return }
         exportPanelFilter = .recent
         isExportPanelPresented = true
     }
@@ -6963,7 +7325,7 @@ private struct PreviewPanelView: View {
     @ViewBuilder
     private func audioSelectionActionButton(for video: VideoItem) -> some View {
         if audioInPoint != nil, audioOutPoint != nil {
-            trackHeaderButton(icon: "square.and.arrow.down", help: "导出选区音频") {
+            trackHeaderButton(icon: "square.and.arrow.up", help: "导出选区音频") {
                 exportCurrentAudioSelection(for: video)
             }
             .disabled(libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
@@ -7371,6 +7733,7 @@ private struct PreviewPanelView: View {
         guard !segments.isEmpty else { return }
         let authorName = libraryStore.videoAuthorName(for: video)
         contentNodeTimelineStatus = .running(videoPath: video.url.path)
+        libraryStore.prepareExternalServiceWork()
 
         Task {
             do {
@@ -7390,13 +7753,13 @@ private struct PreviewPanelView: View {
         }
     }
 
-    private func frameTimeline(for video: VideoItem) -> some View {
+    private func frameTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         let cuts = libraryStore.sceneCutsByVideoPath[video.url.path] ?? []
 
         return FrameScrubberView(
             frames: frameStripImages(for: video),
-            progress: controller.progress,
-            timecodeText: previewTimecodeText,
+            progress: clock.progress,
+            timecodeText: clock.timecodeText,
             sceneCuts: sceneStoryboardCuts(for: video),
             isPlaying: controller.isPlaying,
             togglePlayback: { controller.togglePlayback() },
@@ -7422,16 +7785,18 @@ private struct PreviewPanelView: View {
         )
     }
 
-    private func audioTimeline(for video: VideoItem) -> some View {
+    private func audioTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         let dur = controller.duration
+
+        let outPoint = audioOutPoint ?? (audioInPoint == nil ? nil : clock.elapsed)
 
         return CenteredWaveformTimeline(
             samples: libraryStore.waveformSamplesByVideoPath[video.url.path],
-            progress: controller.progress,
+            progress: clock.progress,
             seek: { controller.seekToProgress($0) },
             sceneCuts: [],
             inPoint: audioInPoint.map { dur > 0 ? $0 / dur : 0 },
-            outPoint: displayedAudioOutPoint.map { dur > 0 ? $0 / dur : 0 },
+            outPoint: outPoint.map { dur > 0 ? $0 / dur : 0 },
             annotationItems: normalizedAnnotations(for: video, kind: .audio),
             onAnnotationSelect: { openAnnotation($0, sourceTab: .audio) },
             onClearSelection: { clearAudioSelection() },
@@ -7441,10 +7806,10 @@ private struct PreviewPanelView: View {
         )
     }
 
-    private func contentTimeline(for video: VideoItem) -> some View {
+    private func contentTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         SimpleProgressBar(
-            progress: controller.progress,
-            timecodeText: previewTimecodeText,
+            progress: clock.progress,
+            timecodeText: clock.timecodeText,
             isPlaying: controller.isPlaying,
             togglePlayback: { controller.togglePlayback() },
             seek: { controller.seekToProgress($0) },
@@ -7468,7 +7833,7 @@ private struct PreviewPanelView: View {
             activePreviewTab = .audio
         case .content:
             activePreviewTab = .content
-        case .home, .settings:
+        case .home, .music, .settings:
             break
         }
         openWorkspace(workspace)
@@ -7622,78 +7987,15 @@ private struct PreviewPanelView: View {
 
     @ViewBuilder
     private func previewTimeline(for video: VideoItem) -> some View {
-        switch activePreviewTab {
-        case .frames:
-            let cuts = libraryStore.sceneCutsByVideoPath[video.url.path] ?? []
-            FrameScrubberView(
-                frames: frameStripImages(for: video),
-                progress: controller.progress,
-                timecodeText: previewTimecodeText,
-                sceneCuts: sceneStoryboardCuts(for: video),
-                isPlaying: controller.isPlaying,
-                togglePlayback: { controller.togglePlayback() },
-                seek: { controller.seekToProgress($0) },
-                screenshotMarkers: normalizedSampledFrames(for: video),
-                annotationItems: normalizedAnnotations(for: video, kind: .frame),
-                prevScene: prevSceneAction(cuts: cuts),
-                nextScene: nextSceneAction(cuts: cuts),
-                stepBack: { controller.stepFrame(by: -1) },
-                stepForward: { controller.stepFrame(by: 1) },
-                onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-                onAnnotate: { beginAnnotation(.frame, sourceTab: .frames) },
-                onAnnotationSelect: { openAnnotation($0, sourceTab: .frames) },
-                viewportStart: timelineOffset,
-                viewportSpan: timelineViewportSpan,
-                duration: controller.duration,
-                zoomLevel: timelineZoom,
-                panViewport: panTimelineViewport,
-                zoomViewport: zoomTimelineViewport,
-                resetViewport: resetTimelineViewport,
-                sceneImages: sceneStripImages(for: video)
-            )
-        case .audio:
-            let cuts = libraryStore.sceneCutsByVideoPath[video.url.path] ?? []
-            let dur = controller.duration
-            WaveformControlBar(
-                samples: libraryStore.waveformSamplesByVideoPath[video.url.path],
-                progress: controller.progress,
-                timecodeText: previewTimecodeText,
-                isPlaying: controller.isPlaying,
-                togglePlayback: { controller.togglePlayback() },
-                seek: { controller.seekToProgress($0) },
-                sceneCuts: [],
-                inPoint: audioInPoint.map { dur > 0 ? $0 / dur : 0 },
-                outPoint: audioOutPoint.map { dur > 0 ? $0 / dur : 0 },
-                prevScene: prevSceneAction(cuts: cuts),
-                nextScene: nextSceneAction(cuts: cuts),
-                stepBack: { controller.stepFrame(by: -1) },
-                stepForward: { controller.stepFrame(by: 1) },
-                onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-                onAnnotate: { beginAnnotation(.audio, sourceTab: .audio) },
-                viewportStart: timelineOffset,
-                viewportSpan: timelineViewportSpan,
-                duration: controller.duration,
-                zoomLevel: timelineZoom,
-                panViewport: panTimelineViewport,
-                zoomViewport: zoomTimelineViewport,
-                resetViewport: resetTimelineViewport
-            )
-        case .content:
-            SimpleProgressBar(
-                progress: controller.progress,
-                timecodeText: previewTimecodeText,
-                isPlaying: controller.isPlaying,
-                togglePlayback: { controller.togglePlayback() },
-                seek: { controller.seekToProgress($0) },
-                chapters: loadedContentNodeChapters(for: video),
-                duration: controller.duration,
-                annotationItems: normalizedAnnotations(for: video),
-                onAnnotationSelect: { openAnnotation($0, sourceTab: .content) },
-                stepBack: { controller.stepFrame(by: -1) },
-                stepForward: { controller.stepFrame(by: 1) },
-                onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
-                onAnnotate: { beginAnnotation(.content, sourceTab: .content) }
-            )
+        PlaybackClockDrivenView(clock: controller.clock) { clock in
+            switch activePreviewTab {
+            case .frames:
+                frameTimeline(for: video, clock: clock)
+            case .audio:
+                audioTimeline(for: video, clock: clock)
+            case .content:
+                contentTimeline(for: video, clock: clock)
+            }
         }
     }
 
@@ -7712,7 +8014,7 @@ private struct PreviewPanelView: View {
                 Button {
                     exportCurrentAudioSelection(for: video)
                 } label: {
-                    Label("导出声音", systemImage: "waveform.badge.plus")
+                    Label("导出声音", systemImage: "square.and.arrow.up")
                 }
                 .disabled(audioInPoint == nil || audioOutPoint == nil || libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
                 .help("导出选区音频")
@@ -7862,7 +8164,7 @@ private struct PreviewPanelView: View {
             Button {
                 exportCurrentAudioSelection(for: video)
             } label: {
-                Image(systemName: "square.and.arrow.down")
+                Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 26)
             }
@@ -8046,7 +8348,7 @@ private struct PreviewPanelView: View {
     private func homeMusicRows(songs: [MusicRecognitionItem], videoPath: String) -> some View {
         LazyVStack(spacing: 8) {
             ForEach(songs) { song in
-                MusicRecognitionRow(song: song) {
+                MusicRecognitionRow(song: song, videoPath: videoPath) {
                     controller.pause()
                     controller.seekToSeconds(song.detectedAt)
                 }
@@ -8340,8 +8642,26 @@ private struct PreviewPanelView: View {
         }
 
         guard let targetOffset, abs(targetOffset - timelineOffset) > 0.0005 else { return }
-        withAnimation(.easeOut(duration: 0.14)) {
+        if controller.isPlaying || keyboardShuttleDirection != 0 {
+            let now = Date()
+            guard now.timeIntervalSince(lastTimelineAutoScrollAt) >= 0.18 else { return }
+            lastTimelineAutoScrollAt = now
             timelineOffset = targetOffset
+        } else {
+            withAnimation(.easeOut(duration: 0.14)) {
+                timelineOffset = targetOffset
+            }
+        }
+    }
+
+    private func handlePlaybackClockTick(_ elapsed: Double) {
+        keepTimelineProgressVisible(controller.progress)
+
+        guard let video = libraryStore.selectedVideo else { return }
+        let segs = libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []]
+        let segmentID = activeTranscriptSegmentID(at: elapsed, in: segs)
+        if segmentID != activeTranscriptSegmentID {
+            activeTranscriptSegmentID = segmentID
         }
     }
 
@@ -8417,6 +8737,7 @@ private struct PreviewPanelView: View {
     }
 
     private func startKeyboardShuttle(direction: Int) {
+        keyboardShuttleLastCommandAt = Date()
         guard keyboardShuttleDirection != direction else { return }
 
         stopKeyboardShuttle()
@@ -8429,17 +8750,39 @@ private struct PreviewPanelView: View {
         )
 
         keyboardShuttleTask = Task { @MainActor in
+            let startedAt = Date()
             try? await Task.sleep(nanoseconds: 180_000_000)
-            while !Task.isCancelled {
+            while !Task.isCancelled, keyboardShuttleDirection == direction {
+                let now = Date()
+                guard now.timeIntervalSince(startedAt) <= 8,
+                      now.timeIntervalSince(keyboardShuttleLastCommandAt) <= 1.2
+                else {
+                    stopKeyboardShuttle()
+                    break
+                }
+
                 let frameStep = Double(keyboardShuttleFrameStep) / max(controller.frameRate, 1)
-                controller.seekToSeconds(controller.elapsed + Double(direction) * frameStep, snapToFrame: true)
-                try? await Task.sleep(nanoseconds: 33_000_000)
+                let next = controller.elapsed + Double(direction) * frameStep
+                if direction > 0, next >= controller.duration {
+                    controller.seekToSeconds(controller.duration, snapToFrame: true)
+                    stopKeyboardShuttle()
+                    break
+                }
+                if direction < 0, next <= 0 {
+                    controller.seekToSeconds(0, snapToFrame: true)
+                    stopKeyboardShuttle()
+                    break
+                }
+
+                controller.seekToSeconds(next, snapToFrame: true)
+                try? await Task.sleep(nanoseconds: 80_000_000)
             }
         }
     }
 
     private func increaseKeyboardShuttleSpeed() {
         guard keyboardShuttleDirection != 0 else { return }
+        keyboardShuttleLastCommandAt = Date()
         keyboardShuttleFrameStep = min(keyboardShuttleFrameStep + 1, 12)
     }
 
@@ -8448,10 +8791,117 @@ private struct PreviewPanelView: View {
         keyboardShuttleTask = nil
         keyboardShuttleDirection = 0
         keyboardShuttleFrameStep = 2
+        keyboardShuttleLastCommandAt = .distantPast
     }
 }
 
 // MARK: - Workspace Pages
+
+private struct FrameStoryboardItem: Identifiable {
+    let id: String
+    let video: VideoItem
+    let time: Double
+    let cut: SceneCut?
+    let sample: SampledFrame?
+    let thumbnailImage: NSImage?
+    let sceneIndex: Int?
+
+    var isScreenshot: Bool {
+        sample?.kind == .screenshot
+    }
+
+    var isExportedScene: Bool {
+        sample?.kind == .sceneRepresentative && sample?.isExported == true
+    }
+}
+
+private struct StoryboardVideoTimeline: View {
+    let cuts: [Double]
+
+    var body: some View {
+        Canvas { context, size in
+            guard size.width > 0, size.height > 0 else { return }
+
+            var base = Path()
+            base.addRoundedRect(
+                in: CGRect(x: 0, y: size.height / 2 - 1, width: size.width, height: 2),
+                cornerSize: CGSize(width: 1, height: 1)
+            )
+            context.fill(base, with: .color(.white.opacity(0.14)))
+
+            for progress in cuts {
+                let clamped = min(1, max(0, progress))
+                let x = size.width * CGFloat(clamped)
+                var line = Path()
+                line.addRoundedRect(
+                    in: CGRect(x: x - 0.5, y: 1, width: 1, height: size.height - 2),
+                    cornerSize: CGSize(width: 0.5, height: 0.5)
+                )
+                context.fill(line, with: .color(.white.opacity(0.62)))
+            }
+        }
+    }
+}
+
+private struct FullResolutionFramePreview: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    let videoURL: URL
+    let time: Double
+    let fallbackImage: NSImage?
+    let dragItemProvider: (() -> NSItemProvider)?
+    @State private var fullResolutionImage: NSImage?
+    @State private var isLoadingFullResolution = false
+
+    private var previewKey: String {
+        "\(videoURL.path)#\(Int((max(0, time) * 1000).rounded()))"
+    }
+
+    var body: some View {
+        previewContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottomTrailing) {
+                if isLoadingFullResolution, fallbackImage != nil {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(8)
+                        .background(.black.opacity(0.42))
+                        .clipShape(Circle())
+                        .padding(8)
+                }
+            }
+            .fullResolutionImageDrag(dragItemProvider)
+            .task(id: previewKey) {
+                await loadFullResolutionImage(for: previewKey)
+            }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let image = fullResolutionImage {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        } else if let fallbackImage {
+            Image(nsImage: fallbackImage)
+                .resizable()
+                .interpolation(.medium)
+                .scaledToFit()
+        } else {
+            Color.black.opacity(0.24)
+                .aspectRatio(16 / 9, contentMode: .fit)
+        }
+    }
+
+    private func loadFullResolutionImage(for key: String) async {
+        fullResolutionImage = nil
+        isLoadingFullResolution = true
+        let image = await libraryStore.fullResolutionFrameImage(videoURL: videoURL, time: time)
+        guard !Task.isCancelled, key == previewKey else { return }
+        fullResolutionImage = image
+        isLoadingFullResolution = false
+    }
+}
 
 private struct FramesWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
@@ -8459,96 +8909,92 @@ private struct FramesWorkspaceView: View {
     @Binding var selectedFrameID: UUID?
     let goHome: (String, Double) -> Void
     @AppStorage("frameBoardGridSize") private var frameBoardGridSize = 1
-    @State private var boardMode: FramesBoardMode = .byVideo
+    @AppStorage("storyboardVideoPickerGridSize") private var storyboardVideoPickerGridSize = 2
+    @State private var boardMode: FramesBoardMode = .storyboard
     @State private var selectedFrameTags: Set<String> = []
     @State private var isFrameTagFilterPresented = false
+    @State private var isStoryboardVideoPickerPresented = false
     @State private var detailFrame: SampledFrame?
+    @State private var detailStoryboardItem: FrameStoryboardItem?
     @State private var frameAnalysisState: FrameAnalysisState = .idle
     @State private var analyzedFrameID: UUID?
     @State private var frameAnalysisTask: Task<Void, Never>?
 
-    private var boardFrames: [SampledFrame] {
-        let frames: [SampledFrame]
-        if selectedFrameTags.isEmpty {
-            frames = libraryStore.collectedFrames
-        } else {
-            frames = libraryStore.collectedFrames.filter { frame in
-                let frameTags = Set(frame.tags)
-                return selectedFrameTags.allSatisfy { frameTags.contains($0) }
-            }
-        }
-
-        switch boardMode {
-        case .storyboard:
-            return frames.sorted {
-                if $0.videoName == $1.videoName { return $0.time < $1.time }
-                return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
-            }
-        case .byVideo:
-            return frames
-        case .byTag:
-            return frames.sorted {
-                if $0.videoName == $1.videoName { return $0.time < $1.time }
-                return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
-            }
+    private var storyboardVideos: [VideoItem] {
+        libraryStore.videos.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
 
-    private var videoSections: [(key: String, title: String, frames: [SampledFrame])] {
-        let groups = Dictionary(grouping: boardFrames, by: \.videoPath)
-        return groups.map { path, frames in
-            (
-                key: path,
-                title: frames.first?.videoName ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
-                frames: frames.sorted { $0.time < $1.time }
-            )
+    private var storyboardVideoPaths: [String] {
+        storyboardVideos.map { $0.url.path }
+    }
+
+    private var selectedStoryboardVideo: VideoItem? {
+        if let selectedVideoPath,
+           let video = storyboardVideos.first(where: { $0.url.path == selectedVideoPath }) {
+            return video
         }
-        .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        return storyboardVideos.first
+    }
+
+    private var allExportedFrames: [SampledFrame] {
+        libraryStore.collectedFrames
+    }
+
+    private var tagFilteredFrames: [SampledFrame] {
+        guard !selectedFrameTags.isEmpty else { return [] }
+        let frames = libraryStore.collectedFrames.filter { frame in
+            let frameTags = Set(frame.tags)
+            return selectedFrameTags.allSatisfy { frameTags.contains($0) }
+        }
+        return sourceTimeSorted(frames)
     }
 
     private var tagSections: [(key: String, title: String, frames: [SampledFrame])] {
-        if selectedFrameTags.isEmpty {
-            var sections = libraryStore.allFrameTags.compactMap { tag -> (key: String, title: String, frames: [SampledFrame])? in
-                let frames = boardFrames
-                    .filter { $0.tags.contains(tag) }
-                    .sorted {
-                        if $0.videoName == $1.videoName { return $0.time < $1.time }
-                        return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
-                    }
-                guard !frames.isEmpty else { return nil }
-                return (key: tag, title: tag, frames: frames)
-            }
-
-            let untaggedFrames = boardFrames
-                .filter { $0.tags.isEmpty }
-                .sorted {
-                    if $0.videoName == $1.videoName { return $0.time < $1.time }
-                    return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
-                }
-            if !untaggedFrames.isEmpty {
-                sections.append((key: "__untagged", title: "未标记", frames: untaggedFrames))
-            }
-            return sections
-        }
-
+        guard !selectedFrameTags.isEmpty else { return [] }
         return selectedFrameTags.sorted().compactMap { tag -> (key: String, title: String, frames: [SampledFrame])? in
-            let frames = boardFrames
+            let frames = tagFilteredFrames
                 .filter { $0.tags.contains(tag) }
-                .sorted {
-                    if $0.videoName == $1.videoName { return $0.time < $1.time }
-                    return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
-                }
             guard !frames.isEmpty else { return nil }
             return (key: tag, title: tag, frames: frames)
         }
     }
 
     private var gridColumns: [GridItem] {
-        let count = max(1, 3 - min(max(frameBoardGridSize, 0), 2))
+        let clampedSize = min(max(frameBoardGridSize, 0), 2)
+        let count = [5, 4, 3][clampedSize]
         return Array(
             repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 10),
             count: count
         )
+    }
+
+    private var storyboardVideoPickerColumnCount: Int {
+        let clampedSize = min(max(storyboardVideoPickerGridSize, 0), 2)
+        return max(1, 3 - clampedSize)
+    }
+
+    private var storyboardVideoPickerColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 8),
+            count: storyboardVideoPickerColumnCount
+        )
+    }
+
+    private var storyboardVideoPickerWidth: CGFloat {
+        560
+    }
+
+    private var storyboardVideoPickerHeight: CGFloat {
+        let maxContentHeight = (1 ... 3)
+            .map { columnCount in
+                let rowCount = Int(ceil(Double(storyboardVideos.count) / Double(columnCount)))
+                let rowHeight = storyboardVideoPickerItemHeight(for: columnCount)
+                return CGFloat(rowCount) * rowHeight + CGFloat(max(0, rowCount - 1)) * 8 + 70
+            }
+            .max() ?? 180
+        return min(480, max(180, maxContentHeight))
     }
 
     var body: some View {
@@ -8558,9 +9004,25 @@ private struct FramesWorkspaceView: View {
             if let frame = detailFrame {
                 frameDetailOverlay(frame)
             }
+            if let item = detailStoryboardItem {
+                storyboardDetailOverlay(item)
+            }
         }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Design.sidebarBg)
+        .onAppear {
+            syncStoryboardSelectionIfNeeded()
+        }
+        .onChange(of: boardMode) { _, _ in
+            syncStoryboardSelectionIfNeeded()
+        }
+        .onChange(of: selectedVideoPath) { _, _ in
+            guard boardMode == .storyboard else { return }
+            prepareStoryboard(for: selectedStoryboardVideo)
+        }
+        .onChange(of: storyboardVideoPaths) { _, _ in
+            syncStoryboardSelectionIfNeeded()
+        }
         .onDisappear {
             frameAnalysisTask?.cancel()
         }
@@ -8570,45 +9032,42 @@ private struct FramesWorkspaceView: View {
         VStack(alignment: .leading, spacing: 12) {
             frameBoardToolbar
 
-            if boardFrames.isEmpty {
-                AppEmptyState(
-                    title: selectedFrameTags.isEmpty ? "暂无已导出图片" : "没有匹配标签的画面",
-                    systemImage: "photo.on.rectangle",
-                    style: .large
-                )
+            switch boardMode {
+            case .storyboard:
+                storyboardFrameBoard
+            case .collection:
+                allExportedFrameBoard
+            }
+        }
+        .padding(.top, Design.libraryToolbarTop)
+        .padding(.bottom, 14)
+    }
+
+    @ViewBuilder
+    private var storyboardFrameBoard: some View {
+        if let video = selectedStoryboardVideo {
+            let items = storyboardItems(for: video)
+
+            if items.isEmpty {
+                VStack(spacing: 12) {
+                    storyboardProgressView(for: video)
+                    AppEmptyState(
+                        title: storyboardEmptyTitle(for: video),
+                        systemImage: "rectangle.stack",
+                        description: storyboardEmptyDescription(for: video),
+                        style: .large
+                    )
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 14)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        switch boardMode {
-                        case .byVideo:
-                            ForEach(videoSections, id: \.key) { section in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    frameSectionDivider(section.title)
-                                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
-                                        ForEach(section.frames) { frame in
-                                            frameBoardCard(frame)
-                                        }
-                                    }
-                                }
-                            }
-                        case .byTag:
-                            ForEach(tagSections, id: \.key) { section in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    frameSectionDivider(section.title)
-                                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
-                                        ForEach(section.frames) { frame in
-                                            frameBoardCard(frame)
-                                        }
-                                    }
-                                }
-                            }
-                        case .storyboard:
-                            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
-                                ForEach(boardFrames) { frame in
-                                    frameBoardCard(frame)
-                                }
+                        storyboardProgressView(for: video)
+
+                        LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                storyboardBoardCard(item, title: storyboardCardTitle(for: item, index: index))
                             }
                         }
                     }
@@ -8618,22 +9077,95 @@ private struct FramesWorkspaceView: View {
                 .scrollIndicators(.hidden)
                 .background(HiddenScrollIndicators())
             }
+        } else {
+            AppEmptyState(
+                title: "暂无视频",
+                systemImage: "play.rectangle",
+                description: "导入视频后，分镜模式会按视频展示分镜和截图。",
+                style: .large
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 14)
         }
-        .padding(.top, Design.libraryToolbarTop)
-        .padding(.bottom, 14)
+    }
+
+    @ViewBuilder
+    private var allExportedFrameBoard: some View {
+        if allExportedFrames.isEmpty {
+            AppEmptyState(
+                title: "暂无收藏图片",
+                systemImage: "photo.on.rectangle",
+                style: .large
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 14)
+        } else {
+            ScrollView {
+                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+                    ForEach(Array(allExportedFrames.enumerated()), id: \.element.id) { index, frame in
+                        frameBoardCard(frame, title: frameCardTitle(for: frame, index: index))
+                    }
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 14)
+            }
+            .scrollIndicators(.hidden)
+            .background(HiddenScrollIndicators())
+        }
+    }
+
+    @ViewBuilder
+    private var tagFilteredFrameBoard: some View {
+        if selectedFrameTags.isEmpty {
+            AppEmptyState(
+                title: "请选择图片标签",
+                systemImage: "tag",
+                description: libraryStore.allFrameTags.isEmpty ? "给导出的图片添加标签后，这里会显示标签筛选。" : "点右上角标签按钮选择要查看的标签。",
+                style: .large
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 14)
+        } else if tagFilteredFrames.isEmpty {
+            AppEmptyState(
+                title: "没有匹配标签的画面",
+                systemImage: "tag",
+                style: .large
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 14)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(tagSections, id: \.key) { section in
+                        VStack(alignment: .leading, spacing: 8) {
+                            frameSectionDivider(section.title)
+                            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
+                                ForEach(Array(section.frames.enumerated()), id: \.element.id) { index, frame in
+                                    frameBoardCard(frame, title: frameCardTitle(for: frame, index: index))
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 14)
+            }
+            .scrollIndicators(.hidden)
+            .background(HiddenScrollIndicators())
+        }
     }
 
     private var frameBoardToolbar: some View {
         HStack(spacing: 12) {
-            Spacer(minLength: 4)
+            frameBoardModeControl
 
-            HStack(spacing: Design.libraryToolbarButtonGap) {
-                frameTagFilterButton
-                frameBoardModeMenu
+            if boardMode == .storyboard {
+                storyboardVideoPicker
             }
-            .frame(height: Design.libraryToolbarButtonSlotHeight)
 
             frameGridSizeControl
+
+            Spacer(minLength: 4)
         }
         .frame(minHeight: Design.libraryToolbarHeight)
         .padding(.horizontal, 14)
@@ -8665,24 +9197,240 @@ private struct FramesWorkspaceView: View {
         }
     }
 
-    private var frameBoardModeMenu: some View {
-        Menu {
-            Section("分类方法") {
-                ForEach(FramesBoardMode.allCases) { mode in
-                    Button {
+    private var frameBoardModeControl: some View {
+        HStack(spacing: 3) {
+            ForEach(FramesBoardMode.allCases) { mode in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
                         boardMode = mode
-                    } label: {
-                        Label(mode.rawValue, systemImage: boardMode == mode ? "checkmark" : "")
+                    }
+                } label: {
+                    Label(mode.rawValue, systemImage: mode.icon)
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(boardMode == mode ? .primary : .secondary)
+                        .frame(width: 74, height: 24)
+                        .background(boardMode == mode ? Color.white.opacity(0.14) : Color.clear)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(.white.opacity(0.055))
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .stroke(.white.opacity(0.08), lineWidth: 0.7)
+        }
+        .help("显示模式")
+    }
+
+    private var storyboardVideoPicker: some View {
+        Button {
+            isStoryboardVideoPickerPresented.toggle()
+        } label: {
+            toolbarMenuLabel(
+                title: selectedStoryboardVideo?.name ?? "选择视频",
+                systemImage: "film.stack",
+                maxWidth: 260
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(height: Design.libraryToolbarButtonSlotHeight)
+        .disabled(storyboardVideos.isEmpty)
+        .help("选择视频")
+        .popover(isPresented: $isStoryboardVideoPickerPresented, arrowEdge: .bottom) {
+            storyboardVideoPickerPopover
+        }
+    }
+
+    private var storyboardVideoPickerPopover: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView {
+                LazyVGrid(columns: storyboardVideoPickerColumns, alignment: .leading, spacing: 8) {
+                    ForEach(storyboardVideos) { video in
+                        storyboardVideoPickerItem(video)
+                            .frame(maxWidth: .infinity)
                     }
                 }
+                .padding(10)
+                .padding(.bottom, 42)
             }
-        } label: {
-            frameToolbarIcon(systemName: "arrow.up.arrow.down", size: 12)
+            .scrollIndicators(.hidden)
+            .background(HiddenScrollIndicators())
+
+            storyboardVideoPickerSizeControl
+                .padding(12)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .help("分类方法")
+        .frame(width: storyboardVideoPickerWidth, height: storyboardVideoPickerHeight)
+    }
+
+    private func storyboardVideoPickerItem(_ video: VideoItem) -> some View {
+        let path = video.url.path
+        let isSelected = selectedStoryboardVideo?.url.path == path
+        let cuts = libraryStore.sceneCutProgressesByVideoPath[path] ?? normalizedSceneCutProgresses(for: video)
+        let columnCount = storyboardVideoPickerColumnCount
+
+        return Button {
+            selectedVideoPath = path
+            prepareStoryboard(for: video)
+            isStoryboardVideoPickerPresented = false
+        } label: {
+            if columnCount == 1 {
+                storyboardVideoPickerListLabel(video: video, path: path, cuts: cuts, isSelected: isSelected)
+            } else {
+                storyboardVideoPickerGridLabel(video: video, path: path, cuts: cuts, isSelected: isSelected)
+            }
+        }
+        .buttonStyle(.plain)
+        .background(isSelected ? .white.opacity(0.08) : .white.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.white.opacity(isSelected ? 0.14 : 0.06), lineWidth: 0.8)
+        }
+    }
+
+    private func storyboardVideoPickerListLabel(
+        video: VideoItem,
+        path: String,
+        cuts: [Double],
+        isSelected: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            storyboardVideoPickerThumbnail(path: path)
+                .frame(width: 74, height: 46)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    Text(video.name)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    if let duration = libraryStore.durationByVideoPath[path] {
+                        Text(formatDuration(duration))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                StoryboardVideoTimeline(cuts: cuts)
+                    .frame(height: 14)
+            }
+
+            storyboardVideoPickerSelectionIcon(isSelected: isSelected, size: 13)
+        }
+        .padding(8)
+        .contentShape(Rectangle())
+    }
+
+    private func storyboardVideoPickerGridLabel(
+        video: VideoItem,
+        path: String,
+        cuts: [Double],
+        isSelected: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ZStack(alignment: .topTrailing) {
+                storyboardVideoPickerThumbnail(path: path)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: storyboardVideoPickerThumbnailHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                storyboardVideoPickerSelectionIcon(isSelected: isSelected, size: 12)
+                    .padding(5)
+                    .background(.black.opacity(0.34))
+                    .clipShape(Circle())
+                    .padding(5)
+            }
+
+            Text(video.name)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            if let duration = libraryStore.durationByVideoPath[path] {
+                Text(formatDuration(duration))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+
+            StoryboardVideoTimeline(cuts: cuts)
+                .frame(height: 12)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, minHeight: storyboardVideoPickerItemHeight(for: storyboardVideoPickerColumnCount), alignment: .topLeading)
+        .contentShape(Rectangle())
+    }
+
+    private func storyboardVideoPickerThumbnail(path: String) -> some View {
+        ZStack {
+            if let image = libraryStore.thumbnailImageByVideoPath[path] {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color.black.opacity(0.28)
+                Image(systemName: "play.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.52))
+            }
+        }
+        .clipped()
+    }
+
+    private func storyboardVideoPickerSelectionIcon(isSelected: Bool, size: CGFloat) -> some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(isSelected ? .orange : .secondary)
+    }
+
+    private var storyboardVideoPickerThumbnailHeight: CGFloat {
+        storyboardVideoPickerColumnCount == 2 ? 96 : 68
+    }
+
+    private func storyboardVideoPickerItemHeight(for columnCount: Int) -> CGFloat {
+        columnCount == 1 ? 62 : (columnCount == 2 ? 154 : 126)
+    }
+
+    private var storyboardVideoPickerSizeControl: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "square.grid.3x3")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Slider(
+                value: Binding(
+                    get: { Double(storyboardVideoPickerGridSize) },
+                    set: {
+                        let nextSize = Int($0.rounded())
+                        if storyboardVideoPickerGridSize != nextSize {
+                            storyboardVideoPickerGridSize = nextSize
+                        }
+                    }
+                ),
+                in: 0...2
+            )
+            .frame(width: 64)
+            .controlSize(.small)
+
+            Image(systemName: "rectangle")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.56))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(0.14), lineWidth: 0.7)
+        }
+        .shadow(color: .black.opacity(0.24), radius: 12, y: 5)
+        .help("调整下拉大小")
     }
 
     private var frameGridSizeControl: some View {
@@ -8766,6 +9514,140 @@ private struct FramesWorkspaceView: View {
         .frame(width: 280)
     }
 
+    private func syncStoryboardSelectionIfNeeded() {
+        guard boardMode == .storyboard else { return }
+        guard let video = selectedStoryboardVideo else {
+            selectedVideoPath = nil
+            return
+        }
+
+        if selectedVideoPath != video.url.path {
+            selectedVideoPath = video.url.path
+        }
+        prepareStoryboard(for: video)
+    }
+
+    private func prepareStoryboard(for video: VideoItem?) {
+        guard let video else { return }
+        let path = video.url.path
+
+        libraryStore.loadCachedSceneCuts(for: video)
+        if libraryStore.sceneCutsByVideoPath[path] != nil {
+            libraryStore.hydrateSceneThumbnailsIfNeeded(for: video)
+        } else if libraryStore.sceneDetectionProgress[path] == nil {
+            libraryStore.detectSceneCuts(for: video)
+        }
+    }
+
+    private func storyboardItems(for video: VideoItem) -> [FrameStoryboardItem] {
+        let path = video.url.path
+        let samples = libraryStore.sampledFrames(for: video)
+        guard let cuts = libraryStore.sceneCutsByVideoPath[path], !cuts.isEmpty else {
+            return sourceTimeSorted(samples).map { sample in
+                FrameStoryboardItem(
+                    id: "sample-\(sample.id.uuidString)",
+                    video: video,
+                    time: sample.time,
+                    cut: nil,
+                    sample: sample,
+                    thumbnailImage: libraryStore.thumbnailImage(for: sample),
+                    sceneIndex: sample.sceneIndex
+                )
+            }
+        }
+
+        let representativeSamples = Dictionary(
+            samples
+                .filter { $0.kind == .sceneRepresentative }
+                .map { (sceneSampleKey(for: $0.time), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var matchedSampleIDs = Set<UUID>()
+        var items: [FrameStoryboardItem] = []
+
+        for (index, cut) in cuts.enumerated() {
+            let sample = representativeSamples[sceneSampleKey(for: cut.time)]
+            if let sample {
+                matchedSampleIDs.insert(sample.id)
+            }
+
+            items.append(FrameStoryboardItem(
+                id: "cut-\(cut.id)",
+                video: video,
+                time: cut.time,
+                cut: cut,
+                sample: sample,
+                thumbnailImage: sample.flatMap { libraryStore.thumbnailImage(for: $0) }
+                    ?? libraryStore.displaySceneCutImage(for: video, cut: cut),
+                sceneIndex: index
+            ))
+        }
+
+        for sample in samples where sample.kind == .screenshot || !matchedSampleIDs.contains(sample.id) {
+            items.append(FrameStoryboardItem(
+                id: "sample-\(sample.id.uuidString)",
+                video: video,
+                time: sample.time,
+                cut: nil,
+                sample: sample,
+                thumbnailImage: libraryStore.thumbnailImage(for: sample),
+                sceneIndex: sample.sceneIndex
+            ))
+        }
+
+        return items.sorted {
+            if abs($0.time - $1.time) > 0.001 { return $0.time < $1.time }
+            return $0.id < $1.id
+        }
+    }
+
+    private func sourceTimeSorted(_ frames: [SampledFrame]) -> [SampledFrame] {
+        frames.sorted {
+            if $0.videoName == $1.videoName {
+                if abs($0.time - $1.time) > 0.001 { return $0.time < $1.time }
+                return $0.createdAt < $1.createdAt
+            }
+            return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
+        }
+    }
+
+    private func sceneSampleKey(for time: Double) -> Int {
+        Int((time * 50).rounded())
+    }
+
+    private func normalizedSceneCutProgresses(for video: VideoItem) -> [Double] {
+        let path = video.url.path
+        guard let duration = libraryStore.durationByVideoPath[path], duration > 0 else { return [] }
+        return libraryStore.sceneCutsByVideoPath[path, default: []]
+            .map { min(1, max(0, $0.time / duration)) }
+    }
+
+    @ViewBuilder
+    private func storyboardProgressView(for video: VideoItem) -> some View {
+        let path = video.url.path
+        if let progress = libraryStore.sceneDetectionProgress[path] {
+            RecognitionProgressRow(message: "正在识别分镜...", progress: progress)
+                .recognitionProgressCard()
+        } else if libraryStore.isHydratingSceneThumbnails(for: video) {
+            RecognitionProgressRow(message: "正在补齐分镜缩略图...", progress: nil, showPercent: false)
+                .recognitionProgressCard()
+        }
+    }
+
+    private func storyboardEmptyTitle(for video: VideoItem) -> String {
+        if libraryStore.sceneDetectionProgress[video.url.path] != nil {
+            return "正在生成分镜"
+        }
+        return libraryStore.sceneCutsByVideoPath[video.url.path] == nil ? "暂无分镜" : "这个视频暂无分镜或截图"
+    }
+
+    private func storyboardEmptyDescription(for video: VideoItem) -> String? {
+        if libraryStore.sceneDetectionProgress[video.url.path] != nil {
+            return "识别完成后会显示这个视频的分镜和截图。"
+        }
+        return "切到主页截图或完成分镜识别后会出现在这里。"
+    }
+
     private func toggleFrameTag(_ tag: String) {
         if selectedFrameTags.contains(tag) {
             selectedFrameTags.remove(tag)
@@ -8784,6 +9666,33 @@ private struct FramesWorkspaceView: View {
                 height: Design.libraryToolbarButtonSlotHeight,
                 alignment: .center
             )
+    }
+
+    private func toolbarMenuLabel(title: String, systemImage: String, maxWidth: CGFloat) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Design.libraryToolbarIconTint)
+                .frame(width: 14)
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 9)
+        .frame(maxWidth: maxWidth, minHeight: Design.libraryToolbarButtonSlotHeight, maxHeight: Design.libraryToolbarButtonSlotHeight)
+        .background(.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 0.7)
+        }
     }
 
     private func frameSectionDivider(_ title: String) -> some View {
@@ -8807,7 +9716,116 @@ private struct FramesWorkspaceView: View {
         .padding(.vertical, 10)
     }
 
-    private func frameBoardCard(_ frame: SampledFrame) -> some View {
+    private func storyboardBoardCard(_ item: FrameStoryboardItem, title: String) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Button {
+                activateStoryboardItem(item)
+            } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    ZStack(alignment: .bottomTrailing) {
+                        if let image = item.thumbnailImage {
+                            Image(nsImage: image)
+                                .resizable()
+                                .interpolation(.medium)
+                                .scaledToFill()
+                        } else {
+                            Color.black.opacity(0.26)
+                        }
+
+                        if item.isScreenshot {
+                            CaptureFrameBadge()
+                                .padding(.leading, 8)
+                                .padding(.bottom, 7)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        }
+                    }
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    HStack(spacing: 5) {
+                        Text(item.isScreenshot ? "截图" : "分镜")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        if let sample = item.sample {
+                            ScaledCardTagCloud(tags: Array(sample.tags.prefix(3)))
+                        }
+                    }
+                    .frame(height: 18, alignment: .leading)
+                }
+                .padding(8)
+                .background(.white.opacity(item.isExportedScene || item.isScreenshot ? 0.055 : 0.034))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(storyboardCardStroke(for: item), lineWidth: 0.8)
+                }
+            }
+            .buttonStyle(.plain)
+            .fullResolutionImageDrag {
+                storyboardDragProvider(for: item)
+            }
+            .help(item.sample == nil ? "回到原视频这个分镜" : "\(item.video.name) · \(clockText(item.time))")
+
+            if let sample = item.sample {
+                InlineTagEditorButton(
+                    title: "图片标签",
+                    tags: sample.tags,
+                    suggestedTags: libraryStore.allFrameTags,
+                    onAdd: { libraryStore.addFrameTag($0, to: sample) },
+                    onRemove: { libraryStore.removeFrameTag($0, from: sample) }
+                )
+                .padding(8)
+            } else if let cut = item.cut {
+                Button {
+                    libraryStore.markSceneFrameExported(video: item.video, cut: cut, sceneIndex: item.sceneIndex)
+                } label: {
+                    cardOverlayExportButtonIcon()
+                }
+                .buttonStyle(.plain)
+                .padding(14)
+                .help("导出这张分镜")
+            }
+        }
+    }
+
+    private func storyboardCardStroke(for item: FrameStoryboardItem) -> Color {
+        if item.sample?.id == selectedFrameID {
+            return .white.opacity(0.36)
+        }
+        if item.isScreenshot {
+            return .white.opacity(0.10)
+        }
+        return .white.opacity(item.isExportedScene ? 0.10 : 0.07)
+    }
+
+    private func activateStoryboardItem(_ item: FrameStoryboardItem) {
+        if let sample = item.sample {
+            selectedFrameID = sample.id
+            detailFrame = latestFrame(sample)
+        } else {
+            detailStoryboardItem = item
+        }
+    }
+
+    private func storyboardDragProvider(for item: FrameStoryboardItem) -> NSItemProvider {
+        if let sample = item.sample {
+            return libraryStore.fullResolutionFrameProvider(for: sample)
+        }
+
+        return libraryStore.fullResolutionFrameProvider(
+            video: item.video,
+            time: storyboardOriginalFrameTime(for: item),
+            kind: .sceneRepresentative,
+            fallbackImage: item.thumbnailImage
+        )
+    }
+
+    private func frameBoardCard(_ frame: SampledFrame, title: String) -> some View {
         ZStack(alignment: .topTrailing) {
             Button {
                 selectedFrameID = frame.id
@@ -8823,15 +9841,11 @@ private struct FramesWorkspaceView: View {
                         } else {
                             Color.black.opacity(0.26)
                         }
-
-                        CardTimeBadge(text: clockText(frame.time), placeholder: clockText(frame.time))
-                            .padding(.trailing, CardTimeBadge.edgeInset)
-                            .padding(.bottom, CardTimeBadge.verticalInset)
                     }
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
-                    Text(frame.videoName)
+                    Text(title)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -8849,7 +9863,7 @@ private struct FramesWorkspaceView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(selectedFrameID == frame.id ? Design.captureFrameAccent.opacity(0.45) : .white.opacity(0.08), lineWidth: 0.8)
+                        .stroke(selectedFrameID == frame.id ? .white.opacity(0.36) : .white.opacity(0.08), lineWidth: 0.8)
                 }
             }
             .buttonStyle(.plain)
@@ -8866,6 +9880,16 @@ private struct FramesWorkspaceView: View {
             )
             .padding(8)
         }
+    }
+
+    private func storyboardCardTitle(for item: FrameStoryboardItem, index: Int) -> String {
+        let number = String(format: "%02d", (item.sceneIndex ?? index) + 1)
+        return item.isScreenshot ? "截图 \(number)" : "分镜 \(number)"
+    }
+
+    private func frameCardTitle(for frame: SampledFrame, index: Int) -> String {
+        let number = String(format: "%02d", (frame.sceneIndex ?? index) + 1)
+        return frame.kind == .screenshot ? "截图 \(number)" : "画面 \(number)"
     }
 
     private func frameDetailOverlay(_ frame: SampledFrame) -> some View {
@@ -8902,30 +9926,102 @@ private struct FramesWorkspaceView: View {
                     .background(Color.black.opacity(0.24))
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        InlineTagEditorButton(
-                            title: "图片标签",
-                            tags: latestFrame(frame).tags,
-                            suggestedTags: libraryStore.allFrameTags,
-                            onAdd: { libraryStore.addFrameTag($0, to: frame); detailFrame = latestFrame(frame) },
-                            onRemove: { libraryStore.removeFrameTag($0, from: frame); detailFrame = latestFrame(frame) }
-                        )
+                ColorSwatches(imageData: frame.thumbnailData, orientation: .horizontal)
+                    .frame(maxWidth: .infinity)
 
-                        Button {
-                            detailFrame = nil
-                            goHome(frame.videoPath, frame.time)
-                        } label: {
-                            Label("回到原视频", systemImage: "arrowshape.turn.up.left.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
+                HStack(spacing: 10) {
+                    InlineTagEditorButton(
+                        title: "图片标签",
+                        tags: latestFrame(frame).tags,
+                        suggestedTags: libraryStore.allFrameTags,
+                        onAdd: { libraryStore.addFrameTag($0, to: frame); detailFrame = latestFrame(frame) },
+                        onRemove: { libraryStore.removeFrameTag($0, from: frame); detailFrame = latestFrame(frame) }
+                    )
+
+                    Spacer()
+
+                    Button {
+                        detailFrame = nil
+                        goHome(frame.videoPath, frame.time)
+                    } label: {
+                        Label("回到原视频", systemImage: "arrowshape.turn.up.left.fill")
                     }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(16)
+            .frame(width: 720)
+            .background(Design.sidebarBg)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.14), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.40), radius: 26, y: 16)
+        }
+        .zIndex(10)
+        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+    }
 
-                    ColorSwatches(imageData: frame.thumbnailData, orientation: .horizontal)
-                        .frame(maxWidth: .infinity)
+    private func storyboardDetailOverlay(_ item: FrameStoryboardItem) -> some View {
+        ZStack {
+            Color.black.opacity(0.52)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    detailStoryboardItem = nil
                 }
 
-                frameAnalysisView(for: frame)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(storyboardCardTitle(for: item, index: item.sceneIndex ?? 0))
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text("\(item.video.name) · \(clockText(item.time))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button {
+                        detailStoryboardItem = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                storyboardItemPreview(item)
+                    .frame(maxWidth: .infinity, maxHeight: 430)
+                    .background(Color.black.opacity(0.24))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                ColorSwatches(imageData: storyboardColorData(for: item), orientation: .horizontal)
+                    .frame(maxWidth: .infinity)
+
+                HStack(spacing: 10) {
+                    if let sample = item.sample {
+                        InlineTagEditorButton(
+                            title: "图片标签",
+                            tags: sample.tags,
+                            suggestedTags: libraryStore.allFrameTags,
+                            onAdd: { libraryStore.addFrameTag($0, to: sample) },
+                            onRemove: { libraryStore.removeFrameTag($0, from: sample) }
+                        )
+                    }
+
+                    Spacer()
+
+                    Button {
+                        detailStoryboardItem = nil
+                        goHome(item.video.url.path, item.time)
+                    } label: {
+                        Label("回到原视频", systemImage: "arrowshape.turn.up.left.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             }
             .padding(16)
             .frame(width: 720)
@@ -8946,21 +10042,45 @@ private struct FramesWorkspaceView: View {
     }
 
     @ViewBuilder
+    private func storyboardItemPreview(_ item: FrameStoryboardItem) -> some View {
+        FullResolutionFramePreview(
+            videoURL: item.video.url,
+            time: storyboardOriginalFrameTime(for: item),
+            fallbackImage: item.sample.flatMap { libraryStore.thumbnailImage(for: $0) } ?? item.thumbnailImage,
+            dragItemProvider: { storyboardDragProvider(for: item) }
+        )
+    }
+
+    private func storyboardColorData(for item: FrameStoryboardItem) -> Data {
+        if let data = item.sample?.thumbnailData {
+            return data
+        }
+        return jpegData(from: item.thumbnailImage) ?? Data()
+    }
+
+    private func jpegData(from image: NSImage?) -> Data? {
+        guard let image,
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return nil }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.86])
+    }
+
+    @ViewBuilder
     private func selectedFramePreview(_ frame: SampledFrame) -> some View {
-        Group {
-            if let image = libraryStore.thumbnailImage(for: frame) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                Color.black.opacity(0.24)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-            }
+        FullResolutionFramePreview(
+            videoURL: URL(fileURLWithPath: frame.videoPath),
+            time: frame.time,
+            fallbackImage: libraryStore.thumbnailImage(for: frame),
+            dragItemProvider: { libraryStore.fullResolutionFrameProvider(for: frame) }
+        )
+    }
+
+    private func storyboardOriginalFrameTime(for item: FrameStoryboardItem) -> Double {
+        if let sample = item.sample {
+            return sample.time
         }
-        .fullResolutionImageDrag {
-            libraryStore.fullResolutionFrameProvider(for: frame)
-        }
+        return item.cut == nil ? item.time : item.time + 0.08
     }
 
     private func frameAnalysisView(for frame: SampledFrame) -> some View {
@@ -9008,6 +10128,7 @@ private struct FramesWorkspaceView: View {
         frameAnalysisTask?.cancel()
         analyzedFrameID = frame.id
         frameAnalysisState = .loading
+        libraryStore.prepareExternalServiceWork()
 
         frameAnalysisTask = Task { @MainActor in
             do {
@@ -9063,7 +10184,8 @@ private struct FrameAnalysisSummary: View {
 }
 
 private enum LocalFrameAnalyzer {
-    private static let endpoint = URL(string: "http://127.0.0.1:11434/api/generate")!
+    private static let endpoint = URL(string: "http://127.0.0.1:11434/api/generate")
+        ?? URL(fileURLWithPath: "/dev/null")
     private static let model = "qwen3-vl:8b"
 
     struct RequestBody: Encodable {
@@ -9154,19 +10276,50 @@ private struct RecognizedMusicAsset: Identifiable {
     var id: String { "\(videoPath)-\(song.id.uuidString)" }
 }
 
+private struct MusicTagStrip: View {
+    let tags: [String]
+
+    private var visibleTags: [String] {
+        Array(tags.prefix(4))
+    }
+
+    private var overflowCount: Int {
+        max(0, tags.count - visibleTags.count)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(visibleTags, id: \.self) { tag in
+                CardInlineTagChip(tag: tag)
+            }
+
+            if overflowCount > 0 {
+                VideoTagOverflowChip(count: overflowCount)
+                    .frame(height: 18, alignment: .center)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
+        .clipped()
+    }
+}
+
 private struct AudioWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let goHome: (String, Double) -> Void
-    @State private var selectedSoundTags: Set<String> = []
+    @State private var selectedAudioFilters: Set<AudioFilterOption> = []
+    @State private var searchText = ""
+    @State private var isAudioListScrolling = false
 
     var body: some View {
+        let filteredLocalAssets = filteredLocalAudioAssets
+        let filteredClips = filteredAudioClips
+
         VStack(alignment: .leading, spacing: 12) {
-            audioHeader
+            audioHeader()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    musicSection
-                    clipsSection
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    audioEntriesSection(localAssets: filteredLocalAssets, clips: filteredClips)
                 }
                 .padding(.vertical, 2)
                 .padding(.horizontal, 14)
@@ -9174,103 +10327,131 @@ private struct AudioWorkspaceView: View {
             }
             .scrollIndicators(.hidden)
             .background(HiddenScrollIndicators())
+            .onScrollPhaseChange { _, newPhase in
+                let scrolling = newPhase.isScrolling
+                if isAudioListScrolling != scrolling {
+                    isAudioListScrolling = scrolling
+                    if scrolling {
+                        libraryStore.cancelPendingLocalWaveformLoads()
+                    }
+                }
+            }
         }
         .padding(.top, Design.libraryToolbarTop)
         .padding(.bottom, 14)
         .background(Design.sidebarBg)
+        .onAppear {
+            libraryStore.scanResourceLibrary()
+        }
     }
 
-    private var audioHeader: some View {
+    private func audioHeader() -> some View {
         HStack(spacing: Design.libraryToolbarButtonGap) {
-            Spacer(minLength: 4)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextField("搜索名字、标签", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 9)
+            .frame(width: 240, height: 26)
+            .background(.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
-            if !selectedSoundTags.isEmpty {
+            audioTagFilterMenu
+
+            if !selectedAudioFilters.isEmpty {
                 Button {
-                    selectedSoundTags.removeAll()
+                    selectedAudioFilters.removeAll()
                 } label: {
                     audioToolbarIcon(systemName: "xmark.circle", size: 12)
                 }
                 .buttonStyle(.plain)
                 .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
                 .contentShape(Rectangle())
-                .help("清除标签筛选")
+                .help("清除筛选")
             }
 
-            Menu {
-                Button {
-                    selectedSoundTags.removeAll()
-                } label: {
-                    HStack {
-                        if selectedSoundTags.isEmpty { Image(systemName: "checkmark") }
-                        Text("全部标签")
-                    }
-                }
-
-                if !soundFilterTags.isEmpty {
-                    Divider()
-                }
-
-                ForEach(soundFilterTags, id: \.self) { tag in
-                    Button {
-                        toggleSoundTag(tag)
-                    } label: {
-                        HStack {
-                            Image(systemName: selectedSoundTags.contains(tag) ? "checkmark.square.fill" : "square")
-                            VideoTagColorDot(tag: tag)
-                            Text(tag)
-                        }
-                    }
-                }
-            } label: {
-                audioToolbarIcon(systemName: selectedSoundTags.isEmpty ? "tag" : "tag.fill", size: 12)
-                    .overlay(alignment: .topTrailing) {
-                        if !selectedSoundTags.isEmpty {
-                            Text("\(selectedSoundTags.count)")
-                                .font(.system(size: 8, weight: .bold))
-                                .padding(.horizontal, 3)
-                                .padding(.vertical, 1)
-                                .background(Color.orange)
-                                .clipShape(Capsule())
-                                .offset(x: 4, y: -3)
-                        }
-                    }
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-            .help("按标签筛选识别音乐和导出音效")
+            Spacer(minLength: 4)
         }
         .frame(minHeight: Design.libraryToolbarHeight)
         .padding(.horizontal, 14)
     }
 
-    @ViewBuilder
-    private var musicSection: some View {
-        let items = filteredMusicAssets
+    private var audioTagFilterMenu: some View {
+        Menu {
+            let tagValues = audioFilterValues(for: .tag)
 
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "识别音乐", count: items.count, icon: "music.note.list")
-
-            if musicAssets.isEmpty {
-                AppEmptyState(
-                    title: "暂无音乐识别记录",
-                    systemImage: "music.note",
-                    description: "在主页或声音时间轴中识别后，这里会汇总所有音乐。",
-                    style: .large,
-                    minHeight: 126
-                )
-                .frame(maxWidth: .infinity)
-            } else if items.isEmpty {
-                AppEmptyState(
-                    title: "没有匹配标签的音乐",
-                    systemImage: "tag",
-                    style: .compact,
-                    minHeight: 96
-                )
+            if tagValues.isEmpty {
+                Button("暂无标签") {}
+                    .disabled(true)
             } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(items) { asset in
-                        musicAssetRow(asset)
+                Button {
+                    selectedAudioFilters = selectedAudioFilters.filter { $0.kind != .tag }
+                } label: {
+                    HStack {
+                        if selectedAudioTagFilterCount == 0 { Image(systemName: "checkmark") }
+                        Text("全部标签")
+                    }
+                }
+
+                Divider()
+
+                Section("标签") {
+                    ForEach(tagValues, id: \.self) { value in
+                        let option = AudioFilterOption(kind: .tag, value: value)
+                        Button {
+                            toggleAudioFilter(option)
+                        } label: {
+                            HStack {
+                                Image(systemName: selectedAudioFilters.contains(option) ? "checkmark.square.fill" : "square")
+                                VideoTagColorDot(tag: value)
+                                Text(value)
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            audioToolbarIcon(systemName: "tag", size: 12)
+                .overlay(alignment: .topTrailing) {
+                    if selectedAudioTagFilterCount > 0 {
+                        Text("\(selectedAudioTagFilterCount)")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.orange)
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -3)
+                    }
+                }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .help("标签筛选")
+    }
+
+    @ViewBuilder
+    private func audioFilterSection(kind: AudioFilterKind) -> some View {
+        let values = audioFilterValues(for: kind)
+        if !values.isEmpty {
+            Divider()
+            Section(kind.rawValue) {
+                ForEach(values, id: \.self) { value in
+                    let option = AudioFilterOption(kind: kind, value: value)
+                    Button {
+                        toggleAudioFilter(option)
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedAudioFilters.contains(option) ? "checkmark.square.fill" : "square")
+                            if kind == .tag {
+                                VideoTagColorDot(tag: value)
+                            }
+                            Text(value)
+                        }
                     }
                 }
             }
@@ -9278,33 +10459,913 @@ private struct AudioWorkspaceView: View {
     }
 
     @ViewBuilder
-    private var clipsSection: some View {
-        let clips = filteredAudioClips
+    private func audioEntriesSection(localAssets: [LocalAudioAsset], clips: [AudioClipItem]) -> some View {
+        if libraryStore.localAudioAssets.isEmpty && libraryStore.audioClips.isEmpty {
+            AppEmptyState(
+                title: "暂无音效条目",
+                systemImage: "waveform",
+                style: .compact,
+                minHeight: 90
+            )
+        } else if localAssets.isEmpty && clips.isEmpty {
+            AppEmptyState(
+                title: "没有匹配条目",
+                systemImage: "line.3.horizontal.decrease.circle",
+                style: .compact,
+                minHeight: 90
+            )
+        } else {
+            LazyVStack(spacing: 8) {
+                ForEach(localAssets) { asset in
+                    localAudioAssetRow(asset)
+                }
+                ForEach(clips) { clip in
+                    audioClipAssetRow(clip)
+                }
+            }
+        }
+    }
 
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(title: "导出音效", count: clips.count, icon: "waveform")
+    private func audioToolbarIcon(systemName: String, size: CGFloat) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(Design.libraryToolbarIconTint)
+            .frame(
+                width: Design.libraryToolbarButtonSlotWidth,
+                height: Design.libraryToolbarButtonSlotHeight,
+                alignment: .center
+            )
+    }
 
-            if libraryStore.audioClips.isEmpty {
-                AppEmptyState(
-                    title: "暂无导出音效",
-                    systemImage: "waveform",
-                    description: "在主页设置 In / Out 后导出声音。",
-                    style: .compact,
-                    minHeight: 96
+    private func audioRowLayout(
+        containerWidth: CGFloat,
+        includesTagEditor: Bool,
+        hasTags: Bool,
+        prefersTimeRange: Bool
+    ) -> (nameWidth: CGFloat, tagWidth: CGFloat, waveformWidth: CGFloat, timeWidth: CGFloat, showsTags: Bool) {
+        let showsTags = hasTags && containerWidth >= (includesTagEditor ? 760 : 680)
+        let horizontalPadding: CGFloat = includesTagEditor ? 18 : 20
+        let visibleColumnCount = 3 + (showsTags ? 1 : 0) + (includesTagEditor ? 1 : 0)
+        let spacingWidth = CGFloat(max(0, visibleColumnCount - 1)) * 14
+        let timeWidth: CGFloat = prefersTimeRange
+            ? (containerWidth < 760 ? 92 : 112)
+            : (containerWidth < 640 ? 62 : 72)
+        let fixedWidth = horizontalPadding + 28 + timeWidth + (includesTagEditor ? 24 : 0) + spacingWidth
+        let flexibleWidth = max(0, containerWidth - fixedWidth)
+        let tagWidth = showsTags ? min(170, max(84, flexibleWidth * 0.24)) : 0
+        let preferredNameWidth: CGFloat = containerWidth < 760 ? 170 : 240
+        let minimumNameWidth = min(100, flexibleWidth * 0.48)
+        let targetNameWidth = flexibleWidth * (showsTags ? 0.34 : 0.42)
+        let nameWidth = min(preferredNameWidth, max(minimumNameWidth, targetNameWidth))
+        let waveformWidth = max(0, flexibleWidth - nameWidth - tagWidth)
+        return (nameWidth, tagWidth, waveformWidth, timeWidth, showsTags)
+    }
+
+    private func localAudioAssetRow(_ asset: LocalAudioAsset) -> some View {
+        let samples = libraryStore.localAudioWaveformSamplesByPath[asset.filePath]
+        let tags = visibleTags(for: asset)
+
+        return GeometryReader { proxy in
+            let layout = audioRowLayout(
+                containerWidth: proxy.size.width,
+                includesTagEditor: false,
+                hasTags: !tags.isEmpty,
+                prefersTimeRange: false
+            )
+
+            HStack(alignment: .center, spacing: 14) {
+                Button {
+                    openLocalAudio(asset)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .frame(width: 28, height: 28)
+                        .background(.orange.opacity(0.13))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("播放音效")
+                .disabled(libraryStore.localAudioFileURL(for: asset) == nil)
+
+                Text(asset.title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: layout.nameWidth, alignment: .leading)
+
+                if layout.showsTags {
+                    MusicTagStrip(tags: tags)
+                        .frame(width: layout.tagWidth, alignment: .leading)
+                }
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(asset.duration > 0 ? formatDuration(asset.duration) : asset.fileExtension.uppercased())
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(fileSizeText(asset.fileSize))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+                .frame(width: layout.timeWidth, alignment: .trailing)
+
+                audioWaveformColumn(samples: samples, width: layout.waveformWidth)
+            }
+            .padding(10)
+            .frame(width: proxy.size.width, height: 72, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+        }
+        .frame(height: 72)
+        .task(id: "\(asset.filePath)|\(isAudioListScrolling)") {
+            guard !isAudioListScrolling else { return }
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled, !isAudioListScrolling else { return }
+            libraryStore.loadLocalAudioWaveformIfNeeded(asset)
+        }
+        .onDisappear {
+            libraryStore.cancelPendingLocalAudioWaveformLoad(for: asset)
+        }
+        .itemProviderDrag(localAudioDragProvider(for: asset))
+        .help("可拖出音效文件")
+    }
+
+    private func audioClipAssetRow(_ clip: AudioClipItem) -> some View {
+        let tags = visibleTags(for: clip)
+
+        return GeometryReader { proxy in
+            let layout = audioRowLayout(
+                containerWidth: proxy.size.width,
+                includesTagEditor: true,
+                hasTags: !tags.isEmpty,
+                prefersTimeRange: true
+            )
+
+            HStack(alignment: .center, spacing: 14) {
+                Button {
+                    openAudioClip(clip)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .frame(width: 28, height: 28)
+                        .background(.orange.opacity(0.13))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("播放音效")
+                .disabled(libraryStore.audioClipFileURL(for: clip) == nil)
+
+                Text(audioClipDisplayName(clip))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: layout.nameWidth, alignment: .leading)
+
+                if layout.showsTags {
+                    MusicTagStrip(tags: tags)
+                        .frame(width: layout.tagWidth, alignment: .leading)
+                }
+
+                Button {
+                    goHome(clip.videoPath, clip.inTime)
+                } label: {
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text("\(clockText(clip.inTime)) - \(clockText(clip.outTime))")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                        Text(formatDuration(clip.outTime - clip.inTime))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("跳到原视频时间段")
+                .frame(width: layout.timeWidth, alignment: .trailing)
+
+                audioWaveformColumn(samples: clip.waveformSamples, width: layout.waveformWidth)
+
+                InlineTagEditorButton(
+                    title: "声音标签",
+                    tags: clip.tags,
+                    suggestedTags: audioTagSuggestions(for: clip),
+                    buttonSize: 24,
+                    onAdd: { libraryStore.addAudioTag($0, to: clip) },
+                    onRemove: { libraryStore.removeAudioTag($0, from: clip) }
                 )
-            } else if clips.isEmpty {
+            }
+            .padding(9)
+            .frame(width: proxy.size.width, height: 72, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+        }
+        .frame(height: 72)
+        .task(id: "\(clip.id.uuidString)|\(isAudioListScrolling)") {
+            guard !isAudioListScrolling else { return }
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled, !isAudioListScrolling else { return }
+            libraryStore.loadAudioClipWaveformIfNeeded(clip)
+        }
+        .itemProviderDrag(audioClipDragProvider(for: clip))
+        .help("可拖出音效文件")
+    }
+
+    @ViewBuilder
+    private func audioWaveformColumn(samples: [Double]?, width: CGFloat) -> some View {
+        if isAudioListScrolling {
+            AudioWaveformScrollPlaceholder()
+                .frame(width: width, height: 42)
+        } else {
+            AudioClipWaveformStrip(samples: samples, isActive: false)
+                .equatable()
+                .frame(width: width, height: 42)
+        }
+    }
+
+    private var filteredLocalAudioAssets: [LocalAudioAsset] {
+        let query = normalizedSearch(searchText)
+        guard !query.isEmpty || !selectedAudioFilters.isEmpty else {
+            return libraryStore.localAudioAssets
+        }
+        return libraryStore.localAudioAssets.filter { asset in
+            let tags = visibleTags(for: asset)
+            let matchesSearch = query.isEmpty
+                || normalizedSearch(asset.title).contains(query)
+                || tags.contains { normalizedSearch($0).contains(query) }
+            guard matchesSearch else { return false }
+            return matchesSelectedAudioFilters(for: asset)
+        }
+    }
+
+    private var filteredAudioClips: [AudioClipItem] {
+        let query = normalizedSearch(searchText)
+        guard !query.isEmpty || !selectedAudioFilters.isEmpty else {
+            return libraryStore.audioClips.sorted { $0.createdAt > $1.createdAt }
+        }
+        return libraryStore.audioClips
+            .filter { clip in
+                let name = audioClipDisplayName(clip)
+                let tags = visibleTags(for: clip)
+                let matchesSearch = query.isEmpty
+                    || normalizedSearch(name).contains(query)
+                    || normalizedSearch(clip.videoName).contains(query)
+                    || tags.contains { normalizedSearch($0).contains(query) }
+                guard matchesSearch else { return false }
+                return matchesSelectedAudioFilters(for: clip)
+            }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private var audioFilterTags: [String] {
+        let localTags = libraryStore.localAudioAssets.flatMap { visibleTags(for: $0) }
+        let clipTags = libraryStore.audioClips.flatMap { visibleTags(for: $0) }
+        return cleanedAudioTags(localTags + clipTags)
+    }
+
+    private var selectedAudioTagFilterCount: Int {
+        selectedAudioFilters.filter { $0.kind == .tag }.count
+    }
+
+    private func audioFilterValues(for kind: AudioFilterKind) -> [String] {
+        let values: [String]
+        switch kind {
+        case .name:
+            values = libraryStore.localAudioAssets.map(\.title) + libraryStore.audioClips.map(audioClipDisplayName)
+        case .tag:
+            values = audioFilterTags
+        }
+
+        return cleanedAudioTags(values)
+    }
+
+    private func toggleAudioFilter(_ option: AudioFilterOption) {
+        if selectedAudioFilters.contains(option) {
+            selectedAudioFilters.remove(option)
+        } else {
+            selectedAudioFilters.insert(option)
+        }
+    }
+
+    private func matchesSelectedAudioFilters(for asset: LocalAudioAsset) -> Bool {
+        guard !selectedAudioFilters.isEmpty else { return true }
+        let options = Set(
+            [AudioFilterOption(kind: .name, value: asset.title.trimmingCharacters(in: .whitespacesAndNewlines))] +
+            visibleTags(for: asset).map { AudioFilterOption(kind: .tag, value: $0) }
+        )
+        return selectedAudioFilters.allSatisfy { options.contains($0) }
+    }
+
+    private func matchesSelectedAudioFilters(for clip: AudioClipItem) -> Bool {
+        guard !selectedAudioFilters.isEmpty else { return true }
+        let options = Set(
+            [AudioFilterOption(kind: .name, value: audioClipDisplayName(clip))] +
+            visibleTags(for: clip).map { AudioFilterOption(kind: .tag, value: $0) }
+        )
+        return selectedAudioFilters.allSatisfy { options.contains($0) }
+    }
+
+    private func audioClipDisplayName(_ clip: AudioClipItem) -> String {
+        let note = clip.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !note.isEmpty {
+            return note
+        }
+        return clip.videoName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名音效" : clip.videoName
+    }
+
+    private func visibleTags(for asset: LocalAudioAsset) -> [String] {
+        cleanedAudioTags(asset.tags)
+            .filter { !isAudioMetadataValue($0, names: [asset.title]) }
+    }
+
+    private func visibleTags(for clip: AudioClipItem) -> [String] {
+        cleanedAudioTags(combinedTags(for: clip))
+            .filter { !isAudioMetadataValue($0, names: [audioClipDisplayName(clip), clip.videoName]) }
+    }
+
+    private func isAudioMetadataValue(_ value: String, names: [String]) -> Bool {
+        let valueKey = normalizedSearch(value)
+        guard !valueKey.isEmpty else { return true }
+        return names
+            .map(normalizedSearch)
+            .filter { !$0.isEmpty }
+            .contains(valueKey)
+    }
+
+    private func cleanedAudioTags(_ tags: [String]) -> [String] {
+        var seen = Set<String>()
+        return tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert(normalizedSearch($0)).inserted }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private func sourceTags(for videoPath: String) -> [String] {
+        libraryStore.tagsByVideoPath[videoPath, default: []]
+    }
+
+    private func combinedTags(for clip: AudioClipItem) -> [String] {
+        Array(Set(clip.tags + sourceTags(for: clip.videoPath))).sorted()
+    }
+
+    private func audioTagSuggestions(for clip: AudioClipItem) -> [String] {
+        Array(Set(libraryStore.allAudioTags + sourceTags(for: clip.videoPath))).sorted()
+    }
+
+    private func openAudioClip(_ clip: AudioClipItem) {
+        guard let fileURL = libraryStore.audioClipFileURL(for: clip) else { return }
+        NSWorkspace.shared.open(fileURL)
+    }
+
+    private func openLocalAudio(_ asset: LocalAudioAsset) {
+        guard let fileURL = libraryStore.localAudioFileURL(for: asset) else { return }
+        NSWorkspace.shared.open(fileURL)
+    }
+
+    private func audioClipDragProvider(for clip: AudioClipItem) -> (() -> NSItemProvider)? {
+        guard libraryStore.audioClipFileURL(for: clip) != nil else { return nil }
+        return {
+            libraryStore.audioClipFileProvider(for: clip) ?? NSItemProvider()
+        }
+    }
+
+    private func localAudioDragProvider(for asset: LocalAudioAsset) -> (() -> NSItemProvider)? {
+        guard let fileURL = libraryStore.localAudioFileURL(for: asset) else { return nil }
+        return { fileDragProvider(for: fileURL, suggestedName: fileURL.lastPathComponent) }
+    }
+}
+
+private struct MusicWorkspaceView: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    let goHome: (String, Double) -> Void
+
+    @State private var searchText = ""
+    @State private var searchResults: [AppleMusicSearchResult] = []
+    @State private var isSearching = false
+    @State private var searchMessage: String?
+    @State private var selectedMusicFilters: Set<MusicFilterOption> = []
+    @State private var isMusicListScrolling = false
+
+    var body: some View {
+        let recognizedAssets = musicAssets
+        let filteredRecognizedAssets = filteredRecognizedMusicAssets(from: recognizedAssets)
+        let filteredSearchItems = filteredSearchResults
+        let filterValues = musicFilterValues(from: recognizedAssets)
+        let folderRecognitionID = libraryStore.localMusicAssets
+            .map(\.filePath)
+            .joined(separator: "|")
+
+        VStack(alignment: .leading, spacing: 12) {
+            musicHeader(filterValues: filterValues)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    searchSection(results: filteredSearchItems)
+                    recognizedMusicSection(allAssets: recognizedAssets, filteredAssets: filteredRecognizedAssets)
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
+            }
+            .scrollIndicators(.hidden)
+            .background(HiddenScrollIndicators())
+            .onScrollPhaseChange { _, newPhase in
+                let scrolling = newPhase.isScrolling
+                if isMusicListScrolling != scrolling {
+                    isMusicListScrolling = scrolling
+                }
+            }
+        }
+        .padding(.top, Design.libraryToolbarTop)
+        .padding(.bottom, 14)
+        .background(Design.sidebarBg)
+        .onAppear {
+            libraryStore.enrichMusicTagsIfNeeded()
+            libraryStore.scanResourceLibrary()
+            libraryStore.prepareExternalServiceWork()
+        }
+        .task(id: folderRecognitionID) {
+            libraryStore.recognizeLocalMusicAssetsIfNeeded()
+        }
+        .task(id: searchText) {
+            await runAppleMusicSearch()
+        }
+    }
+
+    private func musicHeader(filterValues: [MusicFilterKind: [String]]) -> some View {
+        HStack(spacing: Design.libraryToolbarButtonGap) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextField("搜索标题、作者、标签", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+            }
+            .padding(.horizontal, 9)
+            .frame(width: 280, height: 26)
+            .background(.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            musicTagFilterMenu(filterValues: filterValues)
+            musicMetadataFilterMenu(filterValues: filterValues)
+
+            if !selectedMusicFilters.isEmpty {
+                Button {
+                    selectedMusicFilters.removeAll()
+                } label: {
+                    toolbarIcon(systemName: "xmark.circle", size: 12)
+                }
+                .buttonStyle(.plain)
+                .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+                .contentShape(Rectangle())
+                .help("清除筛选")
+            }
+
+            Spacer(minLength: 4)
+        }
+        .frame(minHeight: Design.libraryToolbarHeight)
+        .padding(.horizontal, 14)
+    }
+
+    private func musicTagFilterMenu(filterValues: [MusicFilterKind: [String]]) -> some View {
+        Menu {
+            let tagValues = filterValues[.tag, default: []]
+
+            if tagValues.isEmpty {
+                Button("暂无标签") {}
+                    .disabled(true)
+            } else {
+                Button {
+                    selectedMusicFilters = selectedMusicFilters.filter { $0.kind != .tag }
+                } label: {
+                    HStack {
+                        if selectedMusicTagFilterCount == 0 { Image(systemName: "checkmark") }
+                        Text("全部标签")
+                    }
+                }
+
+                Divider()
+
+                Section("标签") {
+                    ForEach(tagValues, id: \.self) { value in
+                        let option = MusicFilterOption(kind: .tag, value: value)
+                        Button {
+                            toggleMusicFilter(option)
+                        } label: {
+                            HStack {
+                                Image(systemName: selectedMusicFilters.contains(option) ? "checkmark.square.fill" : "square")
+                                VideoTagColorDot(tag: value)
+                                Text(value)
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            toolbarIcon(systemName: "tag", size: 12)
+                .overlay(alignment: .topTrailing) {
+                    if selectedMusicTagFilterCount > 0 {
+                        Text("\(selectedMusicTagFilterCount)")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.orange)
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -3)
+                    }
+                }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .help("标签筛选")
+    }
+
+    private func musicMetadataFilterMenu(filterValues: [MusicFilterKind: [String]]) -> some View {
+        Menu {
+            Button {
+                selectedMusicFilters = selectedMusicFilters.filter { $0.kind == .tag }
+            } label: {
+                HStack {
+                    if selectedMusicMetadataFilterCount == 0 { Image(systemName: "checkmark") }
+                    Text("全部标题和作者")
+                }
+            }
+
+            musicFilterSection(kind: .title, filterValues: filterValues)
+            musicFilterSection(kind: .artist, filterValues: filterValues)
+        } label: {
+            toolbarIcon(systemName: "line.3.horizontal.decrease.circle", size: 12)
+                .overlay(alignment: .topTrailing) {
+                    if selectedMusicMetadataFilterCount > 0 {
+                        Text("\(selectedMusicMetadataFilterCount)")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color.orange)
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -3)
+                    }
+                }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .help("标题和作者筛选")
+    }
+
+    @ViewBuilder
+    private func musicFilterSection(
+        kind: MusicFilterKind,
+        filterValues: [MusicFilterKind: [String]]
+    ) -> some View {
+        let values = filterValues[kind, default: []]
+        if !values.isEmpty {
+            Divider()
+            Section(kind.rawValue) {
+                ForEach(values, id: \.self) { value in
+                    let option = MusicFilterOption(kind: kind, value: value)
+                    Button {
+                        toggleMusicFilter(option)
+                    } label: {
+                        HStack {
+                            Image(systemName: selectedMusicFilters.contains(option) ? "checkmark.square.fill" : "square")
+                            if kind == .tag {
+                                VideoTagColorDot(tag: value)
+                            }
+                            Text(value)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func searchSection(results: [AppleMusicSearchResult]) -> some View {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty || isSearching || searchMessage != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionHeader(title: "AM 搜索", count: results.count, icon: "magnifyingglass")
+
+                if isSearching {
+                    GenerationProgressRow(
+                        message: "正在搜索 AM",
+                        progress: nil,
+                        tint: .white,
+                        systemImage: "magnifyingglass",
+                        compact: true,
+                        showPercent: false
+                    )
+                } else if let searchMessage {
+                    AppEmptyState(
+                        title: searchMessage,
+                        systemImage: "magnifyingglass",
+                        style: .compact,
+                        minHeight: 86
+                    )
+                } else if results.isEmpty {
+                    AppEmptyState(
+                        title: "没有匹配条目",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        style: .compact,
+                        minHeight: 86
+                    )
+                } else {
+                    LazyVStack(spacing: 8) {
+                        ForEach(results) { item in
+                            appleMusicResultRow(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func recognizedMusicSection(
+        allAssets: [RecognizedMusicAsset],
+        filteredAssets: [RecognizedMusicAsset]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if allAssets.isEmpty {
                 AppEmptyState(
-                    title: "没有匹配标签的音效",
-                    systemImage: "tag",
+                    title: folderMusicRecognitionStatusText ?? "暂无 AM 条目",
+                    systemImage: "sparkles",
                     style: .compact,
-                    minHeight: 96
+                    minHeight: 90
+                )
+            } else if filteredAssets.isEmpty {
+                AppEmptyState(
+                    title: "没有匹配条目",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    style: .compact,
+                    minHeight: 90
                 )
             } else {
                 LazyVStack(spacing: 8) {
-                    ForEach(clips) { clip in
-                        audioClipAssetRow(clip)
+                    ForEach(filteredAssets) { asset in
+                        recognizedMusicAssetRow(asset)
                     }
                 }
+            }
+        }
+    }
+
+    private func musicRowLayout(
+        containerWidth: CGFloat,
+        hasTags: Bool,
+        hasDownloadStatus: Bool,
+        includesSafari: Bool
+    ) -> (
+        infoWidth: CGFloat,
+        tagWidth: CGFloat,
+        statusWidth: CGFloat,
+        timeWidth: CGFloat,
+        showsTags: Bool,
+        showsDownloadStatus: Bool
+    ) {
+        let showsDownloadStatus = hasDownloadStatus && containerWidth >= 760
+        let showsTags = hasTags && containerWidth >= (showsDownloadStatus ? 900 : 760)
+        let timeWidth: CGFloat = 56
+        let buttonsWidth: CGFloat = 160
+        let safariWidth: CGFloat = includesSafari ? 24 : 0
+        let visibleColumnCount = 4
+            + (showsTags ? 1 : 0)
+            + (showsDownloadStatus ? 1 : 0)
+            + (includesSafari ? 1 : 0)
+        let spacingWidth = CGFloat(max(0, visibleColumnCount - 1)) * 14
+        let fixedWidth = 18 + 56 + timeWidth + buttonsWidth + safariWidth + spacingWidth
+        let flexibleWidth = max(0, containerWidth - fixedWidth)
+        let tagWidth = showsTags ? min(160, max(96, flexibleWidth * 0.22)) : 0
+        let statusWidth = showsDownloadStatus ? min(300, max(132, flexibleWidth * 0.34)) : 0
+        let remainingWidth = max(0, flexibleWidth - tagWidth - statusWidth)
+        let infoWidth = min(containerWidth < 820 ? 210 : 270, max(120, remainingWidth))
+        return (infoWidth, tagWidth, statusWidth, timeWidth, showsTags, showsDownloadStatus)
+    }
+
+    private func appleMusicResultRow(_ item: AppleMusicSearchResult) -> some View {
+        let song = item.asMusicRecognitionItem()
+        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
+        let visibleTags = visibleTags(for: song)
+
+        return GeometryReader { proxy in
+            let layout = musicRowLayout(
+                containerWidth: proxy.size.width,
+                hasTags: !visibleTags.isEmpty,
+                hasDownloadStatus: !downloadJobs.isEmpty,
+                includesSafari: URL(string: item.appleMusicURL) != nil
+            )
+
+            HStack(alignment: .center, spacing: 14) {
+                musicArtwork(urlString: item.artworkURL, title: item.title, artist: item.artist)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title.isEmpty ? "未知曲目" : item.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(item.artist.isEmpty ? "未知作者" : item.artist)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(width: layout.infoWidth, alignment: .leading)
+
+                if layout.showsTags {
+                    MusicTagStrip(tags: visibleTags)
+                        .frame(width: layout.tagWidth, alignment: .leading)
+                }
+
+                Text(item.duration > 0 ? formatDuration(item.duration) : "--:--")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                    .frame(width: layout.timeWidth, alignment: .trailing)
+
+                if layout.showsDownloadStatus {
+                    MusicDownloadInlineStatusStack(downloadJobs: downloadJobs)
+                        .frame(width: layout.statusWidth, alignment: .leading)
+                }
+
+                musicDownloadButtons(song: song)
+
+                if let url = URL(string: item.appleMusicURL) {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Image(systemName: "safari")
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("打开 AM 页面")
+                }
+            }
+            .padding(9)
+            .frame(width: proxy.size.width, height: 86, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+        }
+        .frame(height: 86)
+    }
+
+    private func recognizedMusicAssetRow(_ asset: RecognizedMusicAsset) -> some View {
+        let downloadJobs = musicDownloadJobs(for: asset.song, in: libraryStore.musicDownloadJobs)
+        let visibleTags = visibleTags(for: asset.song)
+
+        return GeometryReader { proxy in
+            let layout = musicRowLayout(
+                containerWidth: proxy.size.width,
+                hasTags: !visibleTags.isEmpty,
+                hasDownloadStatus: !downloadJobs.isEmpty,
+                includesSafari: false
+            )
+
+            HStack(alignment: .center, spacing: 14) {
+                Button {
+                    goHome(asset.videoPath, asset.song.detectedAt)
+                } label: {
+                    HStack(spacing: 10) {
+                        musicArtwork(
+                            urlString: asset.song.artworkURL,
+                            title: asset.song.title,
+                            artist: asset.song.artist
+                        )
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(asset.song.title.isEmpty ? "未知曲目" : asset.song.title)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Text(asset.song.artist.isEmpty ? "未知作者" : asset.song.artist)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Text(asset.videoName)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .frame(width: layout.infoWidth, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("跳到视频中此段落")
+
+                if layout.showsTags {
+                    MusicTagStrip(tags: visibleTags)
+                        .frame(width: layout.tagWidth, alignment: .leading)
+                }
+
+                Button {
+                    goHome(asset.videoPath, asset.song.detectedAt)
+                } label: {
+                    Text(clockText(asset.song.detectedAt))
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                        .frame(width: layout.timeWidth, alignment: .trailing)
+                }
+                .buttonStyle(.plain)
+                .help("跳到原视频时间点")
+
+                if layout.showsDownloadStatus {
+                    MusicDownloadInlineStatusStack(downloadJobs: downloadJobs)
+                        .frame(width: layout.statusWidth, alignment: .leading)
+                }
+
+                musicDownloadButtons(song: asset.song)
+            }
+            .padding(9)
+            .frame(width: proxy.size.width, height: 86, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+        }
+        .frame(height: 86)
+    }
+
+    private func musicDownloadButtons(song: MusicRecognitionItem) -> some View {
+        let jobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
+        let originalJob = jobs.first { $0.type == .original }
+        let instrumentalJob = jobs.first { $0.type == .instrumental }
+
+        return HStack(spacing: 6) {
+            musicDownloadButton(song: song, type: .original, job: originalJob)
+            musicDownloadButton(song: song, type: .instrumental, job: instrumentalJob)
+        }
+        .frame(width: 160, alignment: .trailing)
+    }
+
+    private func musicDownloadButton(
+        song: MusicRecognitionItem,
+        type: MusicDownloadJob.DownloadType,
+        job: MusicDownloadJob?
+    ) -> some View {
+        let isDownloaded = completedMusicFileURL(for: job) != nil
+        let isActive = job.map { isActiveDownloadStatus($0.status) } ?? false
+
+        return Button {
+            if let url = completedMusicFileURL(for: job) {
+                NSWorkspace.shared.open(url)
+            } else {
+                libraryStore.downloadMusic(song: song, type: type)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: musicDownloadIcon(type: type, job: job))
+                    .font(.system(size: 11, weight: .semibold))
+                Text(musicDownloadTitle(type: type, job: job))
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+            }
+            .foregroundStyle(isDownloaded ? .white.opacity(0.94) : .white.opacity(isActive ? 0.86 : 0.56))
+            .frame(width: 76, height: 28)
+            .background(.white.opacity(isDownloaded ? 0.15 : (isActive ? 0.10 : 0.045)))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(.white.opacity(isDownloaded ? 0.18 : 0.07), lineWidth: 0.7)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isActive)
+        .help(musicDownloadHelp(type: type, job: job))
+        .contextMenu {
+            Button {
+                libraryStore.downloadMusic(song: song, type: type)
+            } label: {
+                Label("重新下载\(type.label)", systemImage: "arrow.clockwise")
             }
         }
     }
@@ -9327,7 +11388,7 @@ private struct AudioWorkspaceView: View {
         }
     }
 
-    private func audioToolbarIcon(systemName: String, size: CGFloat) -> some View {
+    private func toolbarIcon(systemName: String, size: CGFloat) -> some View {
         Image(systemName: systemName)
             .font(.system(size: size, weight: .semibold))
             .symbolRenderingMode(.monochrome)
@@ -9339,150 +11400,36 @@ private struct AudioWorkspaceView: View {
             )
     }
 
-    private func musicAssetRow(_ asset: RecognizedMusicAsset) -> some View {
-        Button {
-            goHome(asset.videoPath, asset.song.detectedAt)
-        } label: {
-            HStack(spacing: 10) {
-                musicArtwork(asset.song)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(asset.song.title.isEmpty ? "未知音乐" : asset.song.title)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        if !asset.song.artist.isEmpty {
-                            Text(asset.song.artist)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Text("\(asset.videoName) · 出现于 \(clockText(asset.song.detectedAt))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-
-                    let tags = sourceTags(for: asset.videoPath)
-                    if !tags.isEmpty {
-                        ScaledCardTagCloud(tags: tags)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                MusicRecognitionActionColumn(song: asset.song)
-            }
-            .padding(9)
-            .frame(minHeight: 64)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(.white.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.white.opacity(0.07), lineWidth: 0.7)
-        }
-        .help("跳到视频中此段落")
-    }
-
-    private func audioClipAssetRow(_ clip: AudioClipItem) -> some View {
-        HStack(spacing: 10) {
-            Button {
-                openAudioClip(clip)
-            } label: {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.orange)
-                    .frame(width: 28, height: 28)
-                    .background(.orange.opacity(0.13))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("播放音效")
-            .disabled(libraryStore.audioClipFileURL(for: clip) == nil)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(clip.videoName)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text("\(clockText(clip.inTime)) - \(clockText(clip.outTime))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                HStack(spacing: 8) {
-                    Text(formatDuration(clip.outTime - clip.inTime))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    let tags = combinedTags(for: clip)
-                    if !tags.isEmpty {
-                        ScaledCardTagCloud(tags: tags)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            InlineTagEditorButton(
-                title: "声音标签",
-                tags: clip.tags,
-                suggestedTags: audioTagSuggestions(for: clip),
-                buttonSize: 24,
-                onAdd: { libraryStore.addAudioTag($0, to: clip) },
-                onRemove: { libraryStore.removeAudioTag($0, from: clip) }
-            )
-
-            Button {
-                goHome(clip.videoPath, clip.inTime)
-            } label: {
-                Image(systemName: "arrowshape.turn.up.left")
-            }
-            .buttonStyle(.borderless)
-            .help("回到原视频")
-        }
-        .padding(10)
-        .frame(minHeight: 64)
-        .background(.white.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.white.opacity(0.07), lineWidth: 0.7)
-        }
-        .itemProviderDrag(audioClipDragProvider(for: clip))
-        .help("可拖出音效文件")
-    }
-
-    private func musicArtwork(_ song: MusicRecognitionItem) -> some View {
-        AsyncImage(url: URL(string: song.artworkURL)) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .failure, .empty:
-                Image(systemName: "music.note")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.pink.opacity(0.86))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.pink.opacity(0.12))
-            @unknown default:
-                Color.white.opacity(0.08)
-            }
-        }
-        .frame(width: 42, height: 42)
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+    private func musicArtwork(urlString: String, title: String = "", artist: String = "") -> some View {
+        MusicArtworkView(
+            urlString: urlString,
+            title: title,
+            artist: artist,
+            shouldLoad: !isMusicListScrolling
+        )
+            .frame(width: 56, height: 56)
     }
 
     private var musicAssets: [RecognizedMusicAsset] {
-        libraryStore.musicsByVideoPath.flatMap { path, songs in
-            let videoName = libraryStore.selectedVideo(for: path)?.name
-                ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-            return songs.map { song in
-                RecognizedMusicAsset(videoPath: path, videoName: videoName, song: song)
+        let videoNameByPath = Dictionary(
+            uniqueKeysWithValues: libraryStore.videos.map { ($0.url.path, $0.name) }
+        )
+        let localNameByPath = Dictionary(
+            uniqueKeysWithValues: libraryStore.localMusicAssets.map { ($0.filePath, $0.title) }
+        )
+
+        return libraryStore.musicsByVideoPath.flatMap { path, songs in
+            guard videoNameByPath[path] != nil || localNameByPath[path] != nil else {
+                return [RecognizedMusicAsset]()
             }
+            let videoName = videoNameByPath[path]
+                ?? localNameByPath[path]
+                ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            return songs
+                .filter(isAMReadySong)
+                .map { song in
+                    RecognizedMusicAsset(videoPath: path, videoName: videoName, song: song)
+                }
         }
         .sorted { lhs, rhs in
             if lhs.videoName == rhs.videoName {
@@ -9492,63 +11439,317 @@ private struct AudioWorkspaceView: View {
         }
     }
 
-    private var filteredMusicAssets: [RecognizedMusicAsset] {
-        guard !selectedSoundTags.isEmpty else { return musicAssets }
-        return musicAssets.filter { asset in
-            let tags = Set(sourceTags(for: asset.videoPath))
-            return selectedSoundTags.allSatisfy { tags.contains($0) }
-        }
-    }
+    private var folderMusicRecognitionStatusText: String? {
+        let assets = libraryStore.localMusicAssets
+        guard !assets.isEmpty else { return nil }
 
-    private var filteredAudioClips: [AudioClipItem] {
-        libraryStore.audioClips
-            .filter { clip in
-                guard !selectedSoundTags.isEmpty else { return true }
-                let tags = Set(combinedTags(for: clip))
-                return selectedSoundTags.allSatisfy { tags.contains($0) }
+        let unresolved = assets.filter { asset in
+            let songs = libraryStore.musicsByVideoPath[asset.filePath, default: []]
+            return songs.allSatisfy { !isAMReadySong($0) }
+        }
+        guard !unresolved.isEmpty else { return nil }
+
+        if unresolved.contains(where: { asset in
+            if case .running = libraryStore.musicDetectionStatusByVideoPath[asset.filePath] {
+                return true
             }
-            .sorted { $0.createdAt > $1.createdAt }
-    }
-
-    private var soundFilterTags: [String] {
-        let audioSourcePaths = Set(libraryStore.audioClips.map(\.videoPath))
-        let musicSourcePaths = Set(libraryStore.musicsByVideoPath.keys)
-        let sourceTags = audioSourcePaths.union(musicSourcePaths).flatMap {
-            libraryStore.tagsByVideoPath[$0, default: []]
+            return false
+        }) {
+            return "正在识别文件夹内音乐"
         }
-        return Array(Set(libraryStore.allAudioTags + sourceTags)).sorted()
+
+        let failedCount = unresolved.filter { asset in
+            if case .failed = libraryStore.musicDetectionStatusByVideoPath[asset.filePath] {
+                return true
+            }
+            return false
+        }.count
+
+        if failedCount == unresolved.count {
+            return "文件夹内音乐暂未识别成功"
+        }
+        return "等待识别文件夹内音乐"
     }
 
-    private func sourceTags(for videoPath: String) -> [String] {
-        libraryStore.tagsByVideoPath[videoPath, default: []]
+    private var filteredSearchResults: [AppleMusicSearchResult] {
+        searchResults.filter { item in
+            let song = item.asMusicRecognitionItem()
+            guard isAMReadySong(song) else { return false }
+            return matchesSelectedMusicFilters(for: song)
+        }
     }
 
-    private func combinedTags(for clip: AudioClipItem) -> [String] {
-        Array(Set(clip.tags + sourceTags(for: clip.videoPath))).sorted()
+    private func filteredRecognizedMusicAssets(from assets: [RecognizedMusicAsset]) -> [RecognizedMusicAsset] {
+        let query = normalizedSearch(searchText)
+        guard !query.isEmpty || !selectedMusicFilters.isEmpty else {
+            return assets
+        }
+        return assets.filter { asset in
+            let matchesSearch = query.isEmpty
+                || normalizedSearch(asset.song.title).contains(query)
+                || normalizedSearch(asset.song.artist).contains(query)
+                || normalizedSearch(asset.videoName).contains(query)
+                || visibleTags(for: asset.song).contains { normalizedSearch($0).contains(query) }
+            guard matchesSearch else { return false }
+            return matchesSelectedMusicFilters(for: asset)
+        }
     }
 
-    private func audioTagSuggestions(for clip: AudioClipItem) -> [String] {
-        Array(Set(libraryStore.allAudioTags + sourceTags(for: clip.videoPath))).sorted()
+    private func musicFilterValues(from assets: [RecognizedMusicAsset]) -> [MusicFilterKind: [String]] {
+        let titleValues = assets.map(\.song.title)
+        let artistValues = assets.map(\.song.artist)
+        let tagValues = assets.flatMap { visibleTags(for: $0.song) }
+
+        return [
+            .title: cleanedMusicFilterValues(titleValues),
+            .artist: cleanedMusicFilterValues(artistValues),
+            .tag: cleanedMusicFilterValues(tagValues)
+        ]
     }
 
-    private func toggleSoundTag(_ tag: String) {
-        if selectedSoundTags.contains(tag) {
-            selectedSoundTags.remove(tag)
+    private func cleanedMusicFilterValues(_ values: [String]) -> [String] {
+        Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }))
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private var selectedMusicTagFilterCount: Int {
+        selectedMusicFilters.filter { $0.kind == .tag }.count
+    }
+
+    private var selectedMusicMetadataFilterCount: Int {
+        selectedMusicFilters.filter { $0.kind != .tag }.count
+    }
+
+    private func toggleMusicFilter(_ option: MusicFilterOption) {
+        if selectedMusicFilters.contains(option) {
+            selectedMusicFilters.remove(option)
         } else {
-            selectedSoundTags.insert(tag)
+            selectedMusicFilters.insert(option)
         }
     }
 
-    private func openAudioClip(_ clip: AudioClipItem) {
-        guard let fileURL = libraryStore.audioClipFileURL(for: clip) else { return }
-        NSWorkspace.shared.open(fileURL)
+    private func matchesSelectedMusicFilters(for asset: RecognizedMusicAsset) -> Bool {
+        matchesSelectedMusicFilters(for: asset.song)
     }
 
-    private func audioClipDragProvider(for clip: AudioClipItem) -> (() -> NSItemProvider)? {
-        guard libraryStore.audioClipFileURL(for: clip) != nil else { return nil }
-        return {
-            libraryStore.audioClipFileProvider(for: clip) ?? NSItemProvider()
+    private func matchesSelectedMusicFilters(for song: MusicRecognitionItem) -> Bool {
+        guard !selectedMusicFilters.isEmpty else { return true }
+        let options = Set(filterOptions(for: song))
+        return selectedMusicFilters.allSatisfy { options.contains($0) }
+    }
+
+    private func filterOptions(for song: MusicRecognitionItem) -> [MusicFilterOption] {
+        let metadata = [
+            MusicFilterOption(kind: .title, value: song.title.trimmingCharacters(in: .whitespacesAndNewlines)),
+            MusicFilterOption(kind: .artist, value: song.artist.trimmingCharacters(in: .whitespacesAndNewlines))
+        ]
+        let tags = visibleTags(for: song).map { MusicFilterOption(kind: .tag, value: $0) }
+        return (metadata + tags).filter { !$0.value.isEmpty }
+    }
+
+    private func visibleTags(for song: MusicRecognitionItem) -> [String] {
+        MusicRecognitionItem.cleanedTags(song.tags)
+            .filter { !isMetadataValue($0, for: song) }
+    }
+
+    private func isMetadataValue(_ value: String, for song: MusicRecognitionItem) -> Bool {
+        let valueKey = normalizedSearch(value)
+        guard !valueKey.isEmpty else { return true }
+
+        let titleKey = normalizedSearch(song.title)
+        let artistKey = normalizedSearch(song.artist)
+        if valueKey == titleKey || valueKey == artistKey {
+            return true
         }
+
+        let separators = CharacterSet(charactersIn: ",，/、·&")
+        let artistParts = song.artist
+            .components(separatedBy: separators)
+            .map(normalizedSearch)
+            .filter { !$0.isEmpty }
+        return artistParts.contains(valueKey)
+    }
+
+    private func isAMReadySong(_ song: MusicRecognitionItem) -> Bool {
+        let hasTitle = !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasArtist = !song.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasArtwork = normalizedMusicArtworkURL(song.artworkURL) != nil
+            || !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasAMLink = !song.appleMusicURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return hasTitle && hasArtist && hasArtwork && hasAMLink
+    }
+
+    private func runAppleMusicSearch() async {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchResults = []
+            searchMessage = nil
+            isSearching = false
+            return
+        }
+
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        guard !Task.isCancelled else { return }
+
+        isSearching = true
+        searchMessage = nil
+        libraryStore.prepareExternalServiceWork()
+        do {
+            let results = try await LibraryStore.searchAppleMusic(query: query)
+            guard !Task.isCancelled else { return }
+            searchResults = results
+            searchMessage = results.isEmpty ? "没有搜索结果" : nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchResults = []
+            searchMessage = "搜索失败"
+        }
+        isSearching = false
+    }
+
+}
+
+nonisolated private func normalizedSearch(_ text: String) -> String {
+    text.trimmingCharacters(in: .whitespacesAndNewlines)
+        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        .lowercased()
+}
+
+private func fileSizeText(_ size: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+}
+
+private func fileDragProvider(for fileURL: URL, suggestedName: String) -> NSItemProvider {
+    let provider = NSItemProvider()
+    provider.suggestedName = suggestedName
+    let typeIdentifier = UTType(filenameExtension: fileURL.pathExtension)?.identifier ?? UTType.data.identifier
+
+    provider.registerFileRepresentation(
+        forTypeIdentifier: typeIdentifier,
+        fileOptions: .openInPlace,
+        visibility: .all
+    ) { completion in
+        let progress = Progress(totalUnitCount: 1)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            completion(nil, true, NSError(
+                domain: "LapianBao.FileDrag",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "文件不存在"]
+            ))
+            return progress
+        }
+
+        progress.completedUnitCount = 1
+        completion(fileURL, true, nil)
+        return progress
+    }
+
+    provider.registerObject(fileURL as NSURL, visibility: .all)
+    return provider
+}
+
+private enum AudioFilterKind: String, CaseIterable, Hashable {
+    case name = "名字"
+    case tag = "标签"
+}
+
+private struct AudioFilterOption: Identifiable, Hashable {
+    var kind: AudioFilterKind
+    var value: String
+
+    var id: String { "\(kind.rawValue)|\(value)" }
+}
+
+private enum MusicFilterKind: String, CaseIterable, Hashable {
+    case title = "标题"
+    case artist = "作者"
+    case tag = "标签"
+
+    var sortOrder: Int {
+        switch self {
+        case .title: return 0
+        case .artist: return 1
+        case .tag: return 2
+        }
+    }
+}
+
+private struct MusicFilterOption: Identifiable, Hashable {
+    var kind: MusicFilterKind
+    var value: String
+
+    var id: String { "\(kind.rawValue)|\(value)" }
+}
+
+private func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {
+    guard
+        let job,
+        case .succeeded = job.status,
+        let filePath = job.filePath,
+        FileManager.default.fileExists(atPath: filePath)
+    else { return nil }
+    return URL(fileURLWithPath: filePath)
+}
+
+private func isActiveDownloadStatus(_ status: RemoteImportJob.Status) -> Bool {
+    switch status {
+    case .importing, .transcoding, .finalizing:
+        return true
+    default:
+        return false
+    }
+}
+
+private func musicDownloadIcon(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
+    guard let job else {
+        return type == .original ? "arrow.down.circle" : "waveform"
+    }
+    switch job.status {
+    case .succeeded:
+        return type == .original ? "play.circle.fill" : "waveform.circle.fill"
+    case .importing, .transcoding, .finalizing:
+        return "arrow.down.circle.fill"
+    case .failed:
+        return "exclamationmark.circle.fill"
+    case .paused:
+        return "pause.circle.fill"
+    case .idle:
+        return type == .original ? "arrow.down.circle" : "waveform"
+    }
+}
+
+private func musicDownloadTitle(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
+    guard let job else { return type.label }
+    switch job.status {
+    case .succeeded:
+        return type.label
+    case .importing, .transcoding, .finalizing:
+        if let progress = job.downloadProgress {
+            return "\(Int((normalizedProgressFraction(progress) * 100).rounded()))%"
+        }
+        return "下载中"
+    case .failed:
+        return "失败"
+    case .paused:
+        return "暂停"
+    case .idle:
+        return type.label
+    }
+}
+
+private func musicDownloadHelp(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
+    guard let job else { return "下载\(type.label)" }
+    switch job.status {
+    case .succeeded:
+        return "播放已下载\(type.label)"
+    case .importing, .transcoding, .finalizing:
+        return "正在下载\(type.label)"
+    case .failed(let message):
+        return message.isEmpty ? "\(type.label)下载失败" : message
+    case .paused:
+        return "\(type.label)下载已暂停"
+    case .idle:
+        return "下载\(type.label)"
     }
 }
 
@@ -9569,6 +11770,7 @@ private struct MusicRecognitionActionColumn: View {
     var body: some View {
         VStack(spacing: 4) {
             Button {
+                libraryStore.prepareExternalServiceWork()
                 openFirstYouTubeVideo(for: song)
             } label: {
                 actionIcon("play.rectangle.fill", glyphWidth: 18, glyphHeight: 14)
@@ -9627,6 +11829,7 @@ private struct ExportMusicRecognitionRow: View {
     @EnvironmentObject private var libraryStore: LibraryStore
 
     let song: MusicRecognitionItem
+    let videoPath: String
     let onJump: () -> Void
 
     var body: some View {
@@ -9651,6 +11854,10 @@ private struct ExportMusicRecognitionRow: View {
                             Text("出现于 \(clockText(song.detectedAt))")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.tertiary)
+                            let musicTags = song.displayTags
+                            if !musicTags.isEmpty {
+                                MusicTagStrip(tags: musicTags)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -9671,22 +11878,8 @@ private struct ExportMusicRecognitionRow: View {
     }
 
     private var artwork: some View {
-        AsyncImage(url: URL(string: song.artworkURL)) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .failure, .empty:
-                Image(systemName: "music.note")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.pink.opacity(0.86))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.pink.opacity(0.12))
-            @unknown default:
-                Color.white.opacity(0.08)
-            }
-        }
+        MusicArtworkView(urlString: song.artworkURL, title: song.title, artist: song.artist)
         .frame(width: 42, height: 42)
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
 
@@ -9694,6 +11887,7 @@ private struct MusicRecognitionRow: View {
     @EnvironmentObject private var libraryStore: LibraryStore
 
     let song: MusicRecognitionItem
+    let videoPath: String
     let onJump: () -> Void
 
     var body: some View {
@@ -9703,22 +11897,8 @@ private struct MusicRecognitionRow: View {
             HStack(alignment: .center, spacing: 9) {
                 Button(action: onJump) {
                     HStack(spacing: 9) {
-                        AsyncImage(url: URL(string: song.artworkURL)) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image.resizable().scaledToFill()
-                            case .failure, .empty:
-                                Image(systemName: "music.note")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.pink.opacity(0.86))
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    .background(.pink.opacity(0.12))
-                            @unknown default:
-                                Color.white.opacity(0.08)
-                            }
-                        }
+                        MusicArtworkView(urlString: song.artworkURL, title: song.title, artist: song.artist)
                         .frame(width: 42, height: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(song.title.isEmpty ? "未知音乐" : song.title)
@@ -9733,6 +11913,10 @@ private struct MusicRecognitionRow: View {
                             Text("出现于 \(clockText(song.detectedAt))")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.tertiary)
+                            let musicTags = song.displayTags
+                            if !musicTags.isEmpty {
+                                MusicTagStrip(tags: musicTags)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -9757,6 +11941,263 @@ private struct MusicRecognitionRow: View {
         }
     }
 
+}
+
+private enum MusicArtworkCache {
+    static let shared: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 256
+        cache.totalCostLimit = 96 * 1024 * 1024
+        return cache
+    }()
+}
+
+private actor MusicArtworkLoadGate {
+    static let shared = MusicArtworkLoadGate()
+
+    private let limit = 6
+    private var activeCount = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if activeCount < limit {
+            activeCount += 1
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        guard let nextWaiter = waiters.first else {
+            activeCount = max(0, activeCount - 1)
+            return
+        }
+
+        waiters.removeFirst()
+        nextWaiter.resume()
+    }
+}
+
+private actor MusicArtworkFallbackResolver {
+    static let shared = MusicArtworkFallbackResolver()
+
+    private var cachedURLs: [String: URL?] = [:]
+
+    func artworkURL(title rawTitle: String, artist rawArtist: String) async -> URL? {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let artist = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = [normalizedSearch(artist), normalizedSearch(title)].joined(separator: "|")
+        guard key != "|" else { return nil }
+
+        if cachedURLs.keys.contains(key) {
+            return cachedURLs[key] ?? nil
+        }
+
+        let query = [artist, title]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !query.isEmpty else {
+            cachedURLs[key] = nil
+            return nil
+        }
+
+        do {
+            let results = try await LibraryStore.searchAppleMusic(query: query)
+            let url = bestArtworkURL(in: results, title: title, artist: artist)
+            cachedURLs[key] = url
+            return url
+        } catch {
+            cachedURLs[key] = nil
+            return nil
+        }
+    }
+
+    private func bestArtworkURL(
+        in results: [AppleMusicSearchResult],
+        title: String,
+        artist: String
+    ) -> URL? {
+        results
+            .compactMap { result -> (score: Int, url: URL)? in
+                guard let url = normalizedMusicArtworkURL(result.artworkURL) else { return nil }
+                return (musicArtworkMatchScore(result: result, title: title, artist: artist), url)
+            }
+            .sorted { lhs, rhs in lhs.score > rhs.score }
+            .first?
+            .url
+    }
+
+    private func musicArtworkMatchScore(
+        result: AppleMusicSearchResult,
+        title: String,
+        artist: String
+    ) -> Int {
+        let targetTitle = normalizedSearch(title)
+        let targetArtist = normalizedSearch(artist)
+        let resultTitle = normalizedSearch(result.title)
+        let resultArtist = normalizedSearch(result.artist)
+        var score = 0
+
+        if !targetTitle.isEmpty {
+            if resultTitle == targetTitle {
+                score += 8
+            } else if !resultTitle.isEmpty,
+                      resultTitle.contains(targetTitle) || targetTitle.contains(resultTitle) {
+                score += 4
+            }
+        }
+
+        if !targetArtist.isEmpty {
+            if resultArtist == targetArtist {
+                score += 6
+            } else if !resultArtist.isEmpty,
+                      resultArtist.contains(targetArtist) || targetArtist.contains(resultArtist) {
+                score += 3
+            }
+        }
+
+        return score
+    }
+}
+
+private struct MusicArtworkView: View {
+    let urlString: String
+    var title: String = ""
+    var artist: String = ""
+    var cornerRadius: CGFloat = 5
+    var shouldLoad = true
+
+    @State private var image: NSImage?
+    @State private var didFail = false
+
+    private var artworkURL: URL? {
+        normalizedMusicArtworkURL(urlString)
+    }
+
+    private var loadKey: String {
+        [urlString, title, artist, shouldLoad ? "load" : "pause"].joined(separator: "|")
+    }
+
+    private var hasPotentialArtwork: Bool {
+        artworkURL != nil
+            || !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                placeholder
+                    .redacted(reason: hasPotentialArtwork && !didFail ? .placeholder : [])
+            }
+        }
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .task(id: loadKey) {
+            guard shouldLoad else {
+                image = nil
+                didFail = false
+                return
+            }
+            await loadArtwork()
+        }
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "music.note")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(.pink.opacity(0.86))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.pink.opacity(0.12))
+    }
+
+    private func loadArtwork() async {
+        image = nil
+        didFail = false
+
+        if let artworkURL, await loadImage(from: artworkURL) {
+            return
+        }
+
+        if let fallbackURL = await MusicArtworkFallbackResolver.shared.artworkURL(title: title, artist: artist),
+           fallbackURL != artworkURL,
+           await loadImage(from: fallbackURL) {
+            return
+        }
+
+        guard !Task.isCancelled else { return }
+        image = nil
+        didFail = true
+    }
+
+    private func loadImage(from artworkURL: URL) async -> Bool {
+        if let cached = MusicArtworkCache.shared.object(forKey: artworkURL as NSURL) {
+            image = cached
+            didFail = false
+            return true
+        }
+
+        do {
+            var request = URLRequest(url: artworkURL)
+            request.timeoutInterval = 12
+            request.cachePolicy = .returnCacheDataElseLoad
+            request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+            await MusicArtworkLoadGate.shared.acquire()
+            defer {
+                Task {
+                    await MusicArtworkLoadGate.shared.release()
+                }
+            }
+            guard !Task.isCancelled else { return false }
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<300).contains(httpResponse.statusCode) {
+                throw URLError(.badServerResponse)
+            }
+            guard let loadedImage = NSImage(data: data) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            MusicArtworkCache.shared.setObject(loadedImage, forKey: artworkURL as NSURL, cost: data.count)
+            guard !Task.isCancelled else { return false }
+            image = loadedImage
+            didFail = false
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
+nonisolated private func normalizedMusicArtworkURL(_ rawURLString: String) -> URL? {
+    var text = rawURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+
+    if text.hasPrefix("//") {
+        text = "https:" + text
+    } else if text.hasPrefix("http://") {
+        text = "https://" + String(text.dropFirst("http://".count))
+    }
+
+    text = text.replacingOccurrences(
+        of: #"(\d+)x(\d+)bb(\.[A-Za-z0-9]+)$"#,
+        with: "512x512bb$3",
+        options: .regularExpression
+    )
+
+    if let url = URL(string: text) {
+        return url
+    }
+
+    return URL(string: text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
 }
 
 private func youTubeMusicQuery(for song: MusicRecognitionItem) -> String {
@@ -9814,17 +12255,53 @@ private struct MusicDownloadExtensionStack: View {
     }
 }
 
-private struct AudioClipWaveformStrip: View {
+private struct MusicDownloadInlineStatusStack: View {
+    let downloadJobs: [MusicDownloadJob]
+
+    var body: some View {
+        if downloadJobs.isEmpty {
+            Color.clear
+                .frame(height: 42)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(downloadJobs) { job in
+                    MusicDownloadStatusView(job: job, isCompact: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct AudioWaveformScrollPlaceholder: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.black.opacity(0.14))
+            .overlay {
+                Capsule()
+                    .fill(.white.opacity(0.08))
+                    .frame(height: 1)
+                    .padding(.horizontal, 10)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(.white.opacity(0.06), lineWidth: 0.8)
+            }
+            .allowsHitTesting(false)
+    }
+}
+
+private struct AudioClipWaveformStrip: View, Equatable {
     let samples: [Double]?
     let isActive: Bool
     var progress: Double = 0
 
-    private let placeholderSamples: [Double] = (0..<72).map { index in
+    private static let placeholderSamples: [Double] = (0..<72).map { index in
         0.13 + 0.17 * abs(sin(Double(index) * 0.58))
     }
 
     private var displayedSamples: [Double] {
-        guard let samples, !samples.isEmpty else { return placeholderSamples }
+        guard let samples, !samples.isEmpty else { return Self.placeholderSamples }
         return samples
     }
 
@@ -9843,6 +12320,8 @@ private struct AudioClipWaveformStrip: View {
             let baseOpacity = isPlaceholder ? 0.18 : (isActive ? 0.86 : 0.48)
             let tint = isActive ? Color.orange : Color.white
             let clampedProgress = min(1, max(0, progress))
+            var basePath = Path()
+            var playedPath = Path()
 
             for (index, sample) in values.enumerated() {
                 let value = min(1, max(0.04, sample))
@@ -9860,9 +12339,16 @@ private struct AudioClipWaveformStrip: View {
                 )
                 let sampleProgress = Double(index + 1) / Double(values.count)
                 let played = isActive && sampleProgress <= clampedProgress
-                let barColor = played ? Color.white : tint
-                let opacity = played ? 0.92 : baseOpacity
-                context.fill(path, with: .color(barColor.opacity(opacity)))
+                if played {
+                    playedPath.addPath(path)
+                } else {
+                    basePath.addPath(path)
+                }
+            }
+
+            context.fill(basePath, with: .color(tint.opacity(baseOpacity)))
+            if isActive {
+                context.fill(playedPath, with: .color(Color.white.opacity(0.92)))
             }
 
             if isActive {
@@ -9881,6 +12367,7 @@ private struct AudioClipWaveformStrip: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(isActive ? Color.orange.opacity(0.22) : .white.opacity(0.08), lineWidth: 0.8)
         }
+        .allowsHitTesting(false)
     }
 }
 
@@ -9924,7 +12411,7 @@ private struct MusicDownloadStatusView: View {
             fallbackName = job.type.label
         }
 
-        let baseName = title?.isEmpty == false ? title! : fallbackName
+        let baseName = title.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackName
         return job.type == .instrumental ? "\(baseName)（伴奏版）" : baseName
     }
 
@@ -9936,7 +12423,7 @@ private struct MusicDownloadStatusView: View {
     }
 
     private var audioFileDragProvider: (() -> NSItemProvider)? {
-        guard let previewFileURL else { return nil }
+        guard canPreviewAudio, let previewFileURL else { return nil }
         let suggestedName = cleanedSuggestedFilename ?? previewFileURL.lastPathComponent
         return {
             let provider = NSItemProvider()
@@ -10380,7 +12867,8 @@ private struct TranscriptTimelineChapter: Identifiable, Equatable {
 }
 
 private enum LocalTranscriptTimelineAnalyzer {
-    private static let endpoint = URL(string: "http://127.0.0.1:11434/api/generate")!
+    private static let endpoint = URL(string: "http://127.0.0.1:11434/api/generate")
+        ?? URL(fileURLWithPath: "/dev/null")
     private static let model = "qwen3:4b-instruct"
 
     private struct RequestBody: Encodable {
@@ -10615,7 +13103,7 @@ private struct ContentWorkspaceView: View {
                         Button {
                             libraryStore.exportTranscriptMarkdown(video: video)
                         } label: {
-                            Label("导出字幕", systemImage: "doc.text")
+                            Label("导出字幕", systemImage: "square.and.arrow.up")
                         }
                     }
                 }
@@ -10963,6 +13451,7 @@ private struct ContentWorkspaceView: View {
         guard !segments.isEmpty else { return }
         let authorName = libraryStore.videoAuthorName(for: video)
         timelineStatus = .running(videoPath: video.url.path)
+        libraryStore.prepareExternalServiceWork()
 
         Task {
             do {
@@ -10983,646 +13472,277 @@ private struct ContentWorkspaceView: View {
     }
 }
 
-private enum ContentAnalysisAPIProvider: String, CaseIterable, Identifiable {
-    case openAI = "openai"
-    case anthropic = "anthropic"
-    case gemini = "gemini"
-    case deepSeek = "deepseek"
-    case custom = "custom"
-    case ollama = "ollama"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .openAI: return "OpenAI"
-        case .anthropic: return "Claude"
-        case .gemini: return "Gemini"
-        case .deepSeek: return "DeepSeek"
-        case .custom: return "自定义"
-        case .ollama: return "Ollama"
-        }
-    }
-}
-
-private enum SettingsPanel: String, CaseIterable, Identifiable {
-    case recognition
-    case api
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .recognition: return "识别管理"
-        case .api: return "API 接入"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .recognition: return "waveform.and.magnifyingglass"
-        case .api: return "network"
-        }
-    }
-}
-
-private enum RecognitionKind: String, CaseIterable, Identifiable {
-    case transcript
-    case scene
-    case music
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .transcript: return "字幕"
-        case .scene: return "画面"
-        case .music: return "音乐"
-        }
-    }
-}
-
 private struct SettingsWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
-    @State private var selectedPanel: SettingsPanel = .recognition
-    @State private var selectedRecognitionKind: RecognitionKind = .transcript
-    @State private var shortcutRefreshID = UUID()
-    @AppStorage("contentAnalysisProvider") private var providerRawValue = ContentAnalysisAPIProvider.openAI.rawValue
-    @AppStorage("openAIAPIKey") private var openAIAPIKey = ""
-    @AppStorage("openAIBaseURL") private var openAIBaseURL = "https://api.openai.com/v1"
-    @AppStorage("openAIModel") private var openAIModel = "gpt-4.1-mini"
-    @AppStorage("anthropicAPIKey") private var anthropicAPIKey = ""
-    @AppStorage("anthropicBaseURL") private var anthropicBaseURL = "https://api.anthropic.com"
-    @AppStorage("anthropicModel") private var anthropicModel = "claude-sonnet-4-5"
-    @AppStorage("geminiAPIKey") private var geminiAPIKey = ""
-    @AppStorage("geminiModel") private var geminiModel = "gemini-2.5-flash"
-    @AppStorage("deepSeekAPIKey") private var deepSeekAPIKey = ""
-    @AppStorage("deepSeekBaseURL") private var deepSeekBaseURL = "https://api.deepseek.com/v1"
-    @AppStorage("deepSeekModel") private var deepSeekModel = "deepseek-chat"
-    @AppStorage("customAPIProviderName") private var customAPIProviderName = ""
-    @AppStorage("customAPIKey") private var customAPIKey = ""
-    @AppStorage("customAPIBaseURL") private var customAPIBaseURL = ""
-    @AppStorage("customAPIModel") private var customAPIModel = ""
-    @AppStorage("ollamaTextModel") private var ollamaTextModel = "qwen3:4b-instruct"
-    @AppStorage("ollamaEndpoint") private var ollamaEndpoint = "http://127.0.0.1:11434"
-
-    private var provider: ContentAnalysisAPIProvider {
-        get { ContentAnalysisAPIProvider(rawValue: providerRawValue) ?? .openAI }
-        nonmutating set { providerRawValue = newValue.rawValue }
-    }
+    @AppStorage(LibraryStore.autoSceneBatchKey) private var autoSceneBatch = false
+    @AppStorage(LibraryStore.autoTranscriptBatchKey) private var autoTranscriptBatch = false
+    @AppStorage(LibraryStore.autoMusicDownloadBatchKey) private var autoMusicDownloadBatch = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                recognitionPanel
+            VStack(alignment: .leading, spacing: 12) {
+                downloaderSelfCheckCard()
 
-                Divider().opacity(0.32)
+                settingsTaskCard(
+                    title: "画面切分",
+                    icon: "rectangle.on.rectangle",
+                    countText: sceneCountText,
+                    job: libraryStore.sceneBatchJob,
+                    autoEnabled: $autoSceneBatch,
+                    startTitle: "开始切分",
+                    start: { libraryStore.startSceneBatch(onlyMissing: true) },
+                    stop: { libraryStore.cancelSceneBatch() },
+                    clear: { libraryStore.deleteAllSceneRecognitions() }
+                )
 
-                apiPanel
+                settingsTaskCard(
+                    title: "字幕识别",
+                    icon: "text.bubble",
+                    countText: transcriptCountText,
+                    job: libraryStore.transcriptBatchJob,
+                    autoEnabled: $autoTranscriptBatch,
+                    startTitle: "开始识别",
+                    start: { libraryStore.startTranscriptBatch(onlyMissing: true) },
+                    stop: { libraryStore.cancelTranscriptBatch() },
+                    clear: { libraryStore.deleteAllTranscripts() }
+                )
 
-                Divider().opacity(0.32)
-
-                shortcutsPanel
+                settingsTaskCard(
+                    title: "音乐下载",
+                    icon: "music.note.list",
+                    countText: musicDownloadCountText,
+                    job: libraryStore.musicDownloadBatchJob,
+                    autoEnabled: $autoMusicDownloadBatch,
+                    startTitle: "全下载",
+                    start: { libraryStore.startMusicDownloadBatch(types: MusicDownloadJob.DownloadType.allCases) },
+                    stop: { libraryStore.cancelMusicDownloads() },
+                    clear: { libraryStore.clearMusicDownloadState() }
+                )
             }
             .padding(.horizontal, 18)
-            .padding(.bottom, 20)
+            .padding(.vertical, 16)
             .frame(maxWidth: 900, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .scrollIndicators(.hidden)
+        .onAppear {
+            removeExternalAPISettings()
+        }
     }
 
-    private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(SettingsPanel.allCases) { panel in
-                Button {
-                    selectedPanel = panel
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: panel.icon)
-                            .font(.system(size: 13, weight: .medium))
-                            .frame(width: 18)
-                        Text(panel.title)
-                            .lineLimit(1)
-                        Spacer()
-                    }
-                    .font(.callout)
-                    .foregroundStyle(selectedPanel == panel ? .primary : .secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background {
-                        if selectedPanel == panel {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(.white.opacity(0.10))
+    private func downloaderSelfCheckCard() -> some View {
+        let report = libraryStore.downloaderSelfCheckReport
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: downloaderSelfCheckIcon(for: report))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(downloaderSelfCheckColor(for: report))
+                    .frame(width: 18)
+                Text("外部服务自检")
+                    .font(.headline.weight(.semibold))
+                Text(downloaderSelfCheckDateText(report))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: { libraryStore.startExternalServiceSelfCheck() }) {
+                    Label("立即自检", systemImage: "arrow.clockwise")
+                }
+                .disabled(report.isRunning)
+            }
+
+            if report.isRunning {
+                ProgressView()
+                    .controlSize(.small)
+                    .progressViewStyle(.linear)
+                    .tint(.orange)
+            }
+
+            Text(downloaderSelfCheckStatusText(report))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(5)
+
+            if !report.serviceChecks.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(report.serviceChecks) { item in
+                        HStack(spacing: 7) {
+                            Image(systemName: externalServiceCheckIcon(for: item.status))
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(externalServiceCheckColor(for: item.status))
+                                .frame(width: 14)
+                            Text(item.title)
+                                .font(.caption2.weight(.semibold))
+                                .frame(width: 110, alignment: .leading)
+                            Text(item.message)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 0)
                         }
                     }
                 }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(.top, 70)
-        .padding(.leading, 14)
-        .padding(.trailing, 12)
-        .padding(.bottom, 18)
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(selectedPanel.title)
-                .font(.title2.weight(.semibold))
-            Text(selectedPanel == .recognition ? "查看和管理本机字幕、画面、音乐识别队列。" : "配置云端内容分析服务，支持常见厂商和 OpenAI 兼容接口。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private var activeSettingsPanel: some View {
-        switch selectedPanel {
-        case .recognition:
-            recognitionPanel
-        case .api:
-            apiPanel
-        }
-    }
-
-    private var recognitionPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Picker("识别类型", selection: $selectedRecognitionKind) {
-                ForEach(RecognitionKind.allCases) { kind in
-                    Text(kind.title).tag(kind)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 420)
-
-            switch selectedRecognitionKind {
-            case .transcript:
-                recognitionManagementBlock(
-                    title: "字幕",
-                    job: libraryStore.transcriptBatchJob,
-                    startMissing: { libraryStore.startTranscriptBatch(onlyMissing: true) },
-                    restartAll: { libraryStore.startTranscriptBatch(onlyMissing: false) },
-                    pause: { libraryStore.pauseTranscriptBatch() },
-                    resume: { libraryStore.resumeTranscriptBatch() },
-                    stop: { libraryStore.cancelTranscriptBatch() }
-                ) {
-                    transcriptRecognitionTable
-                }
-            case .scene:
-                recognitionManagementBlock(
-                    title: "画面",
-                    job: libraryStore.sceneBatchJob,
-                    startMissing: { libraryStore.startSceneBatch(onlyMissing: true) },
-                    restartAll: { libraryStore.startSceneBatch(onlyMissing: false) },
-                    pause: { libraryStore.pauseSceneBatch() },
-                    resume: { libraryStore.resumeSceneBatch() },
-                    stop: { libraryStore.cancelSceneBatch() }
-                ) {
-                    sceneRecognitionTable
-                }
-            case .music:
-                recognitionManagementBlock(
-                    title: "音乐",
-                    job: libraryStore.musicBatchJob,
-                    startMissing: { libraryStore.startMusicBatch(onlyMissing: true) },
-                    restartAll: { libraryStore.startMusicBatch(onlyMissing: false) },
-                    pause: { libraryStore.pauseMusicBatch() },
-                    resume: { libraryStore.resumeMusicBatch() },
-                    stop: { libraryStore.cancelMusicBatch() }
-                ) {
-                    musicRecognitionTable
-                }
             }
         }
-    }
-
-    private var apiPanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            settingsSection("API 接入") {
-                Picker("供应商", selection: Binding(
-                    get: { provider },
-                    set: { provider = $0 }
-                )) {
-                    ForEach(ContentAnalysisAPIProvider.allCases) { provider in
-                        Text(provider.title).tag(provider)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(maxWidth: 320)
-
-                activeProviderSettings
-            }
+        .padding(14)
+        .background(.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
         }
     }
 
-    @ViewBuilder
-    private var activeProviderSettings: some View {
-        switch provider {
-        case .openAI:
-            settingsSecureField("API Key", text: $openAIAPIKey)
-        case .anthropic:
-            settingsSecureField("API Key", text: $anthropicAPIKey)
-        case .gemini:
-            settingsSecureField("API Key", text: $geminiAPIKey)
-        case .deepSeek:
-            settingsSecureField("API Key", text: $deepSeekAPIKey)
-        case .custom:
-            settingsTextField("服务名", text: $customAPIProviderName)
-            settingsTextField("Base URL", text: $customAPIBaseURL)
-            settingsSecureField("API Key", text: $customAPIKey)
-            settingsTextField("模型", text: $customAPIModel)
-        case .ollama:
-            settingsTextField("Endpoint", text: $ollamaEndpoint)
-            settingsTextField("文本模型", text: $ollamaTextModel)
-        }
-    }
-
-    private func providerFields(
+    private func settingsTaskCard(
         title: String,
-        baseURL: Binding<String>?,
-        apiKey: Binding<String>,
-        model: Binding<String>
-    ) -> some View {
-        settingsSection(title) {
-            if let baseURL {
-                settingsTextField("Base URL", text: baseURL)
-            }
-            settingsSecureField("API Key", text: apiKey)
-            settingsTextField("模型", text: model)
-        }
-    }
-
-    private var openAISection: some View {
-        settingsSection("OpenAI") {
-            settingsTextField("Base URL", text: $openAIBaseURL)
-            settingsSecureField("API Key", text: $openAIAPIKey)
-            settingsTextField("模型", text: $openAIModel)
-        }
-    }
-
-    private var anthropicSection: some View {
-        settingsSection("Claude") {
-            settingsTextField("Base URL", text: $anthropicBaseURL)
-            settingsSecureField("API Key", text: $anthropicAPIKey)
-            settingsTextField("模型", text: $anthropicModel)
-        }
-    }
-
-    private var geminiSection: some View {
-        settingsSection("Gemini") {
-            settingsSecureField("API Key", text: $geminiAPIKey)
-            settingsTextField("模型", text: $geminiModel)
-        }
-    }
-
-    private var deepSeekSection: some View {
-        settingsSection("DeepSeek") {
-            settingsTextField("Base URL", text: $deepSeekBaseURL)
-            settingsSecureField("API Key", text: $deepSeekAPIKey)
-            settingsTextField("模型", text: $deepSeekModel)
-        }
-    }
-
-    private var customAPISection: some View {
-        settingsSection("自定义 OpenAI 兼容 API") {
-            settingsTextField("服务名", text: $customAPIProviderName)
-            settingsTextField("Base URL", text: $customAPIBaseURL)
-            settingsSecureField("API Key", text: $customAPIKey)
-            settingsTextField("模型", text: $customAPIModel)
-        }
-    }
-
-    private var ollamaSection: some View {
-        settingsSection("本机 Ollama") {
-            settingsTextField("Endpoint", text: $ollamaEndpoint)
-            settingsTextField("文本模型", text: $ollamaTextModel)
-        }
-    }
-
-    private func settingsSection<Content: View>(
-        _ title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline.weight(.semibold))
-            VStack(alignment: .leading, spacing: 10) {
-                content()
-            }
-        }
-        .padding(.vertical, 8)
-    }
-
-    private func settingsTextField(_ title: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            TextField(title, text: text)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 520)
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    private func settingsSecureField(_ title: String, text: Binding<String>) -> some View {
-        LabeledContent(title) {
-            SecureField(title, text: text)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 520)
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    private var shortcutsPanel: some View {
-        settingsSection("快捷键") {
-            LazyVStack(alignment: .leading, spacing: 6) {
-                ForEach(PreviewShortcutAction.allCases) { action in
-                    shortcutRow(action)
-                }
-            }
-            .id(shortcutRefreshID)
-        }
-    }
-
-    private func shortcutRow(_ action: PreviewShortcutAction) -> some View {
-        let keyCode = action.keyCode
-        let hasConflict = PreviewShortcutAction.hasConflict(action: action, keyCode: keyCode)
-
-        return HStack(spacing: 10) {
-            Text(action.title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 120, alignment: .leading)
-
-            Picker(action.title, selection: Binding(
-                get: { action.keyCode },
-                set: { newKeyCode in
-                    if !PreviewShortcutAction.hasConflict(action: action, keyCode: newKeyCode) {
-                        action.setKeyCode(newKeyCode)
-                        shortcutRefreshID = UUID()
-                    }
-                }
-            )) {
-                ForEach(PreviewShortcutKeyOption.allCases) { option in
-                    Text(option.title).tag(option.rawValue)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 120)
-
-            if hasConflict {
-                Label("冲突", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.orange)
-            } else {
-                Text("当前 \(PreviewShortcutKeyOption.title(for: keyCode))")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(minHeight: 28)
-    }
-
-    private func recognitionManagementBlock<Content: View>(
-        title: String,
+        icon: String,
+        countText: String,
         job: TranscriptBatchJob,
-        startMissing: @escaping () -> Void,
-        restartAll: @escaping () -> Void,
-        pause: @escaping () -> Void,
-        resume: @escaping () -> Void,
+        autoEnabled: Binding<Bool>,
+        startTitle: String,
+        start: @escaping () -> Void,
         stop: @escaping () -> Void,
-        @ViewBuilder content: () -> Content
+        clear: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 18)
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .frame(width: 42, alignment: .leading)
-
-                Button(action: startMissing) {
-                    Label("识别缺失", systemImage: "play.fill")
+                    .font(.headline.weight(.semibold))
+                Text(countText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Toggle(isOn: Binding(
+                    get: { autoEnabled.wrappedValue },
+                    set: { enabled in
+                        autoEnabled.wrappedValue = enabled
+                        if enabled { start() }
+                    }
+                )) {
+                    Text("启动自动")
+                        .font(.caption)
                 }
+                .toggleStyle(.checkbox)
+            }
+
+            HStack(spacing: 8) {
+                Button(action: start) {
+                    Label(startTitle, systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
                 .disabled(isBatchRunning(job))
 
-                Button(action: restartAll) {
-                    Label("全部重跑", systemImage: "arrow.clockwise")
-                }
-                .disabled(isBatchRunning(job))
+                Spacer()
 
-                if isBatchPaused(job) {
-                    Button(action: resume) {
-                        Label("继续", systemImage: "playpause.fill")
-                    }
-                } else {
-                    Button(action: pause) {
-                        Label("暂停", systemImage: "pause.fill")
-                    }
-                    .disabled(!isBatchRunning(job))
-                }
-
-                Button(role: .destructive, action: stop) {
+                Button(action: stop) {
                     Label("停止", systemImage: "stop.fill")
                 }
                 .disabled(!isBatchRunning(job) && !isBatchPaused(job))
 
-                Spacer()
+                Button(role: .destructive, action: clear) {
+                    Label("清空状态", systemImage: "trash")
+                }
             }
 
-            ProgressView(value: normalizedProgressFraction(job.progress))
-                .progressViewStyle(.linear)
-                .tint(.orange)
+            if shouldShowProgress(job) {
+                ProgressView(value: normalizedProgressFraction(job.progress))
+                    .progressViewStyle(.linear)
+                    .tint(.orange)
+            }
 
             Text(batchStatusText(job, title: title))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            content()
+        }
+        .padding(14)
+        .background(.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
         }
     }
 
-    private var transcriptRecognitionTable: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("视频")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("字幕")
-                    .frame(width: 86, alignment: .leading)
-                Text("状态")
-                    .frame(width: 160, alignment: .leading)
-                Text("")
-                    .frame(width: 80)
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-
-            ForEach(libraryStore.videos) { video in
-                Divider().opacity(0.45)
-                transcriptRecognitionRow(video)
-            }
-        }
-        .padding(.top, 6)
-    }
-
-    private var sceneRecognitionTable: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            tableHeader(countTitle: "画面")
-            ForEach(libraryStore.videos) { video in
-                Divider().opacity(0.45)
-                sceneRecognitionRow(video)
-            }
+    private func downloaderSelfCheckIcon(for report: DownloaderSelfCheckReport) -> String {
+        switch report.status {
+        case .idle: return "arrow.down.circle"
+        case .running: return "clock.arrow.circlepath"
+        case .succeeded: return "checkmark.seal.fill"
+        case .failed: return "exclamationmark.triangle.fill"
         }
     }
 
-    private var musicRecognitionTable: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            tableHeader(countTitle: "音乐")
-            ForEach(libraryStore.videos) { video in
-                Divider().opacity(0.45)
-                musicRecognitionRow(video)
-            }
-        }
-    }
-
-    private func tableHeader(countTitle: String) -> some View {
-        HStack {
-            Text("视频")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text(countTitle)
-                .frame(width: 86, alignment: .leading)
-            Text("状态")
-                .frame(width: 160, alignment: .leading)
-            Text("")
-                .frame(width: 80)
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-    }
-
-    private func transcriptRecognitionRow(_ video: VideoItem) -> some View {
-        let path = video.url.path
-        let segments = libraryStore.transcriptSegmentsByVideoPath[path, default: []]
-        let status = libraryStore.transcriptStatusByVideoPath[path] ?? .idle
-
-        return HStack(spacing: 12) {
-            Text(video.name)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(segments.isEmpty ? "暂无" : "\(segments.count) 段")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(segments.isEmpty ? .secondary : .primary)
-                .frame(width: 86, alignment: .leading)
-
-            Text(statusText(status))
-                .font(.caption)
-                .foregroundStyle(statusTint(status))
-                .lineLimit(1)
-                .frame(width: 160, alignment: .leading)
-
-            Button(role: .destructive) {
-                libraryStore.deleteTranscript(for: video)
-            } label: {
-                Image(systemName: "trash")
-                    .frame(width: 26, height: 22)
-            }
-            .buttonStyle(.borderless)
-            .disabled(segments.isEmpty && !statusFailed(status))
-            .help("删除这个视频的字幕识别记录")
-            .frame(width: 80, alignment: .trailing)
-        }
-        .frame(minHeight: 28)
-    }
-
-    private func sceneRecognitionRow(_ video: VideoItem) -> some View {
-        let path = video.url.path
-        let result = libraryStore.sceneCutsByVideoPath[path]
-        let cuts = result ?? []
-        let progress = libraryStore.sceneDetectionProgress[path]
-
-        return commonRecognitionRow(
-            video: video,
-            countText: result == nil ? "暂无" : "\(cuts.count) 段",
-            statusText: progress.map { "分析中 \(progressPercentText($0))" } ?? (result == nil ? "空闲" : "已完成"),
-            tint: progress == nil ? .secondary : .orange,
-            canDelete: result != nil || progress != nil,
-            delete: { libraryStore.deleteSceneRecognition(for: video) }
-        )
-    }
-
-    private func musicRecognitionRow(_ video: VideoItem) -> some View {
-        let path = video.url.path
-        let songs = libraryStore.musicsByVideoPath[path, default: []]
-        let status = libraryStore.musicDetectionStatusByVideoPath[path] ?? .idle
-
-        return commonRecognitionRow(
-            video: video,
-            countText: songs.isEmpty ? "暂无" : "\(songs.count) 首",
-            statusText: statusText(status),
-            tint: statusTint(status),
-            canDelete: !songs.isEmpty || statusFailed(status),
-            delete: { libraryStore.deleteMusicRecognition(for: video) }
-        )
-    }
-
-    private func commonRecognitionRow(
-        video: VideoItem,
-        countText: String,
-        statusText: String,
-        tint: Color,
-        canDelete: Bool,
-        delete: @escaping () -> Void
-    ) -> some View {
-        HStack(spacing: 12) {
-            Text(video.name)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(countText)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(countText == "暂无" ? .secondary : .primary)
-                .frame(width: 86, alignment: .leading)
-
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(tint)
-                .lineLimit(1)
-                .frame(width: 160, alignment: .leading)
-
-            Button(role: .destructive, action: delete) {
-                Image(systemName: "trash")
-                    .frame(width: 26, height: 22)
-            }
-            .buttonStyle(.borderless)
-            .disabled(!canDelete)
-            .help("删除这个视频的识别记录")
-            .frame(width: 80, alignment: .trailing)
-        }
-        .frame(minHeight: 28)
-    }
-
-    private func statusText(_ status: TranscriptJobStatus) -> String {
-        switch status {
-        case .idle: return "空闲"
-        case .running(let message): return message
-        case .completed: return "完成"
-        case .failed: return "失败"
-        }
-    }
-
-    private func statusTint(_ status: TranscriptJobStatus) -> Color {
-        switch status {
+    private func downloaderSelfCheckColor(for report: DownloaderSelfCheckReport) -> Color {
+        switch report.status {
+        case .idle, .running: return .orange
+        case .succeeded: return .green
         case .failed: return .red
-        case .running: return .orange
-        default: return .secondary
         }
     }
 
-    private func statusFailed(_ status: TranscriptJobStatus) -> Bool {
-        if case .failed = status { return true }
-        return false
+    private func downloaderSelfCheckDateText(_ report: DownloaderSelfCheckReport) -> String {
+        guard let checkedAt = report.checkedAt else { return "未检查" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter.string(from: checkedAt)
+    }
+
+    private func downloaderSelfCheckStatusText(_ report: DownloaderSelfCheckReport) -> String {
+        var parts = [report.message]
+        if let version = report.ytdlpVersion {
+            parts.append("yt-dlp \(version)")
+        }
+        if let title = report.youtubeProbeTitle {
+            parts.append(title)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func externalServiceCheckIcon(for status: ExternalServiceSelfCheckItem.Status) -> String {
+        switch status {
+        case .succeeded: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
+
+    private func externalServiceCheckColor(for status: ExternalServiceSelfCheckItem.Status) -> Color {
+        switch status {
+        case .succeeded: return .green
+        case .warning: return .orange
+        case .failed: return .red
+        }
+    }
+
+    private var sceneCountText: String {
+        let completed = libraryStore.videos.filter { libraryStore.sceneCutsByVideoPath[$0.url.path] != nil }.count
+        return "\(completed)/\(libraryStore.videos.count)"
+    }
+
+    private var transcriptCountText: String {
+        let completed = libraryStore.videos.filter { !libraryStore.transcriptSegmentsByVideoPath[$0.url.path, default: []].isEmpty }.count
+        return "\(completed)/\(libraryStore.videos.count)"
+    }
+
+    private var musicDownloadCountText: String {
+        let completed = libraryStore.musicDownloadJobs.filter { job in
+            if case .succeeded = job.status { return true }
+            return false
+        }.count
+        return "\(completed) 个文件"
+    }
+
+    private func shouldShowProgress(_ job: TranscriptBatchJob) -> Bool {
+        switch job.status {
+        case .idle:
+            return false
+        default:
+            return true
+        }
     }
 
     private func isBatchRunning(_ job: TranscriptBatchJob) -> Bool {
@@ -11638,17 +13758,38 @@ private struct SettingsWorkspaceView: View {
     private func batchStatusText(_ job: TranscriptBatchJob, title: String) -> String {
         switch job.status {
         case .idle:
-            return "后台识别未开始"
+            return "未开始"
         case .running:
             let name = job.currentVideoName ?? "准备中"
-            return "正在识别\(title)：\(name) · \(job.completed)/\(job.total)"
+            return "\(title)进行中：\(name) · \(job.completed)/\(job.total)"
         case .paused:
             return "已暂停 · \(job.completed)/\(job.total)"
         case .completed:
-            return job.total == 0 ? "暂无需要识别的视频" : "批量识别完成"
+            return job.total == 0 ? "暂无需要处理的项目" : "\(title)完成"
         case .failed(let message):
-            return "批量识别失败：\(message)"
+            return "\(title)失败：\(message)"
         }
+    }
+
+    private func removeExternalAPISettings() {
+        [
+            "contentAnalysisProvider",
+            "openAIAPIKey",
+            "openAIBaseURL",
+            "openAIModel",
+            "anthropicAPIKey",
+            "anthropicBaseURL",
+            "anthropicModel",
+            "geminiAPIKey",
+            "geminiModel",
+            "deepSeekAPIKey",
+            "deepSeekBaseURL",
+            "deepSeekModel",
+            "customAPIProviderName",
+            "customAPIKey",
+            "customAPIBaseURL",
+            "customAPIModel"
+        ].forEach { UserDefaults.standard.removeObject(forKey: $0) }
     }
 }
 

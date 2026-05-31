@@ -297,6 +297,7 @@ final class PreviewKeyboardWindow: NSWindow {
         if event.type == .keyUp {
             pressedPreviewKeyCodes.remove(event.keyCode)
             if isPlainShortcut && PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
+                PreviewKeyboardEventRouter.post(.stopShuttle)
                 return nil
             }
             return isPlainShortcut && PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) ? nil : event
@@ -618,16 +619,24 @@ final class TrafficLightContainerView: NSView {
         self.buttonSize = buttonSize
         self.buttonGap = buttonGap
         super.init(frame: NSRect(x: 0, y: 0, width: buttonSize * 3 + buttonGap * 2, height: buttonSize))
+        installButtons()
+    }
+
+    required init?(coder: NSCoder) {
+        self.buttonSize = 12
+        self.buttonGap = 8
+        super.init(coder: coder)
+        installButtons()
+    }
+
+    private func installButtons() {
         [closeButton, miniaturizeButton, zoomButton].forEach { button in
             button.target = self
             button.action = #selector(performWindowButtonAction(_:))
-            addSubview(button)
+            if button.superview !== self {
+                addSubview(button)
+            }
         }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
     }
 
     override var intrinsicContentSize: NSSize {
@@ -739,17 +748,22 @@ private final class TrafficLightButton: NSButton {
     init(kind: Kind) {
         self.kind = kind
         super.init(frame: .zero)
+        configure()
+    }
+
+    required init?(coder: NSCoder) {
+        self.kind = .close
+        super.init(coder: coder)
+        configure()
+    }
+
+    private func configure() {
         isBordered = false
         focusRingType = .none
         setButtonType(.momentaryChange)
         imagePosition = .imageOnly
         bezelStyle = .regularSquare
         setAccessibilityLabel(kind.accessibilityLabel)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

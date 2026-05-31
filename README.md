@@ -1,6 +1,6 @@
 # 拉片宝 AI 接手手册
 
-最后更新：2026-05-29
+最后更新：2026-05-30
 
 本文是拉片宝项目的唯一权威 Markdown。后续 AI 或开发者接手时，先读本文，再按需读源码。本文同时记录产品结构、工程结构、设计原则、已经定下来的 UI 数值和可恢复的设计基线。
 
@@ -13,6 +13,7 @@
 ## 2. 接手前先记住
 
 - 当前项目是 macOS App，入口是 `LapianBaoApp.swift`，主界面是 `ContentView.swift`，数据中心是 `LibraryStore.swift`，播放控制是 `PreviewController.swift`，窗口和键盘桥接是 `AppChrome.swift`。
+- 当前 App bundle 版本仍由 `LapianBao.xcodeproj` 的 `MARKETING_VERSION = 1.0` 和 `CURRENT_PROJECT_VERSION = 1` 控制；Git 提交数只作为内部迭代口径，用 `git rev-list --count HEAD` 实时查询，不手写成固定产品版本。
 - 不要把主播放器改回 SwiftUI 原生 `VideoPlayer`。当前用 `AVPlayerLayer` 承载画面，原因是避免系统悬停控制层压暗视频。
 - 不要引入网页式后台、营销页、超大 hero、装饰渐变球、表格管理器风格。
 - 不要随手重置 `Design` 里的尺寸。本文第 9 节列出的数值是当前设计基线。
@@ -34,15 +35,14 @@
 
 ### 3.1 左侧 rail
 
-左侧 rail 是工作区入口，不是标签栏。宽度固定 `56pt`，包含 macOS 原生红黄绿窗口按钮和五个工作区入口：
+左侧 rail 是工作区入口，不是标签栏。宽度固定 `56pt`，包含 macOS 原生红黄绿窗口按钮和四个可见工作区入口：
 
 - `主页`：看片、时间线、场景识别、截图、批注、声音采样、转写摘要、音乐识别。
 - `画面`：已收集画面的网格、预览、亮度直方图、色卡、本地视觉模型分析。
 - `声音`：已导出的声音片段列表、播放、定位回原视频、音乐识别和下载。
-- `内容`：Whisper 字幕、内容节点时间线、本地文本模型整理。
-- `设置`：批量识别管理、API 服务配置、本机模型配置。
+- `设置`：画面切分、字幕识别、音乐下载的批量操作、停止、清空和自动执行开关。
 
-对应源码是 `AppWorkspace`。
+对应源码是 `AppWorkspace.allCases`。`content` 工作区的实现仍在代码里，当前不作为 rail 入口展示。
 
 ### 3.2 素材区
 
@@ -62,8 +62,9 @@
 - `PreviewPanelView`：主页。
 - `FramesWorkspaceView`：画面工作区。
 - `AudioWorkspaceView`：声音工作区。
-- `ContentWorkspaceView`：内容工作区。
 - `SettingsWorkspaceView`：设置工作区。
+
+`ContentWorkspaceView` 仍保留在代码中，用于内容节点时间线和本地文本模型整理，当前不是 rail 可见入口。
 
 工作区之间跳转时通过 `jumpToVideo(path:time:)` 选中视频，并发出 `.lapianBaoSeekRequest` 通知，让主页播放器跳到对应时间点。
 
@@ -85,8 +86,9 @@
 负责 AppKit 桥接：
 
 - `PreviewKeyboardCommand`：播放器快捷键命令枚举。
-- `PreviewKeyboardEventRouter`：把物理按键转换为命令，且在文本输入框中不拦截。
-- `WindowConfigurator`：去掉系统标题栏，透明窗口背景，保留可调整大小、关闭、最小化、全屏能力。
+- `PreviewShortcutAction` 和 `PreviewShortcutKeyOption`：播放器快捷键默认值、用户改绑数据结构和冲突检测。
+- `PreviewKeyboardEventRouter`：按当前快捷键配置把物理按键转换为命令，且在文本输入框中不拦截。
+- `WindowConfigurator`：使用全尺寸内容视图和透明标题栏，保留可调整大小、关闭、最小化、全屏能力。
 - `WindowDragRegion`：自定义窗口拖拽区域。
 - `PreviewKeyboardHandler` 和 `KeyboardCaptureNSView`：局部键盘焦点捕获。
 - `NativeWindowTrafficLights`：隐藏系统红黄绿按钮，在自定义 rail 的固定坐标绘制同尺寸按钮，并转发关闭、最小化、全屏动作到 `NSWindow`。
@@ -105,7 +107,7 @@
 - `AnnotationItem`：某个视频时间点的文字批注。
 - `AudioClipItem`：In/Out 声音片段，含导出路径和波形。
 - `TranscriptSegment`：Whisper 转写片段。
-- `MusicRecognitionItem`：识别到的音乐，含歌名、作者、封面、Apple Music 链接、出现时间。
+- `MusicRecognitionItem`：识别到的音乐，含歌名、作者、封面、Apple Music 链接、出现时间和独立音乐标签。
 - `RemoteImportJob`：网络视频下载任务。
 
 主要职责：
@@ -124,7 +126,7 @@
 播放器状态中心，标记为 `@MainActor ObservableObject`：
 
 - 使用单例 `AVPlayer`。
-- 以 `1 / 30s` 周期更新 `elapsed`、`duration`、`progress`、`playbackRate`。
+- 以 `1 / 12s` 周期同步 `elapsed`、`duration`、`progress`、`playbackRate` 等控制状态；视频帧刷新交给 `AVPlayerLayer`，避免用显示器刷新率驱动整块 SwiftUI 预览面板重算。
 - `loadVideo(_:autoplay:)` 切换视频，加载波形、帧带和缓存场景切点。
 - 支持播放、暂停、跳转、逐帧、正向变速、反向播放。
 - 反向播放会尝试使用 ffmpeg 生成 intra-only 静音代理视频，缓存到用户缓存目录 `LapianBao/ReversePlaybackProxies`。
@@ -148,6 +150,7 @@
 - 排序字段：`UserDefaults.videoSortOption`。
 - 排序方向：`UserDefaults.videoSortDirection`。
 - 自定义下载 API：`UserDefaults.instagramImportEndpoint`。
+- 自定义播放器快捷键：`UserDefaults.previewShortcut.<action>.keyCode`。
 
 素材库内项目文件：
 
@@ -175,6 +178,8 @@
 - 支持一次输入多个链接。
 - 当前平台识别：Instagram、YouTube、小红书、Bilibili、抖音 / TikTok。
 - 优先本地 `yt-dlp`，小红书有原生解析回退；也支持用户填写自定义 API。
+- 下载任务状态包含导入、转码、收尾、暂停、成功和失败；导入队列支持暂停、继续、删除和跳转到导入结果。
+- 导入成功后尽量保存来源标题和作者标签；`yt-dlp` 会优先请求 H.264 / m4a / MP4 组合，降低后续播放兼容问题。
 - 下载后如果编码不适合播放，会转码为 H.264。
 
 ### 分析
@@ -204,7 +209,7 @@
 音乐分析：
 
 - `Tools/detect_music.py` 识别视频中的音乐。
-- 结果包含歌名、作者、封面、Apple Music 链接和出现时间。
+- 结果包含歌名、作者、封面、Apple Music 链接、出现时间和独立音乐标签；脚本优先使用 Shazam 流派，并用 iTunes Search API 补充 `primaryGenreName`。
 - 可下载原曲或伴奏，下载工具走 YouTube 搜索和 `yt-dlp`。
 - 音乐波形样本数是 `180`。
 
@@ -228,21 +233,23 @@
 
 - 图片：JPG，写入 `LapianBaoExports/图片`，并维护 `index.md`。
 - 声音：In/Out 区间导出 `.m4a` 到 `LapianBaoExports/音效`。
-- 文本：Whisper 原脚本导出 Markdown，包含视频标题和时间戳文本行。
+- 文本：Whisper 字幕导出 Markdown，包含 AI 友好的分镜字幕索引、每个分镜的时间区间和对应字幕，并保留完整原脚本；导出任务会在主页导出栏显示进度条，完成后进入导出记录。
 - 音乐：下载原曲和伴奏到 `LapianBaoExports/音乐`。
 
 ## 7. 播放与快捷键
 
 播放器必须保持自定义控制，不使用系统 `VideoPlayer` 控制层。
 
-键盘命令：
+默认键盘命令如下：
 
 - `Space`：播放/暂停。
-- `K`：播放/暂停；如果正在 J/L shuttle，则提升 shuttle 速度。
+- `K`：播放/暂停；如果正在默认 J/L shuttle，则提升 shuttle 速度。
 - `J`：单击后退一帧；按住进入向后 shuttle。
 - `L`：单击前进一帧；按住进入向前 shuttle，不能启动普通正向播放或直接调用 `setRate(1)`。
 - `Left Arrow`：后退一帧。
 - `Right Arrow`：前进一帧。
+- `Up Arrow`：上一个场景切点。
+- `Down Arrow`：下一个场景切点。
 - `I`：设置声音 In 点。
 - `O`：设置声音 Out 点。
 - `E`：导出当前帧图片。
@@ -253,10 +260,12 @@
 
 - 不带 `Command`、`Control`、`Option` 才拦截。
 - 文本编辑控件获得焦点时不拦截。
+- 快捷键默认值和改绑数据都由 `PreviewShortcutAction` 管，允许的按键来自 `PreviewShortcutKeyOption`。
+- 自定义快捷键保存到 `UserDefaults.previewShortcut.<action>.keyCode`；冲突键需要提示并阻止覆盖。
 - 快捷键命令只能由 app-level `NSEvent` monitor 分发到 `PreviewKeyboardCommandDispatcher`。
 - `PreviewKeyboardWindow`、`PreviewKeyboardHandler`、capture view 可以消费事件防止系统 beep，但不能各自重复执行命令。
-- 所有已处理的 `keyDown` 和 `keyUp` 都必须被消费；尤其是 `J/L` 松开时只发 `stopShuttle`，不能把事件继续传给系统。
-- `J/L` shuttle 通过逐帧 seek，进入 shuttle 后初始每次 `2` 帧，最多加速到 `12` 帧，每 `33_000_000ns` 一次。
+- 所有已处理的 `keyDown` 和 `keyUp` 都必须被消费；尤其是当前 shuttle 键松开时只发 `stopShuttle`，不能把事件继续传给系统。
+- 默认 `J/L` shuttle 通过逐帧 seek，进入 shuttle 后初始每次 `2` 帧，最多加速到 `12` 帧，每 `33_000_000ns` 一次；如果用户改绑，以 `PreviewShortcutAction.shuttleBackward` 和 `.shuttleForward` 的当前 keyCode 为准。
 
 ## 8. 外部工具和模型
 
@@ -302,16 +311,39 @@ static let railButtonVisualOffsetX: CGFloat = 3.5
 static let railSelectionGuideX: CGFloat = railIconInset + railButtonVisualOffsetX
 static let libraryToolbarVisualGap: CGFloat = 14
 static let libraryToolbarHeight: CGFloat = 22
+static let libraryToolbarButtonSlotWidth: CGFloat = 22
+static let libraryToolbarButtonSlotHeight: CGFloat = 22
+static let libraryToolbarButtonGap: CGFloat = 13
+static let previewHeaderTagRowHeight: CGFloat = 12
+static let previewHeaderTopInset: CGFloat = libraryToolbarVisualGap
+static let previewHeaderTitleTagGap: CGFloat = 4
+static let previewHeaderTitleLineHeight: CGFloat = 22
+static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderTitleTagGap
 static let trafficLightSize: CGFloat = 12
 static let trafficLightGap: CGFloat = 6
 static let trafficLightClusterWidth: CGFloat = trafficLightSize * 3 + trafficLightGap * 2
+static let libraryToolbarTop: CGFloat = libraryToolbarVisualGap
+static let railTopChromeHeight: CGFloat = libraryToolbarTop + libraryToolbarHeight
+static let trafficLightGuideX: CGFloat = 14
+static let trafficLightGuideY: CGFloat = 19
+static let settingsRailWidth: CGFloat = max(railWidth, trafficLightGuideX + trafficLightClusterWidth)
 static let timelineLaneHeight: CGFloat = 100
 static let collapsedTimelineLaneHeight: CGFloat = 40
 static let timelineLaneButtonSize: CGFloat = 24
 static let timelineLaneIconSize: CGFloat = 22
+static let timelineLaneVisualGap: CGFloat = (timelineLaneHeight - timelineLaneButtonSize * 3) / 4
+static let timelineLaneContentHeight: CGFloat = timelineLaneHeight - timelineLaneVisualGap * 2
 static let expandedTimelineDetailHeight: CGFloat = 280
 static let expandedTimelineStackMaxHeight: CGFloat = 520
+static let sceneTimelineAutoVisibleSceneLimit = 36
+static let sceneTimelineAutoMaxZoom: Double = 6
 static let centeredWaveformViewportSpan: Double = 0.22
+static let previewExportOverlayWidthRatio: CGFloat = 1.0 / 3.0
+static let previewExportOverlayMinWidth: CGFloat = 260
+static let previewExportOverlayButtonSize: CGFloat = 28
+static let previewExportOverlayButtonIconSize: CGFloat = 13
+static let previewExportOverlayButtonInset: CGFloat = 10
+static let previewExportPanelPadding: CGFloat = 10
 ```
 
 派生值：
@@ -322,8 +354,11 @@ static let centeredWaveformViewportSpan: Double = 0.22
 - `trafficLightGuideY = 19`，来自 `14 + (22 - 12) / 2`。
 - `trafficLightClusterWidth = 48`，来自 `12 * 3 + 6 * 2`。
 - `railSelectionGuideX = 11.5`，让导航选中块左缘和红黄绿按钮的可见左缘视觉对齐。
+- `settingsRailWidth = 62`，来自 `max(56, 14 + 48)`。
+- `previewHeaderHeight = 56`，来自 `14 + 22 + 4 + 12 + 4`。
 - `timelineLaneVisualGap = 7`，来自 `(100 - 24 * 3) / 4`。
 - `timelineLaneContentHeight = 86`，来自 `100 - 7 * 2`。
+- `sceneTimelineAutoMaxZoom = 6`，场景很多时自动聚焦到局部时间线，但不把主页初始视图推得太窄。
 
 颜色：
 
@@ -333,6 +368,7 @@ contentBg = Color(red: 0.149, green: 0.149, blue: 0.165)
 currentFrameAccent = Color(red: 1.00, green: 0.22, blue: 0.18)
 captureFrameAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
 annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
+libraryToolbarIconTint = Color.white.opacity(0.72)
 ```
 
 ### 9.3 布局数值
@@ -345,7 +381,9 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 - 主页窄屏导出浮层宽度：`min(available, max(260, width / 3))`。
 - 主页播放器最小宽度：`360pt`。
 - 主页播放器最小高度：`220pt`。
-- 主页 header 高度：`38pt`。
+- 主页 header 高度：`56pt`。
+- 主页 header 标题行高：`22pt`。
+- 主页 header 标签行高：`12pt`。
 - 主页普通间距：`8pt`。
 - 主页播放器和导出栏间距：宽屏 `12pt`，窄屏 `0pt`。
 - 时间线折叠总高度：`100 * 3 + 8 * 2 = 316pt`。
@@ -371,6 +409,8 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 
 - 顶部距 rail 对齐：`14pt`。
 - 工具栏最小高度：`22pt`。
+- 工具栏图标槽位：`22 x 22pt`。
+- 工具栏按钮间距：`13pt`。
 - 顶部按钮尺寸：`28 x 22pt`。
 - 网格密度 Slider 宽度：`56pt`。
 
@@ -486,12 +526,13 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 当前已完成：
 
 - 本地素材库扫描、缩略图、元数据、标签保存、排序筛选。
-- 网络视频导入队列和进度状态。
+- 网络视频导入队列、进度状态、暂停继续、删除和结果跳转。
 - 自定义播放器、波形、帧带、场景网格、截图、批注。
+- 播放器默认快捷键、改绑数据结构和冲突检测。
 - 声音 In/Out 采样和导出。
-- Whisper 转写和 Markdown 导出。
+- Whisper 转写和 Markdown 导出，导出记录可进入主页导出栏。
 - 音乐识别、Apple Music 链接、原曲/伴奏下载。
-- 画面、声音、内容三个独立工作区。
+- 主页、画面、声音、设置四个可见工作区；内容工作区代码保留。
 - 项目资产保存到素材库目录。
 
 仍需谨慎处理：
@@ -524,19 +565,19 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 - 窗口最小内容尺寸现在是 `960 x 720`，通过紧凑布局和导出栏阈值保证播放器、素材区、时间线和导出/识别工作流不互相挤压。
 - 左侧 rail 是工作区导航，不是标签筛选；标签筛选留在素材区工具栏。
 - 页面区块不要靠长说明文字撑版面。空状态可以短，但主工作区要让资产、播放器、时间线、列表成为第一视觉。
-- 设置工作区可以更像偏管理的工具面板，但仍要沿用项目的暗色、轻材质、紧凑行高和原生控件。
+- 设置工作区是偏管理的工具面板，只保留画面切分、字幕识别、音乐下载的总体操作，不放外接付费 AI API 配置。
 
 ### 11.3 快捷键和播放器
 
-这阶段反复出现的问题是：快捷键被多个层级重复处理、已处理按键漏传给系统导致 beep、`J/L` shuttle 和普通播放语义混在一起。当前定论：
+这阶段反复出现的问题是：快捷键被多个层级重复处理、已处理按键漏传给系统导致 beep、shuttle 和普通播放语义混在一起。当前定论：
 
-- 快捷键解析只认 `PreviewKeyboardEventRouter`；命令分发只走 `PreviewKeyboardCommandDispatcher`。
+- 快捷键默认值、用户改绑和冲突检测以 `PreviewShortcutAction` 为准；物理键转换只认 `PreviewKeyboardEventRouter`；命令分发只走 `PreviewKeyboardCommandDispatcher`。
 - app-level `NSEvent` monitor 是唯一执行命令的 owner。窗口和 capture view 只负责兜底消费事件。
 - 文本输入时不拦截快捷键；无修饰键的播放器快捷键才拦截。
-- `J/L` 单击只跳一帧；按住触发 shuttle，松开停止。`L` 不是普通播放键，不能直接调用 `setRate(1)`。
-- `K` 平时是播放/暂停；如果已经在 `J/L` shuttle 中，才作为加速键。
+- 默认 `J/L` 单击只跳一帧；按住触发 shuttle，松开停止。shuttle forward 不是普通播放键，不能直接调用 `setRate(1)`。
+- 默认 `K` 平时是播放/暂停；如果已经在 shuttle 中，才作为加速键。
 - `Space`、箭头、`I/O/E/U/P` 都要在 keyDown/keyUp 路径里安静消费，避免系统 beep。
-- 修改快捷键后，同时更新 `PreviewKeyboardCommand`、`PreviewKeyboardEventRouter`、app-level monitor、本文第 7 节和 `AGENTS.md`。
+- 修改快捷键动作或默认键位后，同时更新 `PreviewKeyboardCommand`、`PreviewShortcutAction`、`PreviewKeyboardEventRouter`、本文第 7 节和 `AGENTS.md`。
 
 ## 12. 后续开发原则
 
@@ -545,6 +586,6 @@ annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 3. 媒体处理尽量异步，UI 状态通过 `LibraryStore` 发布。
 4. 新持久化数据优先放入素材库目录的 JSON；只有数据复杂后再考虑 SQLite。
 5. 修改播放器时先读 `PreviewController.swift`，不要绕过它直接控制 `AVPlayer`。
-6. 修改键盘快捷键时同步更新 `PreviewKeyboardCommand`、`PreviewKeyboardEventRouter` 和本文第 7 节。
+6. 修改键盘快捷键时同步更新 `PreviewKeyboardCommand`、`PreviewShortcutAction`、`PreviewKeyboardEventRouter` 和本文第 7 节。
 7. 修改设计数值时同步更新本文第 9 节，确保以后能按文档复原。
 8. 清理 Markdown 时只处理项目文档，不碰第三方依赖文档和导出样例。

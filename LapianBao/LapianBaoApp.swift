@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        libraryStore.flushProjectDataSave()
         if let previewKeyMonitor {
             NSEvent.removeMonitor(previewKeyMonitor)
         }
@@ -51,11 +52,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         ensureMainWindowVisible()
+        libraryStore.startDailyExternalServiceSelfCheckIfNeeded()
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        stopPreviewShuttleTracking()
     }
 
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === mainWindow {
             mainWindow = nil
+        }
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        if notification.object as? NSWindow === mainWindow {
+            stopPreviewShuttleTracking()
         }
     }
 
@@ -76,7 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ensureMainWindowVisible()
         scheduleStartupVisibilityChecks()
         installPreviewKeyboardMonitor()
-        NSApp.activate(ignoringOtherApps: true)
+        activateApplication()
+        libraryStore.startDailyExternalServiceSelfCheckIfNeeded()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
             self?.libraryStore.loadLastLibraryForLaunch()
@@ -86,8 +99,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func ensureMainWindowVisible() {
         let window = mainWindow ?? createMainWindow()
         restoreWindowToVisibleScreenIfNeeded(window)
+        NSApp.unhide(nil)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+        activateApplication()
+    }
+
+    private func activateApplication() {
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func scheduleStartupVisibilityChecks() {
@@ -116,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.isOpaque = false
         window.hasShadow = true
         window.isMovableByWindowBackground = false
-        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.collectionBehavior.formUnion([.fullScreenPrimary, .moveToActiveSpace])
         window.delegate = self
         window.isReleasedWhenClosed = false
         window.contentViewController = hostingController
@@ -227,22 +250,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func processPreviewKeyboardEvent(_ event: NSEvent) -> NSEvent? {
-        guard !PreviewKeyboardEventRouter.isEditableTextResponder(NSApp.keyWindow?.firstResponder) else {
-            return event
-        }
-
         let isPlainShortcut = PreviewKeyboardEventRouter.isPlainShortcutEvent(event)
 
         if event.type == .keyUp {
             pressedPreviewKeyCodes.remove(event.keyCode)
-            if isPlainShortcut && PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
+            if PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
                 PreviewKeyboardEventRouter.post(.stopShuttle)
-                return nil
+                if isPlainShortcut {
+                    return nil
+                }
+            }
+            guard !PreviewKeyboardEventRouter.isEditableTextResponder(NSApp.keyWindow?.firstResponder) else {
+                return event
             }
             return isPlainShortcut && PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) ? nil : event
         }
 
         guard event.type == .keyDown else { return event }
+        guard !PreviewKeyboardEventRouter.isEditableTextResponder(NSApp.keyWindow?.firstResponder) else {
+            return event
+        }
         guard isPlainShortcut, PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) else { return event }
 
         if event.isARepeat {
@@ -257,5 +284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         PreviewKeyboardEventRouter.post(command)
         return nil
+    }
+
+    private func stopPreviewShuttleTracking() {
+        pressedPreviewKeyCodes.removeAll()
+        PreviewKeyboardEventRouter.post(.stopShuttle)
     }
 }

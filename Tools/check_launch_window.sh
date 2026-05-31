@@ -2,13 +2,57 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_BASE="${TMPDIR:-/tmp}"
+TMP_BASE="${LPB_LAUNCH_CHECK_TMP:-/private/tmp}"
 TMP_BASE="${TMP_BASE%/}"
 DERIVED_DATA_DIR="$TMP_BASE/LapianBaoLaunchCheckDerivedData"
 APP_PATH="$DERIVED_DATA_DIR/Build/Products/Debug/LapianBao.app"
 BUNDLE_ID="com.newtybei.LapianBao"
 APP_NAME="LapianBao"
 APP_SOURCE="$ROOT_DIR/LapianBao/LapianBaoApp.swift"
+
+visible_cg_window_count() {
+  local pid="$1"
+  swift - "$pid" <<'SWIFT' 2>/dev/null || printf '0\n'
+import CoreGraphics
+import Foundation
+
+guard CommandLine.arguments.count > 1,
+      let pid = Int(CommandLine.arguments[1]),
+      let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else {
+    print("0")
+    exit(0)
+}
+
+let count = windows.filter { window in
+    let ownerPID = window[kCGWindowOwnerPID as String] as? Int
+    let layer = window[kCGWindowLayer as String] as? Int
+    let isOnscreen = window[kCGWindowIsOnscreen as String] as? Int
+    let alpha = window[kCGWindowAlpha as String] as? Double
+    let bounds = window[kCGWindowBounds as String] as? [String: Any]
+    let width = bounds?["Width"] as? Double
+    let height = bounds?["Height"] as? Double
+
+    return ownerPID == pid
+        && layer == 0
+        && isOnscreen == 1
+        && (alpha ?? 0) > 0
+        && (width ?? 0) >= 40
+        && (height ?? 0) >= 40
+}.count
+
+print(count)
+SWIFT
+}
+
+resume_launched_app_processes() {
+  local pids
+  pids="$(pgrep -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" || true)"
+  [[ -n "$pids" ]] || return 0
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill -CONT "$pid" 2>/dev/null || true
+  done <<< "$pids"
+}
 
 cd "$ROOT_DIR"
 
@@ -75,6 +119,7 @@ opened="0"
 for _ in {1..5}; do
   if open -n "$APP_PATH"; then
     opened="1"
+    resume_launched_app_processes
     break
   fi
   sleep 1
@@ -88,6 +133,7 @@ fi
 window_count="0"
 window_count_unavailable="0"
 for _ in {1..30}; do
+  resume_launched_app_processes
   if window_count_result="$(osascript \
     -e 'with timeout of 2 seconds' \
     -e "tell application \"System Events\" to tell process \"$APP_NAME\" to count windows" \
@@ -110,6 +156,14 @@ for _ in {1..30}; do
 done
 
 app_pid="$(pgrep -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" | tail -n 1 || true)"
+if [[ -n "$app_pid" ]]; then
+  cg_window_count="$(visible_cg_window_count "$app_pid" | tail -n 1)"
+  if [[ "$cg_window_count" =~ ^[0-9]+$ && "$cg_window_count" -ge 1 ]]; then
+    echo "Launch check passed: $APP_NAME opened $cg_window_count visible CoreGraphics window(s)."
+    exit 0
+  fi
+fi
+
 if [[ "$window_count_unavailable" == "1" && -n "$app_pid" ]]; then
   sample_file="$TMP_BASE/lapianbao-launch-check-sample-$app_pid.txt"
   sample "$app_pid" 2 -file "$sample_file" >/dev/null 2>&1 || true
