@@ -9,6 +9,7 @@ APP_PATH="$DERIVED_DATA_DIR/Build/Products/Debug/LapianBao.app"
 BUNDLE_ID="com.newtybei.LapianBao"
 APP_NAME="LapianBao"
 APP_SOURCE="$ROOT_DIR/LapianBao/LapianBaoApp.swift"
+STARTUP_SOURCE="$ROOT_DIR/LapianBao/AppStartup/AppStartupCoordinator.swift"
 
 visible_cg_window_count() {
   local pid="$1"
@@ -54,6 +55,13 @@ resume_launched_app_processes() {
   done <<< "$pids"
 }
 
+is_launched_suspended() {
+  local pid="$1"
+  local vmmap_file="$TMP_BASE/lapianbao-launch-check-vmmap-$pid.txt"
+  vmmap -summary "$pid" > "$vmmap_file" 2>/dev/null || return 1
+  grep -q 'Process exists but has not started -- it is launched-suspended' "$vmmap_file"
+}
+
 cd "$ROOT_DIR"
 
 enabled_breakpoint_files=()
@@ -84,14 +92,14 @@ if ! awk '
 fi
 
 if ! awk '
-  /private func completeLaunchSetupIfNeeded/ { in_setup = 1; saw_async_after = 0; bad = 0; ok = 0 }
+  /func completeLaunchSetupIfNeeded/ { in_setup = 1; saw_async_after = 0; bad = 0; ok = 0 }
   in_setup && /DispatchQueue\.main\.asyncAfter/ { saw_async_after = 1 }
   in_setup && /libraryStore\.loadLastLibraryForLaunch\(\)/ && saw_async_after { ok = 1 }
   in_setup && /libraryStore\.loadLastLibrary/ && !saw_async_after { bad = 1 }
   in_setup && /libraryStore\.loadLastLibrary\(\)/ { bad = 1 }
   in_setup && /^    }$/ { in_setup = 0 }
   END { exit (!bad && ok) ? 0 : 1 }
-' "$APP_SOURCE"; then
+' "$STARTUP_SOURCE"; then
   echo "Launch check failed: startup must defer loadLastLibraryForLaunch() with DispatchQueue.main.asyncAfter; do not call loadLastLibrary() on the launch path." >&2
   exit 1
 fi
@@ -131,40 +139,26 @@ if [[ "$opened" != "1" ]]; then
 fi
 
 window_count="0"
-window_count_unavailable="0"
+app_pid=""
 for _ in {1..30}; do
   resume_launched_app_processes
-  if window_count_result="$(osascript \
-    -e 'with timeout of 2 seconds' \
-    -e "tell application \"System Events\" to tell process \"$APP_NAME\" to count windows" \
-    -e 'end timeout' 2>/dev/null)"; then
-    if [[ "$window_count_result" =~ ^[0-9]+$ ]]; then
-      window_count="$window_count_result"
-    else
-      window_count_unavailable="1"
-      window_count="0"
-    fi
-  else
-    window_count_unavailable="1"
-    window_count="0"
-  fi
-  if [[ "$window_count" -ge 1 ]]; then
-    echo "Launch check passed: $APP_NAME opened $window_count window(s)."
+  app_pid="$(pgrep -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" | tail -n 1 || true)"
+  [[ -n "$app_pid" ]] && window_count="$(visible_cg_window_count "$app_pid" | tail -n 1)"
+  if [[ "$window_count" =~ ^[0-9]+$ && "$window_count" -ge 1 ]]; then
+    echo "Launch check passed: $APP_NAME opened $window_count visible CoreGraphics window(s)."
     exit 0
   fi
   sleep 0.5
 done
 
-app_pid="$(pgrep -f "$APP_NAME.app/Contents/MacOS/$APP_NAME" | tail -n 1 || true)"
 if [[ -n "$app_pid" ]]; then
-  cg_window_count="$(visible_cg_window_count "$app_pid" | tail -n 1)"
-  if [[ "$cg_window_count" =~ ^[0-9]+$ && "$cg_window_count" -ge 1 ]]; then
-    echo "Launch check passed: $APP_NAME opened $cg_window_count visible CoreGraphics window(s)."
-    exit 0
+  if is_launched_suspended "$app_pid"; then
+    echo "Launch check failed: $APP_NAME is launched-suspended before main() entered." >&2
+    echo "This is usually caused by enabled Xcode breakpoints, stale debugserver/lldb state, or LaunchServices/Xcode launch-state pollution; app startup code has not run yet." >&2
+    pgrep -fl "$APP_NAME.app/Contents/MacOS/$APP_NAME" >&2 || true
+    exit 1
   fi
-fi
 
-if [[ "$window_count_unavailable" == "1" && -n "$app_pid" ]]; then
   sample_file="$TMP_BASE/lapianbao-launch-check-sample-$app_pid.txt"
   sample "$app_pid" 2 -file "$sample_file" >/dev/null 2>&1 || true
   if grep -q 'NSApplication(NSEventRouting).*nextEventMatchingMask' "$sample_file"; then

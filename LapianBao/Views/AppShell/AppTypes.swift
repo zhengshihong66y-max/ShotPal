@@ -1,0 +1,294 @@
+//
+//  AppTypes.swift
+//  LapianBao
+//
+//  Split from ContentView.swift.
+//
+
+import SwiftUI
+import AVFoundation
+import AppKit
+import Combine
+import Foundation
+import UniformTypeIdentifiers
+
+enum PreviewTab: String, CaseIterable {
+    case frames = "提取画面"
+    case audio  = "提取声音"
+    case content = "提取内容"
+}
+
+enum ExportPanelFilter: String, CaseIterable, Identifiable {
+    case recent = "最近"
+    case images = "图片"
+    case audio = "声音"
+    case music = "音乐"
+
+    var id: String { rawValue }
+}
+
+enum ExportPanelItem: Identifiable {
+    case frame(SampledFrame)
+    case audio(AudioClipItem)
+    case transcript(TranscriptExportItem)
+    case transcriptProgress(TranscriptExportJob)
+
+    var id: String {
+        switch self {
+        case .frame(let frame): return "frame-\(frame.id.uuidString)"
+        case .audio(let clip): return "audio-\(clip.id.uuidString)"
+        case .transcript(let export): return "transcript-\(export.id.uuidString)"
+        case .transcriptProgress(let job): return "transcript-progress-\(job.videoPath)"
+        }
+    }
+
+    var createdAt: Date {
+        switch self {
+        case .frame(let frame): return frame.createdAt
+        case .audio(let clip): return clip.createdAt
+        case .transcript(let export): return export.createdAt
+        case .transcriptProgress(let job): return job.createdAt
+        }
+    }
+}
+
+struct TimelineAnnotationMarker: Identifiable, Equatable {
+    var id: UUID
+    var progress: Double
+    var text: String
+    var kind: AnnotationItem.Kind
+}
+
+struct AnnotationEditorAnchor: Equatable {
+    var progress: Double
+    var kind: AnnotationItem.Kind
+    var sourceTab: PreviewTab
+}
+
+enum AppWorkspace: String, CaseIterable, Identifiable {
+    case home
+    case frames
+    case audio
+    case music
+    case content
+    case settings
+
+    static var allCases: [AppWorkspace] {
+        railCases
+    }
+
+    static let railCases: [AppWorkspace] = [.home, .frames, .audio, .music, .settings]
+
+    var id: String { rawValue }
+
+    var canRestoreFromUserDefaults: Bool {
+        Self.railCases.contains(self)
+    }
+
+    var canRestoreDuringLaunch: Bool {
+        switch self {
+        case .home:
+            return true
+        case .frames, .audio, .music, .content, .settings:
+            return false
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .home: return "主页"
+        case .frames: return "画面"
+        case .audio: return "音效"
+        case .music: return "AM 库"
+        case .content: return "内容"
+        case .settings: return "设置"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .home: return "play.rectangle.fill"
+        case .frames: return "photo.on.rectangle.angled"
+        case .audio: return "waveform"
+        case .music: return "music.note.list"
+        case .content: return "text.quote"
+        case .settings: return "gearshape"
+        }
+    }
+
+    var railIconOffset: CGFloat {
+        switch self {
+        case .home, .audio, .music, .content, .settings:
+            return 0
+        case .frames:
+            return 0.5
+        }
+    }
+}
+
+enum FramesBoardMode: String, CaseIterable, Identifiable {
+    case storyboard = "分镜"
+    case collection = "收藏"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .storyboard: return "rectangle.stack"
+        case .collection: return "photo.on.rectangle"
+        }
+    }
+}
+
+struct VideoDateSection: Identifiable {
+    var id: String
+    var title: String
+    var videos: [VideoItem]
+}
+
+struct ImportHistoryBatch: Identifiable {
+    var id: UUID
+    var title: String
+    var jobs: [RemoteImportJob]
+
+    var totalCount: Int {
+        jobs.compactMap(\.batchTotalCount).max() ?? jobs.count
+    }
+
+    var succeededCount: Int {
+        jobs.filter {
+            if case .succeeded = $0.status { return true }
+            return false
+        }.count
+    }
+
+    var failedCount: Int {
+        jobs.filter {
+            if case .failed = $0.status { return true }
+            return false
+        }.count
+    }
+
+    var completedCount: Int {
+        succeededCount + failedCount
+    }
+}
+
+enum ImportHistoryItem: Identifiable {
+    case single(RemoteImportJob)
+    case batch(ImportHistoryBatch)
+
+    var id: String {
+        switch self {
+        case .single(let job):
+            return "job-\(job.id.uuidString)"
+        case .batch(let batch):
+            return "batch-\(batch.id.uuidString)"
+        }
+    }
+}
+
+enum VideoSourcePlatform: String, CaseIterable {
+    case instagram = "Instagram"
+    case youtube = "YouTube"
+    case xiaohongshu = "小红书"
+    case bilibili = "Bilibili"
+    case douyin = "抖音"
+
+    var iconName: String {
+        switch self {
+        case .instagram: return "camera"
+        case .youtube: return "play.rectangle.fill"
+        case .xiaohongshu: return "book.pages.fill"
+        case .bilibili: return "play.rectangle.fill"
+        case .douyin: return "music.note.tv.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .instagram: return Color(red: 0.93, green: 0.31, blue: 0.58)
+        case .youtube: return Color(red: 0.96, green: 0.18, blue: 0.18)
+        case .xiaohongshu: return Color(red: 0.88, green: 0.24, blue: 0.30)
+        case .bilibili: return Color(red: 0.28, green: 0.68, blue: 0.95)
+        case .douyin: return Color(red: 0.34, green: 0.84, blue: 0.78)
+        }
+    }
+
+    static func matching(_ value: String) -> VideoSourcePlatform? {
+        allCases.first { $0.rawValue.caseInsensitiveCompare(value) == .orderedSame }
+    }
+
+    static func iconName(for value: String) -> String {
+        matching(value)?.iconName ?? "link"
+    }
+
+    static func color(for value: String) -> Color {
+        matching(value)?.color ?? Color(red: 0.62, green: 0.66, blue: 0.72)
+    }
+}
+
+enum VideoTagPalette {
+    private static let colors: [Color] = [
+        Color(red: 0.94, green: 0.34, blue: 0.38),
+        Color(red: 0.96, green: 0.55, blue: 0.22),
+        Color(red: 0.72, green: 0.66, blue: 0.28),
+        Color(red: 0.30, green: 0.70, blue: 0.40),
+        Color(red: 0.22, green: 0.72, blue: 0.68),
+        Color(red: 0.32, green: 0.56, blue: 0.96),
+        Color(red: 0.56, green: 0.43, blue: 0.92),
+        Color(red: 0.84, green: 0.38, blue: 0.78)
+    ]
+
+    static func color(for tag: String) -> Color {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return colors.first ?? Color(red: 0.62, green: 0.66, blue: 0.72)
+        }
+
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for scalar in trimmed.lowercased().unicodeScalars {
+            hash ^= UInt64(scalar.value)
+            hash &*= 1_099_511_628_211
+        }
+        return colors[Int(hash % UInt64(colors.count))]
+    }
+}
+
+enum VideoTagChipSize {
+    case mini
+    case compact
+    case regular
+
+    var font: Font {
+        switch self {
+        case .mini: return .caption2.weight(.semibold)
+        case .compact: return .caption2.weight(.semibold)
+        case .regular: return .caption.weight(.medium)
+        }
+    }
+
+    var horizontalPadding: CGFloat {
+        switch self {
+        case .mini: return 4
+        case .compact: return 5
+        case .regular: return 7
+        }
+    }
+
+    var verticalPadding: CGFloat {
+        switch self {
+        case .mini: return 2
+        case .compact: return 3
+        case .regular: return 4
+        }
+    }
+
+    var maxTextWidth: CGFloat {
+        switch self {
+        case .mini: return 58
+        case .compact: return 74
+        case .regular: return 132
+        }
+    }
+}

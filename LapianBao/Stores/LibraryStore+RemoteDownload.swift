@@ -1,0 +1,123 @@
+//
+//  LibraryStore+RemoteDownload.swift
+//  LapianBao
+//
+//  Split from LibraryStore.swift.
+//
+
+import AppKit
+import AVFoundation
+import Combine
+import Darwin
+import Foundation
+import UniformTypeIdentifiers
+
+extension LibraryStore {
+    nonisolated static func downloadVideo(
+        from sourceURL: URL,
+        into libraryURL: URL,
+        platform: String,
+        endpoint: String,
+        progressCallback: (@Sendable (Double?, String?) -> Void)? = nil,
+        transcodingCallback: (@Sendable (Double?) -> Void)? = nil,
+        finalizingCallback: (@Sendable (Double) -> Void)? = nil,
+        processCallback: (@Sendable (Process?) -> Void)? = nil
+    ) async throws -> DownloadedVideoResult {
+        let destinationDirectory = mediaFolder(in: libraryURL, named: videoFolderName)
+
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+
+        var rawURL: URL?
+        var authorName: String?
+        var sourceTitle: String?
+
+        var ytdlpFailure: Error?
+
+        // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
+        if rawURL == nil, let ytdlp = localYTDLPURL(),
+           !Task.isCancelled {
+            let attempts = ytdlpArgumentAttempts(for: sourceURL)
+            for attempt in attempts {
+                do {
+                    let result = try await runYTDLPOnce(
+                        executableURL: ytdlp,
+                        sourceURL: sourceURL,
+                        destinationDirectory: destinationDirectory,
+                        extraArguments: attempt.arguments,
+                        progressCallback: progressCallback,
+                        processCallback: processCallback
+                    )
+                    rawURL = result.url
+                    authorName = result.authorName
+                    sourceTitle = result.sourceTitle
+                    break
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if let failure = error as? YTDLPDownloaderFailure {
+                        authorName = authorName ?? failure.authorName
+                    }
+                    ytdlpFailure = error
+                }
+            }
+            if rawURL == nil, let ytdlpFailure, isHardYouTubeYTDLPFailure(ytdlpFailure) {
+                throw ytdlpFailure
+            }
+        }
+
+        // 2. 小红书：原生页面解析（yt-dlp 对需要登录的内容失效时接手）
+        if rawURL == nil, platform == "小红书",
+           let result = try? await downloadXiaoHongShuNative(
+               from: sourceURL,
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
+           ) {
+            rawURL = result.url
+            authorName = authorName ?? result.authorName
+            sourceTitle = sourceTitle ?? result.sourceTitle
+        }
+
+        // 3. 用户自定义 API
+        if rawURL == nil,
+           instagramCarouselItemIndex(from: sourceURL) == nil,
+           !endpoint.isEmpty,
+           let result = try? await importViaConfiguredAPI(
+               sourceURL: sourceURL,
+               endpoint: endpoint,
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
+           ) {
+            rawURL = result
+            sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
+        }
+
+        // 4. cobalt.tools 兜底（对 Instagram / YouTube 有效，需要服务可用）
+        if rawURL == nil,
+           let result = try? await importViaCobalt(
+               sourceURL: sourceURL,
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback
+           ) {
+            rawURL = result
+            sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
+        }
+
+        guard let downloadedURL = rawURL else {
+            if isYouTubeURL(sourceURL), let ytdlpFailure {
+                throw ytdlpFailure
+            }
+            throw RemoteImportError.downloaderFailed("所有下载方式均失败，请确认链接是否可公开访问")
+        }
+
+        // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264
+        finalizingCallback?(0)
+        let finalURL = await transcodeToH264IfNeeded(downloadedURL, progressCallback: transcodingCallback) ?? downloadedURL
+        finalizingCallback?(1)
+        return DownloadedVideoResult(
+            url: finalURL,
+            authorName: authorName,
+            sourceTitle: sourceTitle ?? Self.sourceTitle(from: [], fileName: finalURL.lastPathComponent)
+        )
+    }
+
+}

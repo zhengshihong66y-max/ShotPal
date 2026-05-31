@@ -11,6 +11,15 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
+def read_tree(relative: str, pattern: str = "*.swift") -> str:
+    root = ROOT / relative
+    return "\n\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(root.rglob(pattern))
+        if path.is_file()
+    )
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -24,15 +33,34 @@ def section_between(text: str, start: str, end: str) -> str:
     return text[start_index:end_index]
 
 
+def section_after(text: str, start: str, window: int = 3_000) -> str:
+    start_index = text.find(start)
+    require(start_index >= 0, f"Missing section start: {start}")
+    return text[start_index : start_index + window]
+
+
 def main() -> None:
-    library_store = read("LapianBao/LibraryStore.swift")
-    preview_controller = read("LapianBao/PreviewController.swift")
-    content_view = read("LapianBao/ContentView.swift")
-    lapianbao_app = read("LapianBao/LapianBaoApp.swift")
+    app_swift = read_tree("LapianBao")
+    library_store = app_swift
+    preview_controller = app_swift
+    content_view = app_swift
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
 
     require(
-        "private var projectDataLoadState: ProjectDataLoadState = .idle" in library_store,
+        "final class AppStartupCoordinator" in app_swift
+        and "final class AppWindowManager" in app_swift
+        and "enum StartupDiagnostics" in app_swift,
+        "Startup must stay split into coordinator, window manager, and diagnostics.",
+    )
+    require(
+        "StartupDiagnostics.mark(.mainEntered)" in app_swift
+        and "StartupDiagnostics.mark(.didFinishLaunching)" in app_swift
+        and "StartupDiagnostics.mark(.mainWindowOrderedFront)" in app_swift,
+        "Startup diagnostics must mark pre-main, AppDelegate, and window-ordering stages.",
+    )
+
+    require(
+        "projectDataLoadState: ProjectDataLoadState = .idle" in library_store,
         "LibraryStore must track project data load state.",
     )
     require(
@@ -48,11 +76,12 @@ def main() -> None:
         "Project data load state must move through loading and loaded states.",
     )
     require(
-        "@Published var progress = 0.0" in preview_controller,
+        "@Published private(set) var value = PlaybackClockValue()" in preview_controller
+        and "var progress: Double { value.progress }" in preview_controller,
         "PlaybackClock.progress must be published for timeline updates.",
     )
     require(
-        "private static let playbackStateInterval = 1.0 / 12.0" in preview_controller,
+        "private static let playbackStateInterval = 1.0 / 30.0" in preview_controller,
         "Playback clock must stay responsive enough for timeline work.",
     )
     require(
@@ -81,11 +110,34 @@ def main() -> None:
         "InstagramSavedFeedResponse",
         "instagramVideoLinks",
         "xiaohongshuVideoLinks",
+        "isTerminalRemoteImportStatus",
+        "remoteImportJobCanReceiveWorkerProgress",
+        "ChromeCookieFileCache",
+        "prewarmChromeCookieCache",
+        "cachedOrExportedChromeCookieURL",
     ]:
         require(
             helper in library_store,
             f"Chrome/curl saved-collection fallback helper is missing: {helper}.",
         )
+    require(
+        "chromeCookieFileCache.validCookieURL()" in library_store
+        and "chromeCookieFileCache.finishRefresh(with: cookieURL)" in library_store,
+        "Chrome cookies must be cached so saved-collection sync does not export cookies on every click.",
+    )
+    require(
+        "libraryStore.prewarmSavedCollectionCookieCache()" in content_view,
+        "Opening the import panel must prewarm Chrome cookies for saved-collection sync.",
+    )
+    require(
+        "libraryStore.prewarmSavedCollectionCookieCache()" in app_swift,
+        "App launch must prewarm Chrome cookies before the user clicks saved-collection sync.",
+    )
+    require(
+        "Self.isTerminalRemoteImportStatus(previousJob.status)" in library_store
+        and "updatedJobs[index] = previousJob" in library_store,
+        "Remote import jobs must not regress from terminal states back to active progress states.",
+    )
     require(
         "struct ExternalServiceSelfCheckItem" in library_store
         and "var serviceChecks: [ExternalServiceSelfCheckItem]" in library_store,
@@ -101,7 +153,7 @@ def main() -> None:
         "External service work must have a reusable preflight entry point.",
     )
     require(
-        lapianbao_app.count("startDailyExternalServiceSelfCheckIfNeeded()") >= 2,
+        app_swift.count("startDailyExternalServiceSelfCheckIfNeeded()") >= 2,
         "App activation and launch setup must trigger daily external service self-checks.",
     )
 
@@ -129,12 +181,12 @@ def main() -> None:
         ),
         (
             "func importLatestXiaohongshuSavedVideosFromChrome",
-            "private func queuedOrImportedInstagramSourceURLs",
+            "func queuedOrImportedInstagramSourceURLs",
             "Xiaohongshu saved import",
         ),
         (
-            "private func enqueueRemoteImport",
-            "private func updateRemoteImportJob",
+            "func enqueueRemoteImport",
+            "func updateRemoteImportJob",
             "remote URL import",
         ),
         (
@@ -144,12 +196,12 @@ def main() -> None:
         ),
         (
             "func startMusicDownloadBatch",
-            "private func runMusicDownload",
+            "func runMusicDownload",
             "music batch download",
         ),
         (
-            "private func runMusicDownload",
-            "private func updateMusicDownloadJob",
+            "func runMusicDownload",
+            "func updateMusicDownloadJob",
             "music download worker",
         ),
     ]:
@@ -158,40 +210,34 @@ def main() -> None:
             f"{name} must start the external service self-check preflight.",
         )
 
-    for start, end, name in [
+    for start, name in [
         (
-            "private func generateContentNodeTimeline",
-            "private func frameTimeline",
+            "func generateContentNodeTimeline",
             "content node timeline analysis",
         ),
         (
             "private func analyzeFrame",
-            "private enum FrameAnalysisState",
             "frame image analysis",
         ),
         (
             "private func runAppleMusicSearch",
-            "nonisolated private func normalizedSearch",
             "Apple Music search",
         ),
         (
-            "private struct MusicWorkspaceView",
-            "private func musicHeader",
+            "struct MusicWorkspaceView",
             "music workspace external artwork/search",
         ),
         (
-            "private struct MusicRecognitionActionColumn",
-            "private struct ExportMusicRecognitionRow",
+            "struct MusicRecognitionActionColumn",
             "YouTube first-result open",
         ),
         (
             "private func generateTranscriptTimeline",
-            "private struct SettingsWorkspaceView",
             "transcript timeline analysis",
         ),
     ]:
         require(
-            "libraryStore.prepareExternalServiceWork()" in section_between(content_view, start, end),
+            "libraryStore.prepareExternalServiceWork()" in section_after(content_view, start),
             f"{name} must prepare external service work.",
         )
 

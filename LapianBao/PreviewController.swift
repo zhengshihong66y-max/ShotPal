@@ -11,17 +11,14 @@ struct PlaybackClockValue: Equatable {
 
 @MainActor
 final class PlaybackClock: ObservableObject {
-    @Published var progress = 0.0
     @Published private(set) var value = PlaybackClockValue()
 
     var elapsed: Double { value.elapsed }
+    var progress: Double { value.progress }
 
     func update(elapsed: Double, progress: Double) {
         let next = PlaybackClockValue(elapsed: elapsed, progress: progress)
         guard next != value else { return }
-        if self.progress != next.progress {
-            self.progress = next.progress
-        }
         value = next
     }
 
@@ -41,7 +38,7 @@ final class PlaybackClock: ObservableObject {
 @MainActor
 final class PreviewController: ObservableObject {
     private static let sharedPlayer = AVPlayer()
-    private static let playbackStateInterval = 1.0 / 12.0
+    private static let playbackStateInterval = 1.0 / 30.0
 
     // 播放时间单独发布给时间线小组件，避免整块 PreviewPanelView 高频重算。
     let clock = PlaybackClock()
@@ -141,7 +138,6 @@ final class PreviewController: ObservableObject {
             duration = store?.durationByVideoPath[video.url.path] ?? 0
             progress = 0; playbackRate = 0; playbackMessage = msg
             store?.loadWaveform(for: video)
-            store?.loadFrameStrip(for: video)
             store?.loadCachedSceneCuts(for: video)
             return
         }
@@ -319,12 +315,12 @@ final class PreviewController: ObservableObject {
         if t.isFinite, duration > 0 {
             let next = min(max(0, t), duration)
             let nextProgress = min(1, max(0, next / duration))
-            let shouldUpdateProgress = abs(progress - nextProgress) > 0.0001
+            let shouldUpdateProgress = abs(progress - nextProgress) > 0.000001
             let shouldUpdateElapsed = abs(elapsed - next) > 0.001
             if shouldUpdateProgress || shouldUpdateElapsed {
                 clock.update(
                     elapsed: shouldUpdateElapsed ? next : elapsed,
-                    progress: shouldUpdateProgress ? nextProgress : progress
+                    progress: shouldUpdateProgress || shouldUpdateElapsed ? nextProgress : progress
                 )
             }
         }

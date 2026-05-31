@@ -1,0 +1,770 @@
+//
+//  LibraryStore+MusicDetection.swift
+//  LapianBao
+//
+//  Split from LibraryStore.swift.
+//
+
+import AppKit
+import AVFoundation
+import Combine
+import Darwin
+import Foundation
+import UniformTypeIdentifiers
+
+extension LibraryStore {
+    nonisolated static func isActiveDownloadStatus(_ status: RemoteImportJob.Status) -> Bool {
+        switch status {
+        case .importing, .transcoding, .finalizing:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated struct MusicDownloadSource: Sendable {
+        let name: String
+        let target: String
+        var extraArguments: [String] = []
+    }
+
+    nonisolated static func downloadMusicFromYouTube(
+        query: String,
+        into destinationDirectory: URL,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        let processRegistry = ToolProcessRegistry()
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: URL.self) { group in
+                group.addTask {
+                    try await downloadMusicFromYouTubeSearch(
+                        query: query,
+                        into: destinationDirectory,
+                        processRegistry: processRegistry,
+                        progressCallback: progressCallback
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 300_000_000_000)
+                    processRegistry.cancelRunningProcess()
+                    throw RemoteImportError.downloaderFailed("YouTube 音乐下载超时。通常是网络不可达、YouTube 限速，或当前地区无法访问 YouTube 搜索。")
+                }
+
+                guard let result = try await group.next() else {
+                    throw RemoteImportError.downloaderFailed("YouTube 音乐下载失败")
+                }
+                group.cancelAll()
+                return result
+            }
+        } onCancel: {
+            processRegistry.cancelRunningProcess()
+        }
+    }
+
+    nonisolated static func downloadMusicFromYouTubeSearch(
+        query: String,
+        into destinationDirectory: URL,
+        processRegistry: ToolProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        progressCallback?(0.02)
+        let sources = await musicDownloadSources(for: query)
+        var failures: [String] = []
+
+        for (index, source) in sources.enumerated() {
+            let sourceStart = Double(index) / Double(max(sources.count, 1))
+            let sourceSpan = 1.0 / Double(max(sources.count, 1))
+            progressCallback?(min(0.98, max(0.02, sourceStart + 0.02 * sourceSpan)))
+
+            do {
+                return try await runMusicYTDLPDownloadWithTimeout(
+                    source: source,
+                    into: destinationDirectory,
+                    processRegistry: processRegistry,
+                    progressCallback: { progress in
+                        progressCallback?(min(0.98, sourceStart + progress * sourceSpan))
+                    }
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failures.append("\(source.name)：\(error.localizedDescription)")
+                progressCallback?(min(0.98, sourceStart + sourceSpan))
+            }
+        }
+
+        throw RemoteImportError.downloaderFailed(
+            failures.isEmpty ? "YouTube 搜索下载失败" : failures.suffix(3).joined(separator: "\n")
+        )
+    }
+
+    nonisolated static func musicDownloadSources(for query: String) async -> [MusicDownloadSource] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return [] }
+
+        let attempts = ytdlpYouTubeArgumentAttempts()
+        func expandedSources(name: String, target: String) -> [MusicDownloadSource] {
+            attempts.map { attempt in
+                MusicDownloadSource(
+                    name: attempt.label.isEmpty ? name : "\(name)（\(attempt.label)）",
+                    target: target,
+                    extraArguments: attempt.arguments
+                )
+            }
+        }
+
+        var sources: [MusicDownloadSource] = []
+        if let firstResultURL = await firstYouTubeSearchResultURL(for: trimmedQuery) {
+            sources.append(contentsOf: expandedSources(name: "YouTube 播放页", target: firstResultURL.absoluteString))
+        }
+        sources.append(contentsOf: expandedSources(name: "YouTube 搜索兜底", target: "ytsearch1:\(trimmedQuery)"))
+        return sources
+    }
+
+    nonisolated static func firstYouTubeSearchResultURL(for query: String) async -> URL? {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return nil }
+
+        if let ytdlpURL = await firstYouTubeSearchResultURLWithYTDLP(for: trimmedQuery) {
+            return ytdlpURL
+        }
+        return await firstYouTubeSearchResultURLFromSearchPage(for: trimmedQuery)
+    }
+
+    nonisolated static func firstYouTubeSearchResultURLWithYTDLP(for query: String) async -> URL? {
+        guard let ytdlp = localYTDLPURL() else { return nil }
+
+        let processRegistry = ToolProcessRegistry()
+        return await withTaskCancellationHandler {
+            await withTaskGroup(of: URL?.self) { group in
+                group.addTask {
+                    await runFirstYouTubeSearchResultYTDLP(
+                        executableURL: ytdlp,
+                        query: query,
+                        processRegistry: processRegistry
+                    )
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    processRegistry.cancelRunningProcess()
+                    return nil
+                }
+
+                let result = await group.next() ?? nil
+                group.cancelAll()
+                return result
+            }
+        } onCancel: {
+            processRegistry.cancelRunningProcess()
+        }
+    }
+
+    nonisolated static func runFirstYouTubeSearchResultYTDLP(
+        executableURL: URL,
+        query: String,
+        processRegistry: ToolProcessRegistry
+    ) async -> URL? {
+        let attempt = ytdlpYouTubeArgumentAttempts().first ?? YTDLPArgumentAttempt(arguments: [])
+        return await Task.detached(priority: .utility) { () -> URL? in
+            let process = Process()
+            process.executableURL = executableURL
+            process.environment = downloaderProcessEnvironment()
+            var arguments = [
+                "--no-playlist",
+                "--skip-download",
+                "--no-warnings",
+                "--default-search", "ytsearch",
+                "--print", "%(webpage_url)s",
+                "ytsearch1:\(query)"
+            ]
+            arguments.insert(contentsOf: ytdlpProbeNetworkArguments(isYouTube: true), at: 3)
+            arguments.insert(contentsOf: attempt.arguments, at: max(0, arguments.count - 2))
+            process.arguments = arguments
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            let outputCollector = PipeDataCollector()
+            let errorCollector = PipeDataCollector()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                outputCollector.append(handle.availableData)
+            }
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                errorCollector.append(handle.availableData)
+            }
+
+            do {
+                try process.run()
+            } catch {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                return nil
+            }
+
+            processRegistry.set(process)
+            process.waitUntilExit()
+            processRegistry.set(nil)
+
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+
+            if Task.isCancelled {
+                if process.isRunning { process.terminate() }
+                return nil
+            }
+            guard process.terminationStatus == 0 else { return nil }
+
+            let output = String(data: outputCollector.data, encoding: .utf8) ?? ""
+            return firstYouTubeWatchURL(fromYTDLPOutput: output)
+        }.value
+    }
+
+    nonisolated static func firstYouTubeSearchResultURLFromSearchPage(for query: String) async -> URL? {
+        guard var components = URLComponents(string: "https://www.youtube.com/results") else { return nil }
+
+        components.queryItems = [URLQueryItem(name: "search_query", value: query)]
+        guard let searchURL = components.url else { return nil }
+
+        var request = URLRequest(url: searchURL)
+        request.timeoutInterval = 12
+        request.setValue(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("zh-CN,zh;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<400).contains(httpResponse.statusCode) {
+                return nil
+            }
+            guard
+                let html = String(data: data, encoding: .utf8),
+                let url = firstYouTubeWatchURL(in: html)
+            else { return nil }
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated static func firstYouTubeWatchURL(fromYTDLPOutput output: String) -> URL? {
+        for line in output.split(whereSeparator: \.isNewline) {
+            let rawURLString = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let url = normalizedYouTubeWatchURL(from: rawURLString) {
+                return url
+            }
+        }
+        return firstYouTubeWatchURL(in: output)
+    }
+
+    nonisolated static func firstYouTubeWatchURL(in text: String) -> URL? {
+        let patterns = [
+            #""videoRenderer"\s*:\s*\{\s*"videoId"\s*:\s*"([A-Za-z0-9_-]{11})""#,
+            #""videoId"\s*:\s*"([A-Za-z0-9_-]{11})""#,
+            #"watch\?v=([A-Za-z0-9_-]{11})"#,
+            #"%2Fwatch%3Fv%3D([A-Za-z0-9_-]{11})"#,
+            #"/shorts/([A-Za-z0-9_-]{11})"#
+        ]
+        let nsText = text as NSString
+        let searchRange = NSRange(location: 0, length: nsText.length)
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: text, range: searchRange) where match.numberOfRanges > 1 {
+                let videoID = nsText.substring(with: match.range(at: 1))
+                if let url = youTubeWatchURL(videoID: videoID) {
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func normalizedYouTubeWatchURL(from rawURLString: String) -> URL? {
+        guard
+            let url = URL(string: rawURLString),
+            let videoID = youTubeVideoID(from: url)
+        else { return nil }
+        return youTubeWatchURL(videoID: videoID)
+    }
+
+    nonisolated static func youTubeVideoID(from url: URL) -> String? {
+        let host = (url.host ?? "").lowercased()
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+
+        if host == "youtu.be",
+           let videoID = pathComponents.first,
+           isValidYouTubeVideoID(videoID) {
+            return videoID
+        }
+
+        guard host == "youtube.com" || host.hasSuffix(".youtube.com") else { return nil }
+
+        if let videoID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "v" })?
+            .value,
+           isValidYouTubeVideoID(videoID) {
+            return videoID
+        }
+
+        for marker in ["shorts", "embed"] {
+            if let markerIndex = pathComponents.firstIndex(of: marker) {
+                let videoIndex = pathComponents.index(after: markerIndex)
+                if pathComponents.indices.contains(videoIndex) {
+                    let videoID = pathComponents[videoIndex]
+                    if isValidYouTubeVideoID(videoID) {
+                        return videoID
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func youTubeWatchURL(videoID: String) -> URL? {
+        guard isValidYouTubeVideoID(videoID) else { return nil }
+        return URL(string: "https://www.youtube.com/watch?v=\(videoID)")
+    }
+
+    nonisolated static func isValidYouTubeVideoID(_ videoID: String) -> Bool {
+        videoID.range(of: #"^[A-Za-z0-9_-]{11}$"#, options: .regularExpression) != nil
+    }
+
+    nonisolated static func runMusicYTDLPDownloadWithTimeout(
+        source: MusicDownloadSource,
+        into destinationDirectory: URL,
+        processRegistry: ToolProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask {
+                try await runMusicYTDLPDownload(
+                    source: source,
+                    into: destinationDirectory,
+                    processRegistry: processRegistry,
+                    progressCallback: progressCallback
+                )
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 90_000_000_000)
+                processRegistry.cancelRunningProcess()
+                throw RemoteImportError.downloaderFailed("\(source.name) 下载超时")
+            }
+
+            guard let result = try await group.next() else {
+                throw RemoteImportError.downloaderFailed("\(source.name) 下载失败")
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    nonisolated static func runMusicYTDLPDownload(
+        source: MusicDownloadSource,
+        into destinationDirectory: URL,
+        processRegistry: ToolProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            guard let ytdlp = localYTDLPURL() else {
+                throw RemoteImportError.downloaderFailed("未找到 yt-dlp。请先安装 yt-dlp 和 ffmpeg，用于从 YouTube 搜索视频并抽取音频。")
+            }
+
+            let startedAt = Date()
+            let process = Process()
+            process.executableURL = ytdlp
+            var env = downloaderProcessEnvironment()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
+            process.environment = env
+
+            var arguments = [
+                "--no-playlist",
+                "-x",
+                "--audio-format", "m4a",
+                "--audio-quality", "0",
+                "-f", "ba/bestaudio/best",
+                "--progress",
+                "--newline",
+                "--no-colors",
+                "--default-search", "ytsearch",
+                "--paths", destinationDirectory.path,
+                "-o", "%(title).160B-%(id)s.%(ext)s",
+                "--print", "after_move:filepath"
+            ]
+            if let ffmpegDirectoryPath = localFFmpegDirectoryPath() {
+                arguments.insert(contentsOf: ["--ffmpeg-location", ffmpegDirectoryPath], at: 6)
+            }
+            arguments += ytdlpDownloadNetworkArguments(isYouTube: true)
+            arguments += source.extraArguments
+            arguments.append(source.target)
+            process.arguments = arguments
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            let outputCollector = PipeLineCollector()
+            let errorCollector = PipeLineCollector()
+            let progressTracker = YTDLPProgressTracker(
+                expectedPartCount: 1,
+                downloadCompletionProgress: 0.94,
+                postProcessingProgress: 0.98
+            )
+            let handleProgressLines: @Sendable ([String]) -> Void = { lines in
+                for line in lines {
+                    if let update = progressTracker.update(from: line),
+                       let progress = update.progress {
+                        progressCallback?(progress)
+                    }
+                }
+            }
+
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                handleProgressLines(outputCollector.append(handle.availableData))
+            }
+
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                handleProgressLines(errorCollector.append(handle.availableData))
+            }
+
+            try process.run()
+            processRegistry.set(process)
+            defer {
+                processRegistry.set(nil)
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                handleProgressLines(outputCollector.finish(with: outputPipe.fileHandleForReading.readDataToEndOfFile()))
+                handleProgressLines(errorCollector.finish(with: errorPipe.fileHandleForReading.readDataToEndOfFile()))
+                if Task.isCancelled, process.isRunning {
+                    process.terminate()
+                }
+            }
+
+            process.waitUntilExit()
+
+            if Task.isCancelled {
+                processRegistry.cancelRunningProcess()
+                throw CancellationError()
+            }
+
+            let output = String(data: outputCollector.data, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errorCollector.data, encoding: .utf8) ?? ""
+
+            guard process.terminationStatus == 0 else {
+                throw RemoteImportError.downloaderFailed(
+                    conciseYTDLPError(
+                        errorOutput,
+                        fallback: "\(source.name) 下载失败，请确认网络可访问 YouTube，且已安装 yt-dlp 和 ffmpeg"
+                    )
+                )
+            }
+
+            guard let downloadedURL = downloadedMusicFileURL(
+                fromYTDLPOutput: output,
+                destinationDirectory: destinationDirectory,
+                startedAt: startedAt
+            ) else {
+                throw RemoteImportError.downloaderFailed(
+                    conciseYTDLPError(errorOutput, fallback: "找不到已下载的音频文件")
+                )
+            }
+
+            return downloadedURL
+        }.value
+    }
+
+    nonisolated static func localFFmpegDirectoryPath() -> String? {
+        localFFmpegURL()?.deletingLastPathComponent().path
+    }
+
+    nonisolated static func localFFmpegURL() -> URL? {
+        [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg"
+        ]
+        .first { FileManager.default.isExecutableFile(atPath: $0) }
+        .map(URL.init(fileURLWithPath:))
+    }
+
+    nonisolated static func downloadedMusicFileURL(
+        fromYTDLPOutput output: String,
+        destinationDirectory: URL,
+        startedAt: Date
+    ) -> URL? {
+        let fm = FileManager.default
+        for line in output.split(whereSeparator: \.isNewline).reversed() {
+            let path = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else { continue }
+            if fm.fileExists(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+
+        let audioExtensions = Set(["m4a", "mp3", "wav", "aac", "opus", "webm"])
+        let urls = (try? fm.contentsOfDirectory(
+            at: destinationDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return urls
+            .filter { audioExtensions.contains($0.pathExtension.lowercased()) }
+            .compactMap { url -> (URL, Date)? in
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile == true,
+                      let modifiedAt = values?.contentModificationDate,
+                      modifiedAt >= startedAt.addingTimeInterval(-2) else { return nil }
+                return (url, modifiedAt)
+            }
+            .sorted { $0.1 > $1.1 }
+            .first?
+            .0
+    }
+
+    nonisolated static func conciseYTDLPError(_ message: String, fallback: String) -> String {
+        let lines = message
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return fallback }
+        return lines.suffix(6).joined(separator: "\n")
+    }
+
+    // MARK: – Music detection helpers
+
+    enum MusicDetectionEvent: Sendable {
+        case progress(String)
+        case found(MusicRecognitionItem)
+    }
+
+    nonisolated static func runMusicDetection(
+        videoPath: String,
+        onEvent: @Sendable @escaping (MusicDetectionEvent) async -> Void
+    ) async throws -> [MusicRecognitionItem] {
+        let processRegistry = ToolProcessRegistry()
+        return try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(of: [MusicRecognitionItem].self) { group in
+                group.addTask {
+                    try await runMusicDetectionProcess(
+                        videoPath: videoPath,
+                        onEvent: onEvent,
+                        processRegistry: processRegistry
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 130_000_000_000)
+                    processRegistry.cancelRunningProcess()
+                    throw MusicDetectionError.timeout
+                }
+
+                guard let result = try await group.next() else { return [] }
+                group.cancelAll()
+                return result
+            }
+        } onCancel: {
+            processRegistry.cancelRunningProcess()
+        }
+    }
+
+    nonisolated static func runMusicDetectionProcess(
+        videoPath: String,
+        onEvent: @Sendable @escaping (MusicDetectionEvent) async -> Void,
+        processRegistry: ToolProcessRegistry
+    ) async throws -> [MusicRecognitionItem] {
+        guard let pythonURL = localToolURL(
+            relativePath: "Tools/music-env/bin/python3",
+            fallbackPath: musicPythonPath,
+            mustBeExecutable: true
+        ) else {
+            throw MusicDetectionError.envNotSetup
+        }
+        guard let scriptURL = localToolURL(
+            relativePath: "Tools/detect_music.py",
+            fallbackPath: musicScriptPath
+        ) else {
+            throw MusicDetectionError.scriptMissing
+        }
+        guard FileManager.default.fileExists(atPath: videoPath) else {
+            throw MusicDetectionError.videoMissing(videoPath)
+        }
+        guard FileManager.default.isReadableFile(atPath: videoPath) else {
+            throw MusicDetectionError.videoUnreadable(videoPath)
+        }
+
+        let process = Process()
+        process.executableURL = pythonURL
+        process.arguments = [scriptURL.path, videoPath]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/opt/miniconda3/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        env["PYTHONUNBUFFERED"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] = env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] ?? "12"
+        env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] = env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] ?? "10"
+        env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] = env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] ?? "3"
+        env["LAPIANBAO_MUSIC_FFPROBE_TIMEOUT"] = env["LAPIANBAO_MUSIC_FFPROBE_TIMEOUT"] ?? "12"
+        env["LAPIANBAO_MUSIC_FFMPEG_TIMEOUT"] = env["LAPIANBAO_MUSIC_FFMPEG_TIMEOUT"] ?? "12"
+        env["LAPIANBAO_MUSIC_TOTAL_TIMEOUT"] = env["LAPIANBAO_MUSIC_TOTAL_TIMEOUT"] ?? "120"
+        process.environment = env
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+
+        let errorCollector = PipeDataCollector()
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            errorCollector.append(handle.availableData)
+        }
+
+        try process.run()
+        processRegistry.set(process)
+        defer {
+            processRegistry.set(nil)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            if Task.isCancelled, process.isRunning {
+                process.terminate()
+            }
+        }
+
+        var songs: [MusicRecognitionItem] = []
+        let stream = Self.makeLineStream(pipe: outputPipe)
+
+        for await line in stream {
+            if Task.isCancelled {
+                processRegistry.cancelRunningProcess()
+                throw CancellationError()
+            }
+
+            guard
+                let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                let type = json["type"] as? String
+            else { continue }
+
+            switch type {
+            case "progress":
+                let msg = json["message"] as? String ?? ""
+                let val = json["value"] as? Double ?? 0
+                let percent = Int((min(1, max(0, val)) * 100).rounded())
+                await onEvent(.progress("识别中 \(percent)% · \(msg)"))
+
+            case "found":
+                if let songDict = json["song"] as? [String: Any],
+                   let song = parseMusicItem(from: songDict) {
+                    songs.append(song)
+                    await onEvent(.found(song))
+                }
+
+            case "done":
+                if let arr = json["songs"] as? [[String: Any]] {
+                    songs = arr.compactMap { parseMusicItem(from: $0) }
+                }
+
+            case "error":
+                let msg = json["message"] as? String ?? "识别失败"
+                processRegistry.cancelRunningProcess()
+                throw MusicDetectionError.scriptError(msg)
+
+            default:
+                break
+            }
+        }
+
+        process.waitUntilExit()
+        if Task.isCancelled {
+            processRegistry.cancelRunningProcess()
+            throw CancellationError()
+        }
+        if process.terminationStatus != 0 {
+            let err = String(data: errorCollector.data, encoding: .utf8) ?? ""
+            throw MusicDetectionError.scriptError(err.isEmpty ? "音乐识别脚本退出失败" : err)
+        }
+        return songs
+    }
+
+    nonisolated static func makeLineStream(pipe: Pipe) -> AsyncStream<String> {
+        AsyncStream { continuation in
+            let handle = pipe.fileHandleForReading
+            final class Buf: @unchecked Sendable { var data = Data() }
+            let buf = Buf()
+
+            handle.readabilityHandler = { h in
+                let chunk = h.availableData
+                guard !chunk.isEmpty else {
+                    if !buf.data.isEmpty,
+                       let line = String(data: buf.data, encoding: .utf8),
+                       !line.isEmpty {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                    h.readabilityHandler = nil
+                    return
+                }
+                buf.data.append(chunk)
+                while let nlIdx = buf.data.firstIndex(of: UInt8(ascii: "\n")) {
+                    let lineSlice = buf.data[buf.data.startIndex..<nlIdx]
+                    buf.data.removeSubrange(buf.data.startIndex...nlIdx)
+                    if let line = String(data: lineSlice, encoding: .utf8), !line.isEmpty {
+                        continuation.yield(line)
+                    }
+                }
+            }
+
+            continuation.onTermination = { _ in
+                handle.readabilityHandler = nil
+            }
+        }
+    }
+
+    nonisolated static func parseMusicItem(from dict: [String: Any]) -> MusicRecognitionItem? {
+        guard let title = dict["title"] as? String, !title.isEmpty else { return nil }
+        let artist = dict["artist"] as? String ?? ""
+        let tags = dict["tags"] as? [String] ?? [artist, dict["genre"] as? String ?? ""]
+        return MusicRecognitionItem(
+            title: title,
+            artist: artist,
+            artworkURL: dict["artwork_url"] as? String ?? "",
+            appleMusicURL: dict["apple_music_url"] as? String ?? "",
+            detectedAt: dict["detected_at"] as? Double ?? 0,
+            tags: tags
+        )
+    }
+
+    enum MusicDetectionError: LocalizedError {
+        case envNotSetup
+        case scriptMissing
+        case videoMissing(String)
+        case videoUnreadable(String)
+        case timeout
+        case scriptError(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .envNotSetup:
+                return "未检测到音乐识别环境。请在项目目录运行：bash Tools/setup_music_env.sh"
+            case .scriptMissing:
+                return "未找到音乐识别脚本：Tools/detect_music.py"
+            case .videoMissing(let path):
+                return "视频文件不存在或无法访问：\(path)"
+            case .videoUnreadable(let path):
+                return "当前运行环境无法读取视频文件：\(path)。如果这是 Xcode 预览，请重新打开素材库或使用真实 App 运行一次授权。"
+            case .timeout:
+                return "音乐识别超时，已停止本次识别。可以稍后重试，或换一个更短的视频片段。"
+            case .scriptError(let msg):
+                return msg
+            }
+        }
+    }
+
+}

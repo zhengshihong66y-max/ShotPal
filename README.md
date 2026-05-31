@@ -1,6 +1,6 @@
 # 拉片宝 AI 接手手册
 
-最后更新：2026-05-30
+最后更新：2026-05-31
 
 本文是拉片宝项目的唯一权威 Markdown。后续 AI 或开发者接手时，先读本文，再按需读源码。本文同时记录产品结构、工程结构、设计原则、已经定下来的 UI 数值和可恢复的设计基线。
 
@@ -12,15 +12,17 @@
 
 ## 2. 接手前先记住
 
-- 当前项目是 macOS App，入口是 `LapianBaoApp.swift`，主界面是 `ContentView.swift`，数据中心是 `LibraryStore.swift`，播放控制是 `PreviewController.swift`，窗口和键盘桥接是 `AppChrome.swift`。
+- 当前项目是 macOS App，入口是 `LapianBaoApp.swift`，启动协调在 `AppStartup/`，主界面壳是 `ContentView.swift`，UI 细分在 `Views/`，数据中心壳是 `LibraryStore.swift`，媒体和导入逻辑细分在 `Stores/`，共享模型在 `Models/LibraryModels.swift`，播放控制是 `PreviewController.swift`，窗口和键盘桥接是 `AppChrome.swift`。
 - 当前 App bundle 版本仍由 `LapianBao.xcodeproj` 的 `MARKETING_VERSION = 1.0` 和 `CURRENT_PROJECT_VERSION = 1` 控制；Git 提交数只作为内部迭代口径，用 `git rev-list --count HEAD` 实时查询，不手写成固定产品版本。
 - 不要把主播放器改回 SwiftUI 原生 `VideoPlayer`。当前用 `AVPlayerLayer` 承载画面，原因是避免系统悬停控制层压暗视频。
 - 不要引入网页式后台、营销页、超大 hero、装饰渐变球、表格管理器风格。
 - 不要随手重置 `Design` 里的尺寸。本文第 9 节列出的数值是当前设计基线。
 - `Tools/whisper.cpp` 是第三方依赖目录，里面的 Markdown 不是项目产品文档，平时不要清理或改写。
 - 每次较大代码修改后用 `xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -destination 'platform=macOS' build` 验证。
-- 改到 App 启动、窗口、`AppChrome.swift`、`LapianBaoApp.swift`、工程构建设置后，必须再跑 `Tools/check_launch_window.sh`。它会用独立 DerivedData 构建、确认没有 Preview/JIT debug dylib、冷启动 App，并验证系统窗口数至少为 1。
+- 改到 App 启动、窗口、`AppStartup/`、`AppChrome.swift`、`LapianBaoApp.swift`、工程构建设置后，必须再跑 `Tools/check_launch_window.sh`。它会用独立 DerivedData 构建、确认没有 Preview/JIT debug dylib、冷启动 App，并验证系统窗口数至少为 1。
 - 启动阶段不能同步做重活：`applicationDidFinishLaunching(_:)` 必须异步调度 `completeLaunchSetupIfNeeded()`；主窗口先显示并完成一次绘制，再用 `DispatchQueue.main.asyncAfter` 延后 `loadLastLibraryForLaunch()`。启动恢复素材库时，目录枚举必须在后台完成。这是防止 Xcode 增量构建后旧调试进程/Dock 显示“应用未响应”的硬规则，`Tools/check_launch_window.sh` 会检查。
+- 如果启动后只有进程没有窗口，先判断是不是 pre-main 问题：`sample` 只有 `_dyld_start`、`vmmap -summary` 显示 `Process exists but has not started -- it is launched-suspended`、物理内存约 `96K`，都说明 App 代码尚未运行。此时优先检查 Xcode 用户断点、旧 `debugserver` / `lldb`、LaunchServices / Xcode 启动状态或签名/隔离属性，不要先改 SwiftUI 或素材库扫描逻辑。
+- Xcode 用户断点会让 App 在窗口创建前被挂起。`Tools/check_launch_window.sh` 会扫描 `Breakpoints_v2.xcbkptlist`，只要存在 `shouldBeEnabled = "Yes"` 就失败；启动验收前必须禁用这些断点。
 - 不要在项目源码里新增 SwiftUI `#Preview`。本项目以真实 App 冷启动检查为准，避免重新引入 Preview macro/plugin server 或 JIT 注入路径。
 
 ## 3. 当前产品结构
@@ -72,11 +74,20 @@
 
 ### `LapianBaoApp.swift`
 
-负责 App 生命周期和全局菜单：
+负责 App 生命周期桥接：
 
-- `AppDelegate`：设置常规 macOS App 激活策略；显式创建和强引用主 `NSWindow`；安装全局预览键盘监听；关闭最后窗口后退出；禁用系统状态保存和恢复。
+- `AppDelegate`：设置常规 macOS App 激活策略；保留 `LibraryStore`、`AppWindowManager`、`AppStartupCoordinator`；安装全局预览键盘监听；关闭最后窗口后退出；禁用系统状态保存和恢复。
+- `applicationDidFinishLaunching(_:)` 只做诊断标记，并用 `DispatchQueue.main.async` 调度 `AppStartupCoordinator.completeLaunchSetupIfNeeded()`。不要把窗口创建、菜单安装、素材库恢复或任何重活塞回这个 delegate callback。
+- `applicationDidBecomeActive(_:)` 和 Dock reopen 只转发到 `AppWindowManager.ensureMainWindowVisible()`。
+
+### `AppStartup/`
+
+负责启动阶段的可检修边界：
+
+- `AppStartupCoordinator.swift`：启动顺序唯一所有者。顺序必须是安装菜单、创建并显示主窗口、安装可见性复查和键盘监听、激活 App、预热保存集合 cookie、启动外部服务日自检，最后用 `DispatchQueue.main.asyncAfter` 延后 `loadLastLibraryForLaunch()`。
+- `AppWindowManager.swift`：主 `NSWindow` 唯一所有者。它显式创建并强引用 `PreviewKeyboardWindow`，负责恢复窗口到可见屏幕、`makeKeyAndOrderFront`、`orderFrontRegardless` 和应用激活。
+- `StartupDiagnostics.swift`：启动阶段日志标记。用来区分是否进入了 `main`、是否到了 `applicationDidFinishLaunching`、是否创建和展示了窗口、是否开始素材库恢复。
 - 主窗口不走 SwiftUI `WindowGroup`。这是为了避免 Debug 构建或 Xcode Preview/JIT 注入导致“进程存在但没有可见窗口”。
-- `applicationDidFinishLaunching(_:)` 只负责异步调度启动设置，不能同步创建 SwiftUI 主界面。主窗口可见并完成一次绘制后，再用 `loadLastLibraryForLaunch()` 恢复上次素材库；启动恢复的目录枚举在后台线程执行，避免启动握手阶段或首帧绘制前被同步目录扫描卡住。
 - `ensureMainWindowVisible()` 是启动兜底：启动完成、应用激活、Dock 重新打开、启动后延迟复查都会确保窗口存在、在可见屏幕内，并被拉到前台。
 - 窗口标题为 `LapianBao`，默认尺寸 `1280 x 800`，最小内容尺寸来自 `Design.minimumWindowWidth = 960` 和 `Design.minimumWindowHeight = 720`。
 - 菜单替换默认新建项，提供 `打开文件夹`，快捷键 `Command + O`。
@@ -95,9 +106,9 @@
 
 红黄绿按钮尺寸 `12pt`，间距 `6pt`。不要把 `window.standardWindowButton(...)` 重新挂到 SwiftUI 容器中；系统标题栏会在启动和激活阶段重排它们，导致位置漂移。
 
-### `LibraryStore.swift`
+### `LibraryStore.swift`、`Models/` 和 `Stores/`
 
-全局数据和媒体处理中心，标记为 `@MainActor ObservableObject`。
+`LibraryStore.swift` 保留全局数据中心的状态壳，标记为 `@MainActor ObservableObject`。共享模型移到 `Models/LibraryModels.swift`，具体能力按职责拆到 `Stores/LibraryStore+*.swift` extension 中。
 
 主要模型：
 
@@ -121,6 +132,25 @@
 - 截图、批注、声音片段、字幕、音乐识别结果的项目数据保存。
 - 导出图片、声音、字幕和音乐。
 
+当前拆分边界：
+
+- `LibraryStore+IndexesAndBasics.swift`：索引缓存、筛选排序、基础选择和自检入口。
+- `LibraryStore+LaunchAndRemoteImports.swift`：启动恢复、素材库授权、远程导入队列。
+- `LibraryStore+VideoLibraryAndTags.swift`：本地视频扫描、视频删除、标签操作。
+- `LibraryStore+PersistenceAndSources.swift`：JSON 持久化、项目数据迁移、来源推断。
+- `LibraryStore+TimelineMedia.swift`：波形、帧带、场景识别状态、批注和资产标签。
+- `LibraryStore+CaptureTranscriptMusic.swift`：截图、声音导出、字幕、音乐识别和下载命令入口。
+- `LibraryStore+MusicDetection.swift`：音乐识别和音乐下载辅助逻辑。
+- `LibraryStore+TranscriptExportAndSceneCache.swift`：字幕 Markdown 导出和场景缓存。
+- `LibraryStore+SceneDetection.swift`：TransNetV2 和本地场景变化检测。
+- `LibraryStore+RemoteDownloadTypes.swift` 和 `LibraryStore+RemoteDownload.swift`：远程下载共用类型和统一下载入口。
+- `LibraryStore+RemoteTranscoding.swift`：VP9/AV1/VP8 转 H.264 的兼容处理。
+- `LibraryStore+XiaohongshuDownload.swift`：小红书原生解析和下载。
+- `LibraryStore+DownloaderSelfCheck.swift`：yt-dlp、ffmpeg、外部服务自检和自动修复。
+- `LibraryStore+YTDLPDownload.swift`：yt-dlp 下载、探测、进度解析和缩略图抓取。
+- `LibraryStore+CobaltDownload.swift`：cobalt.tools 备用下载和导入文件名清洗。
+- `LibraryStore+MetadataAndExportHelpers.swift`：元数据、缩略图、图片/音频导出辅助。
+
 ### `PreviewController.swift`
 
 播放器状态中心，标记为 `@MainActor ObservableObject`：
@@ -132,9 +162,23 @@
 - 反向播放会尝试使用 ffmpeg 生成 intra-only 静音代理视频，缓存到用户缓存目录 `LapianBao/ReversePlaybackProxies`。
 - ffmpeg 查找路径是 `/opt/homebrew/bin/ffmpeg`、`/usr/local/bin/ffmpeg`、`/usr/bin/ffmpeg`。
 
-### `ContentView.swift`
+### `ContentView.swift` 和 `Views/`
 
-绝大部分 UI 目前仍在这个文件中。它包含设计常量、素材区、主页播放器、时间线、导出面板、画面/声音/内容工作区、标签 UI、音乐识别 UI、本地模型分析 UI 等。后续可以拆文件，但拆分时保持行为不变。
+`ContentView.swift` 只保留 App 主布局壳：rail、素材区、工作区切换、导入和设置 overlay、全局跳转。设计常量、素材卡、播放器、时间线、各工作区和共享组件已经拆入 `Views/`，拆分时保持行为和页面不变。
+
+当前 UI 拆分边界：
+
+- `Views/AppShell/`：工作区、标签页、导出筛选等 App 壳层类型。
+- `Views/Design/`：`Design` 尺寸、颜色和视觉基线。
+- `Views/Library/`：素材视频卡和分析菜单。
+- `Views/Preview/`：主页播放器、场景面板、时间线控件。
+- `Views/Frames/`：画面工作区、本地画面分析、直方图和色卡。
+- `Views/Audio/`：声音工作区。
+- `Views/Music/`：音乐工作区、音乐识别行、封面、下载状态和波形。
+- `Views/Content/`：内容工作区和本地文本时间线分析。
+- `Views/Settings/`：设置工作区。
+- `Views/Components/`：标签、空状态、场景 tile、进度和卡片辅助组件。
+- `Views/Shared/`：拖拽、面板背景、分隔线光标等跨页面 helper。
 
 ## 5. 数据保存与文件约定
 
@@ -537,7 +581,7 @@ libraryToolbarIconTint = Color.white.opacity(0.72)
 
 仍需谨慎处理：
 
-- `ContentView.swift` 已经很大，拆分有价值，但不要在功能修改中顺手大拆。
+- UI 和 Store 已按职责拆分；后续功能修改应优先放到现有边界内，不要重新堆回 `ContentView.swift` 或 `LibraryStore.swift`。
 - 网络平台下载能力受 `yt-dlp`、平台风控和网络状态影响。
 - 本地模型能力依赖 Ollama 和模型是否已安装。
 - 反向播放代理需要 ffmpeg，且生成代理可能耗时。

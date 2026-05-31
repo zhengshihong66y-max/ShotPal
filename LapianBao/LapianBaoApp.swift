@@ -13,12 +13,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static var retainedDelegate: AppDelegate?
 
     private let libraryStore = LibraryStore()
-    private var mainWindow: NSWindow?
-    private var didCompleteLaunchSetup = false
     private var previewKeyMonitor: Any?
     private var pressedPreviewKeyCodes = Set<UInt16>()
+    private lazy var windowManager = AppWindowManager(
+        libraryStore: libraryStore,
+        windowDelegate: self
+    )
+    private lazy var startupCoordinator = AppStartupCoordinator(
+        libraryStore: libraryStore,
+        windowManager: windowManager,
+        menuTarget: self,
+        chooseFolderAction: #selector(chooseFolderFromMenu),
+        installPreviewKeyboardMonitor: { [weak self] in
+            self?.installPreviewKeyboardMonitor()
+        }
+    )
 
     static func main() {
+        StartupDiagnostics.mark(.mainEntered)
         let app = NSApplication.shared
         let delegate = AppDelegate()
         retainedDelegate = delegate
@@ -28,12 +40,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        StartupDiagnostics.mark(.didFinishLaunching)
         DispatchQueue.main.async { [weak self] in
-            self?.completeLaunchSetupIfNeeded()
+            StartupDiagnostics.mark(.setupScheduled)
+            self?.startupCoordinator.completeLaunchSetupIfNeeded()
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        libraryStore.flushCurrentVideoLibrarySnapshot()
         libraryStore.flushProjectDataSave()
         if let previewKeyMonitor {
             NSEvent.removeMonitor(previewKeyMonitor)
@@ -46,27 +61,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        ensureMainWindowVisible()
+        windowManager.ensureMainWindowVisible()
         return false
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        ensureMainWindowVisible()
+        windowManager.ensureMainWindowVisible()
         libraryStore.startDailyExternalServiceSelfCheckIfNeeded()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
+        libraryStore.saveCurrentVideoLibrarySnapshot()
         stopPreviewShuttleTracking()
     }
 
     func windowWillClose(_ notification: Notification) {
-        if notification.object as? NSWindow === mainWindow {
-            mainWindow = nil
+        if let window = notification.object as? NSWindow {
+            windowManager.clearMainWindowIfNeeded(window)
         }
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        if notification.object as? NSWindow === mainWindow {
+        if let window = notification.object as? NSWindow,
+           windowManager.isMainWindow(window) {
             stopPreviewShuttleTracking()
         }
     }
@@ -77,165 +94,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func chooseFolderFromMenu() {
         libraryStore.chooseFolder()
-    }
-
-    private func completeLaunchSetupIfNeeded() {
-        guard !didCompleteLaunchSetup else { return }
-        didCompleteLaunchSetup = true
-
-        NSApp.setActivationPolicy(.regular)
-        installMainMenu()
-        ensureMainWindowVisible()
-        scheduleStartupVisibilityChecks()
-        installPreviewKeyboardMonitor()
-        activateApplication()
-        libraryStore.startDailyExternalServiceSelfCheckIfNeeded()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
-            self?.libraryStore.loadLastLibraryForLaunch()
-        }
-    }
-
-    private func ensureMainWindowVisible() {
-        let window = mainWindow ?? createMainWindow()
-        restoreWindowToVisibleScreenIfNeeded(window)
-        NSApp.unhide(nil)
-        if window.isMiniaturized {
-            window.deminiaturize(nil)
-        }
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-        activateApplication()
-    }
-
-    private func activateApplication() {
-        NSRunningApplication.current.activate(options: [.activateAllWindows])
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func scheduleStartupVisibilityChecks() {
-        [0.25, 1.0, 2.0].forEach { delay in
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, !NSApp.isHidden else { return }
-                self.ensureMainWindowVisible()
-            }
-        }
-    }
-
-    private func createMainWindow() -> NSWindow {
-        let contentView = ContentView()
-            .environmentObject(libraryStore)
-        let hostingController = NSHostingController(rootView: contentView)
-        let window = PreviewKeyboardWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
-            styleMask: [.titled, .resizable, .closable, .miniaturizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "LapianBao"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.hasShadow = true
-        window.isMovableByWindowBackground = false
-        window.collectionBehavior.formUnion([.fullScreenPrimary, .moveToActiveSpace])
-        window.delegate = self
-        window.isReleasedWhenClosed = false
-        window.contentViewController = hostingController
-        window.contentMinSize = NSSize(
-            width: Design.minimumWindowWidth,
-            height: Design.minimumWindowHeight
-        )
-        window.minSize = window.frameRect(forContentRect: NSRect(
-            origin: .zero,
-            size: window.contentMinSize
-        )).size
-        window.center()
-        mainWindow = window
-        return window
-    }
-
-    private func restoreWindowToVisibleScreenIfNeeded(_ window: NSWindow) {
-        let frame = window.frame
-        let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
-        let isCenteredOnVisibleScreen = NSScreen.screens.contains { screen in
-            screen.visibleFrame.contains(windowCenter)
-        }
-        guard !isCenteredOnVisibleScreen, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-
-        let visibleFrame = screen.visibleFrame
-        let windowSize = CGSize(
-            width: min(frame.width, visibleFrame.width),
-            height: min(frame.height, visibleFrame.height)
-        )
-        let clampedOrigin = CGPoint(
-            x: min(max(frame.origin.x, visibleFrame.minX), visibleFrame.maxX - windowSize.width),
-            y: min(max(frame.origin.y, visibleFrame.minY), visibleFrame.maxY - windowSize.height)
-        )
-        window.setFrame(CGRect(origin: clampedOrigin, size: windowSize), display: true)
-    }
-
-    private func installMainMenu() {
-        let mainMenu = NSMenu()
-
-        let appMenuItem = NSMenuItem()
-        let appMenu = NSMenu()
-        appMenu.addItem(
-            withTitle: "退出 LapianBao",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        appMenuItem.submenu = appMenu
-        mainMenu.addItem(appMenuItem)
-
-        let fileMenuItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "文件")
-        fileMenu.addItem(
-            withTitle: "打开文件夹",
-            action: #selector(chooseFolderFromMenu),
-            keyEquivalent: "o"
-        )
-        fileMenuItem.submenu = fileMenu
-        mainMenu.addItem(fileMenuItem)
-
-        let editMenuItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(
-            withTitle: "撤销",
-            action: Selector(("undo:")),
-            keyEquivalent: "z"
-        )
-        editMenu.addItem(
-            withTitle: "重做",
-            action: Selector(("redo:")),
-            keyEquivalent: "Z"
-        )
-        editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(
-            withTitle: "剪切",
-            action: #selector(NSText.cut(_:)),
-            keyEquivalent: "x"
-        )
-        editMenu.addItem(
-            withTitle: "拷贝",
-            action: #selector(NSText.copy(_:)),
-            keyEquivalent: "c"
-        )
-        editMenu.addItem(
-            withTitle: "粘贴",
-            action: #selector(NSText.paste(_:)),
-            keyEquivalent: "v"
-        )
-        editMenu.addItem(
-            withTitle: "全选",
-            action: #selector(NSText.selectAll(_:)),
-            keyEquivalent: "a"
-        )
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
-
-        NSApp.mainMenu = mainMenu
     }
 
     func application(_ application: NSApplication, shouldRestoreApplicationState coder: NSCoder) -> Bool {
