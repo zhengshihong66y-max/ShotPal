@@ -27,8 +27,9 @@ extension ContentView {
                 tagFilterMenu
                 sortMenu
             }
-            .frame(minHeight: 26)
-            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: Design.libraryToolbarHeight, alignment: .leading)
+            .padding(.leading, Design.libraryToolbarLeadingInset)
+            .padding(.trailing, Design.libraryToolbarTrailingInset)
 
             ScrollView {
                 Group {
@@ -58,7 +59,7 @@ extension ContentView {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 2)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Design.libraryContentInset)
             }
             .scrollIndicators(.hidden)
             .background(HiddenScrollIndicators())
@@ -94,7 +95,7 @@ extension ContentView {
     }
 
     var librarySearchField: some View {
-        LibraryToolbarSearchField(placeholder: "搜索视频、标签", text: $librarySearchText)
+        LibraryToolbarSearchField(placeholder: "搜索视频、标签", text: $librarySearchText, expands: true)
     }
 
     var importDateVideoSections: [VideoDateSection] {
@@ -142,7 +143,8 @@ extension ContentView {
                 .frame(height: 1)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 10)
+        .padding(.top, Design.libraryDateDividerTopInset)
+        .padding(.bottom, Design.libraryDateDividerBottomInset)
     }
 
     var importButton: some View {
@@ -173,7 +175,7 @@ extension ContentView {
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
-                            .background(Color.orange)
+                            .background(Design.neutralBadgeFill)
                             .clipShape(Capsule())
                             .offset(x: 4, y: -3)
                     }
@@ -216,7 +218,7 @@ extension ContentView {
                                 } label: {
                                     HStack(spacing: 7) {
                                         Image(systemName: libraryStore.selectedTags.contains(tag) ? "checkmark.square.fill" : "square")
-                                            .foregroundStyle(libraryStore.selectedTags.contains(tag) ? Color.orange : .secondary)
+                                            .foregroundStyle(libraryStore.selectedTags.contains(tag) ? Design.neutralStrongAccent : .secondary)
                                             .frame(width: 15)
                                         VideoTagColorDot(tag: tag)
                                         Text(tag)
@@ -284,7 +286,7 @@ extension ContentView {
                 }
             }
         } label: {
-            libraryToolbarIcon(systemName: "arrow.up.arrow.down", size: 12, opticalOffsetX: 3.5)
+            libraryToolbarIcon(systemName: "arrow.up.arrow.down", size: 12, opticalOffsetX: 2)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

@@ -171,10 +171,6 @@ struct PreviewPanelView: View {
         Design.timelineLaneHeight * 3 + timelineLaneGap * 2
     }
 
-    func expandedPreviewTimelineStackHeight(in workspaceHeight: CGFloat) -> CGFloat {
-        min(Design.expandedTimelineStackMaxHeight, max(340, workspaceHeight * 0.42))
-    }
-
     func previewWorkspace(for video: VideoItem) -> some View {
         GeometryReader { proxy in
             let showsSidebar = proxy.size.width >= 720
@@ -185,10 +181,8 @@ struct PreviewPanelView: View {
             let headerHeight = Design.previewHeaderHeight
             let topChromeHeight = headerHeight + workspaceGap
             let timelineHeight = collapsedPreviewTimelineStackHeight
-            let expandedTimelineHeight = expandedPreviewTimelineStackHeight(in: proxy.size.height)
-            let currentTimelineHeight = expandedPreviewTab == nil ? timelineHeight : expandedTimelineHeight
             let verticalBudget = max(0, proxy.size.height - topChromeHeight - workspaceGap * 2)
-            let stageHeight = max(220, verticalBudget - currentTimelineHeight)
+            let stageHeight = max(220, verticalBudget - timelineHeight)
             let overlayInset = Design.previewExportOverlayButtonInset
             let overlayAvailableWidth = max(1, proxy.size.width - overlayInset * 2)
             let overlayPreferredWidth = max(
@@ -230,7 +224,7 @@ struct PreviewPanelView: View {
                     timelineStackContainer(
                         for: video,
                         collapsedHeight: timelineHeight,
-                        expandedHeight: expandedTimelineHeight
+                        expandedHeight: timelineHeight
                     )
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
                 }
@@ -273,7 +267,7 @@ struct PreviewPanelView: View {
                     timelineStackContainer(
                         for: video,
                         collapsedHeight: timelineHeight,
-                        expandedHeight: expandedTimelineHeight
+                        expandedHeight: timelineHeight
                     )
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
                 }

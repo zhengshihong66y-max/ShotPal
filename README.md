@@ -37,14 +37,17 @@
 
 ### 3.1 左侧 rail
 
-左侧 rail 是工作区入口，不是标签栏。宽度固定 `56pt`，包含 macOS 原生红黄绿窗口按钮和四个可见工作区入口：
+左侧 rail 是工作区入口，不是标签栏。宽度固定 `56pt`，包含 macOS 原生红黄绿窗口按钮和五个可见工作区入口：
 
 - `主页`：看片、时间线、场景识别、截图、批注、声音采样、转写摘要、音乐识别。
 - `画面`：已收集画面的网格、预览、亮度直方图、色卡、本地视觉模型分析。
 - `声音`：已导出的声音片段列表、播放、定位回原视频、音乐识别和下载。
+- `音乐`：音乐识别结果、音乐下载、音乐素材列表和回溯定位。
 - `设置`：画面切分、字幕识别、音乐下载的批量操作、停止、清空和自动执行开关。
 
 对应源码是 `AppWorkspace.allCases`。`content` 工作区的实现仍在代码里，当前不作为 rail 入口展示。
+
+Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选中图标保持低透明度。图标需要以各自的 `railIconOffset` 和 `railIconSize` 做光学修正，并保持和红黄绿窗口按钮共用同一条左缘视觉基线。
 
 ### 3.2 素材区
 
@@ -104,7 +107,7 @@
 - `PreviewKeyboardHandler` 和 `KeyboardCaptureNSView`：局部键盘焦点捕获。
 - `NativeWindowTrafficLights`：隐藏系统红黄绿按钮，在自定义 rail 的固定坐标绘制同尺寸按钮，并转发关闭、最小化、全屏动作到 `NSWindow`。
 
-红黄绿按钮尺寸 `12pt`，间距 `6pt`。不要把 `window.standardWindowButton(...)` 重新挂到 SwiftUI 容器中；系统标题栏会在启动和激活阶段重排它们，导致位置漂移。
+红黄绿按钮尺寸 `14pt`，间距 `7pt`。不要把 `window.standardWindowButton(...)` 重新挂到 SwiftUI 容器中；系统标题栏会在启动和激活阶段重排它们，导致位置漂移。
 
 ### `LibraryStore.swift`、`Models/` 和 `Stores/`
 
@@ -353,23 +356,34 @@ static let railButtonHeight: CGFloat = 34
 static let railIconBoxSize: CGFloat = 24
 static let railButtonVisualOffsetX: CGFloat = 3.5
 static let railSelectionGuideX: CGFloat = railIconInset + railButtonVisualOffsetX
+static let railIconVisualGuideX: CGFloat = 37
+static let libraryContentInset: CGFloat = 14
+static let libraryToolbarElementGap: CGFloat = 8
 static let libraryToolbarVisualGap: CGFloat = 14
-static let libraryToolbarHeight: CGFloat = 22
-static let libraryToolbarButtonSlotWidth: CGFloat = 22
+static let libraryToolbarHeight: CGFloat = 26
+static let libraryToolbarButtonSlotWidth: CGFloat = 18
 static let libraryToolbarButtonSlotHeight: CGFloat = 22
-static let libraryToolbarButtonGap: CGFloat = 13
+static let libraryToolbarButtonGap: CGFloat = libraryToolbarElementGap
+static let libraryToolbarSearchMinWidth: CGFloat = 80
+static let libraryToolbarSearchWidth: CGFloat = 131
+static let libraryToolbarSearchHeight: CGFloat = 26
+static let libraryDateDividerTopInset: CGFloat = 3
+static let libraryDateDividerBottomInset: CGFloat = 17
 static let previewHeaderTagRowHeight: CGFloat = 12
 static let previewHeaderTopInset: CGFloat = libraryToolbarVisualGap
-static let previewHeaderTitleTagGap: CGFloat = 4
+static let previewHeaderTitleTagGap: CGFloat = 8
+static let previewHeaderBottomInset: CGFloat = 0
 static let previewHeaderTitleLineHeight: CGFloat = 22
-static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderTitleTagGap
-static let trafficLightSize: CGFloat = 12
-static let trafficLightGap: CGFloat = 6
+static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderBottomInset
+static let trafficLightSize: CGFloat = 14
+static let trafficLightGap: CGFloat = 7
 static let trafficLightClusterWidth: CGFloat = trafficLightSize * 3 + trafficLightGap * 2
 static let libraryToolbarTop: CGFloat = libraryToolbarVisualGap
 static let railTopChromeHeight: CGFloat = libraryToolbarTop + libraryToolbarHeight
-static let trafficLightGuideX: CGFloat = 14
-static let trafficLightGuideY: CGFloat = 19
+static let trafficLightGuideX: CGFloat = railIconVisualGuideX
+static let trafficLightGuideY: CGFloat = libraryToolbarTop + (libraryToolbarHeight - trafficLightSize) / 2
+static let libraryToolbarLeadingInset: CGFloat = 26.5
+static let libraryToolbarTrailingInset: CGFloat = libraryContentInset
 static let settingsRailWidth: CGFloat = max(railWidth, trafficLightGuideX + trafficLightClusterWidth)
 static let timelineLaneHeight: CGFloat = 100
 static let collapsedTimelineLaneHeight: CGFloat = 40
@@ -378,7 +392,6 @@ static let timelineLaneIconSize: CGFloat = 22
 static let timelineLaneVisualGap: CGFloat = (timelineLaneHeight - timelineLaneButtonSize * 3) / 4
 static let timelineLaneContentHeight: CGFloat = timelineLaneHeight - timelineLaneVisualGap * 2
 static let expandedTimelineDetailHeight: CGFloat = 280
-static let expandedTimelineStackMaxHeight: CGFloat = 520
 static let sceneTimelineAutoVisibleSceneLimit = 36
 static let sceneTimelineAutoMaxZoom: Double = 6
 static let centeredWaveformViewportSpan: Double = 0.22
@@ -393,13 +406,17 @@ static let previewExportPanelPadding: CGFloat = 10
 派生值：
 
 - `libraryToolbarTop = 14`。
-- `railTopChromeHeight = 36`，来自 `14 + 22`。
-- `trafficLightGuideX = 14`，标准窗口按钮左距，不随 rail 图标光学校正值变化。
-- `trafficLightGuideY = 19`，来自 `14 + (22 - 12) / 2`。
-- `trafficLightClusterWidth = 48`，来自 `12 * 3 + 6 * 2`。
-- `railSelectionGuideX = 11.5`，让导航选中块左缘和红黄绿按钮的可见左缘视觉对齐。
-- `settingsRailWidth = 62`，来自 `max(56, 14 + 48)`。
-- `previewHeaderHeight = 56`，来自 `14 + 22 + 4 + 12 + 4`。
+- `railTopChromeHeight = 40`，来自 `14 + 26`。
+- `libraryContentInset = 14`，素材网格左右内边距和素材工具栏右内边距共用同一基线。
+- `libraryToolbarElementGap = 8`，顶部工具条中搜索框和图标按钮之间共用的视觉间距。
+- 主页工具条左 padding 使用 `libraryToolbarLeadingInset = 26.5`，右 padding 使用 `libraryToolbarTrailingInset = 14`；搜索框为弹性宽度，最右排序按钮槽位右缘和素材卡片右边线共线。
+- 日期分割线使用 `libraryDateDividerTopInset = 3` 和 `libraryDateDividerBottomInset = 17`，总高度不变，只把两侧风格线抬到左侧主页图标可见上沿和右侧视频预览框上沿同一条 y 线。
+- `trafficLightGuideX = 37`，来自 `railIconVisualGuideX`，让红黄绿按钮左缘和左侧 rail 图标的实际视觉左缘对齐；搜索框不跟随该值继续右移，避免绿点到搜索框的间距被拉大。
+- `trafficLightGuideY = 20`，来自 `14 + (26 - 14) / 2`，让放大的窗口按钮与顶部工具条垂直居中。
+- `trafficLightClusterWidth = 56`，来自 `14 * 3 + 7 * 2`。
+- `railSelectionGuideX = 11.5`，保留为 rail 的基础光学校正基线；当前红黄绿按钮改用 `railIconVisualGuideX` 对齐侧栏图标实际左缘。
+- `settingsRailWidth = 93`，来自 `max(56, 37 + 56)`。
+- `previewHeaderHeight = 56`，来自 `14 + 22 + 8 + 12 + 0`。
 - `timelineLaneVisualGap = 7`，来自 `(100 - 24 * 3) / 4`。
 - `timelineLaneContentHeight = 86`，来自 `100 - 7 * 2`。
 - `sceneTimelineAutoMaxZoom = 6`，场景很多时自动聚焦到局部时间线，但不把主页初始视图推得太窄。
@@ -409,8 +426,14 @@ static let previewExportPanelPadding: CGFloat = 10
 ```swift
 sidebarBg = Color(red: 0.118, green: 0.118, blue: 0.129)
 contentBg = Color(red: 0.149, green: 0.149, blue: 0.165)
+neutralAccent = Color.white.opacity(0.72)
+neutralStrongAccent = Color.white.opacity(0.88)
+neutralBadgeFill = Color.white.opacity(0.18)
+timelineIOAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
+timelinePlayheadAccent = Color.white.opacity(0.92)
+screenshotFrameAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
 currentFrameAccent = Color(red: 1.00, green: 0.22, blue: 0.18)
-captureFrameAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
+captureFrameAccent = neutralAccent
 annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 libraryToolbarIconTint = Color.white.opacity(0.72)
 ```

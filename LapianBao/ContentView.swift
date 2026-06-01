@@ -140,11 +140,12 @@ struct ContentView: View {
                 navigationRail
                     .frame(width: Design.railWidth, alignment: .leading)
                     .background(Design.sidebarBg)
-                    .zIndex(1)
+                    .zIndex(10)
 
                 workspaceView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Design.sidebarBg)
+                    .zIndex(presentedAppWorkspace == .frames ? 2 : 0)
             } else if isCompact {
                 VStack(spacing: Design.panelSpacing) {
                     libraryColumn(isCompact: true)
@@ -197,7 +198,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             navigationRail
                 .frame(width: Design.railWidth, alignment: .leading)
-                .zIndex(1)
+                .zIndex(10)
 
             if presentedAppWorkspace == .frames {
                 frameVideoFilterColumn(isCompact: isCompact)
@@ -212,7 +213,7 @@ struct ContentView: View {
 
     var navigationRail: some View {
         VStack(spacing: 0) {
-            // 顶部窗口按键与素材库工具栏共用同一条视觉中心线。
+            // 顶部窗口按键与左侧 rail 图标共用同一条左缘视觉基线。
             ZStack(alignment: .topLeading) {
                 Design.sidebarBg
                     .frame(
@@ -248,7 +249,6 @@ struct ContentView: View {
 
     func navigationRailButton(_ workspace: AppWorkspace) -> some View {
         let isSelected = workspace == .settings ? isSettingsSheetPresented : presentedAppWorkspace == workspace
-        let selectionWidth = Design.railWidth - Design.railIconInset * 2
 
         return Button {
             if workspace == .settings {
@@ -259,23 +259,14 @@ struct ContentView: View {
                 appWorkspace = workspace
             }
         } label: {
-            ZStack(alignment: .leading) {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(.white.opacity(0.10))
-                        .frame(width: selectionWidth, height: Design.railButtonHeight)
-                        .offset(x: Design.railSelectionGuideX)
-                }
-
-                Image(systemName: workspace.icon)
-                    .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.88) : Color.white.opacity(0.40))
-                    .frame(width: Design.railIconBoxSize, height: Design.railIconBoxSize)
-                    .offset(x: workspace.railIconOffset)
-                    .frame(width: Design.railWidth, height: Design.railButtonHeight)
-                    .offset(x: Design.railButtonVisualOffsetX)
-            }
-            .frame(width: Design.railWidth, height: Design.railButtonHeight, alignment: .leading)
+            Image(systemName: workspace.icon)
+                .font(.system(size: workspace.railIconSize, weight: isSelected ? .semibold : .regular))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(isSelected ? Color.white.opacity(0.94) : Color.white.opacity(0.40))
+                .frame(width: Design.railIconBoxSize, height: Design.railIconBoxSize)
+                .offset(x: workspace.railIconOffset)
+                .frame(width: Design.railWidth, height: Design.railButtonHeight, alignment: .center)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(workspace.title)

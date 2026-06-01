@@ -118,10 +118,29 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
 
     var railIconOffset: CGFloat {
         switch self {
-        case .home, .audio, .music, .content, .settings:
+        case .home, .audio, .content, .settings:
             return 0
         case .frames:
-            return 0.5
+            return 0.25
+        case .music:
+            return -0.5
+        }
+    }
+
+    var railIconSize: CGFloat {
+        switch self {
+        case .home:
+            return 15.5
+        case .frames:
+            return 16.5
+        case .audio:
+            return 17
+        case .music:
+            return 16
+        case .content:
+            return 15
+        case .settings:
+            return 16.5
         }
     }
 }
@@ -230,9 +249,9 @@ enum VideoSourcePlatform: String, CaseIterable {
 
 enum VideoTagPalette {
     private static let colors: [Color] = [
-        Color(red: 0.94, green: 0.34, blue: 0.38),
-        Color(red: 0.96, green: 0.55, blue: 0.22),
-        Color(red: 0.72, green: 0.66, blue: 0.28),
+        Color(red: 0.78, green: 0.34, blue: 0.64),
+        Color(red: 0.40, green: 0.62, blue: 0.96),
+        Color(red: 0.58, green: 0.62, blue: 0.68),
         Color(red: 0.30, green: 0.70, blue: 0.40),
         Color(red: 0.22, green: 0.72, blue: 0.68),
         Color(red: 0.32, green: 0.56, blue: 0.96),

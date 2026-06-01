@@ -28,26 +28,34 @@ enum Design {
     static let railIconBoxSize: CGFloat = 24
     static let railButtonVisualOffsetX: CGFloat = 3.5
     static let railSelectionGuideX: CGFloat = railIconInset + railButtonVisualOffsetX
+    static let railIconVisualGuideX: CGFloat = 37
+    static let libraryContentInset: CGFloat = 14
+    static let libraryToolbarElementGap: CGFloat = 8
     static let libraryToolbarVisualGap: CGFloat = 14
-    static let libraryToolbarHeight: CGFloat = 22
-    static let libraryToolbarButtonSlotWidth: CGFloat = 22
+    static let libraryToolbarHeight: CGFloat = 26
+    static let libraryToolbarButtonSlotWidth: CGFloat = 18
     static let libraryToolbarButtonSlotHeight: CGFloat = 22
-    static let libraryToolbarButtonGap: CGFloat = 13
-    static let libraryToolbarSearchMinWidth: CGFloat = 110
-    static let libraryToolbarSearchWidth: CGFloat = 280
+    static let libraryToolbarButtonGap: CGFloat = libraryToolbarElementGap
+    static let libraryToolbarSearchMinWidth: CGFloat = 80
+    static let libraryToolbarSearchWidth: CGFloat = 131
     static let libraryToolbarSearchHeight: CGFloat = 26
+    static let libraryDateDividerTopInset: CGFloat = 3
+    static let libraryDateDividerBottomInset: CGFloat = 17
     static let previewHeaderTagRowHeight: CGFloat = 12
     static let previewHeaderTopInset: CGFloat = libraryToolbarVisualGap
-    static let previewHeaderTitleTagGap: CGFloat = 4
+    static let previewHeaderTitleTagGap: CGFloat = 8
+    static let previewHeaderBottomInset: CGFloat = 0
     static let previewHeaderTitleLineHeight: CGFloat = 22
-    static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderTitleTagGap
-    static let trafficLightSize: CGFloat = 12
-    static let trafficLightGap: CGFloat = 6
+    static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderBottomInset
+    static let trafficLightSize: CGFloat = 14
+    static let trafficLightGap: CGFloat = 7
     static let trafficLightClusterWidth: CGFloat = trafficLightSize * 3 + trafficLightGap * 2
     static let libraryToolbarTop: CGFloat = libraryToolbarVisualGap
     static let railTopChromeHeight: CGFloat = libraryToolbarTop + libraryToolbarHeight
-    static let trafficLightGuideX: CGFloat = 14
-    static let trafficLightGuideY: CGFloat = 19
+    static let trafficLightGuideX: CGFloat = railIconVisualGuideX
+    static let trafficLightGuideY: CGFloat = libraryToolbarTop + (libraryToolbarHeight - trafficLightSize) / 2
+    static let libraryToolbarLeadingInset: CGFloat = 26.5
+    static let libraryToolbarTrailingInset: CGFloat = libraryContentInset
     static let settingsRailWidth: CGFloat = max(railWidth, trafficLightGuideX + trafficLightClusterWidth)
     static let timelineLaneHeight: CGFloat = 100
     static let collapsedTimelineLaneHeight: CGFloat = 40
@@ -56,7 +64,6 @@ enum Design {
     static let timelineLaneVisualGap: CGFloat = (timelineLaneHeight - timelineLaneButtonSize * 3) / 4
     static let timelineLaneContentHeight: CGFloat = timelineLaneHeight - timelineLaneVisualGap * 2
     static let expandedTimelineDetailHeight: CGFloat = 280
-    static let expandedTimelineStackMaxHeight: CGFloat = 520
     static let sceneTimelineAutoVisibleSceneLimit = 36
     static let sceneTimelineAutoMaxZoom: Double = 6
     static let centeredWaveformViewportSpan: Double = 0.22
@@ -72,14 +79,21 @@ enum Design {
     static let sidebarBg = Color(red: 0.118, green: 0.118, blue: 0.129)
     static let contentBg = Color(red: 0.149, green: 0.149, blue: 0.165)
 
+    static let neutralAccent = Color.white.opacity(0.72)
+    static let neutralStrongAccent = Color.white.opacity(0.88)
+    static let neutralBadgeFill = Color.white.opacity(0.18)
+    static let timelineIOAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
+    static let timelinePlayheadAccent = Color.white.opacity(0.92)
+    static let screenshotFrameAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
     static let currentFrameAccent = Color(red: 1.00, green: 0.22, blue: 0.18)
-    static let captureFrameAccent = Color(red: 1.00, green: 0.50, blue: 0.18)
+    static let captureFrameAccent = neutralAccent
     static let annotationAccent = Color(red: 0.68, green: 0.72, blue: 0.72)
 }
 
 struct LibraryToolbarSearchField: View {
     let placeholder: String
     @Binding var text: String
+    var expands = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -93,9 +107,8 @@ struct LibraryToolbarSearchField: View {
         }
         .padding(.horizontal, 9)
         .frame(
-            minWidth: Design.libraryToolbarSearchMinWidth,
-            idealWidth: Design.libraryToolbarSearchWidth,
-            maxWidth: Design.libraryToolbarSearchWidth,
+            minWidth: expands ? Design.libraryToolbarSearchMinWidth : Design.libraryToolbarSearchWidth,
+            maxWidth: expands ? .infinity : Design.libraryToolbarSearchWidth,
             minHeight: Design.libraryToolbarSearchHeight,
             maxHeight: Design.libraryToolbarSearchHeight
         )
@@ -111,9 +124,9 @@ func floatingExportButtonIcon(
 ) -> some View {
     Image(systemName: systemImage)
         .font(.system(size: iconSize ?? min(13, size * 0.48), weight: .semibold))
-        .foregroundStyle(Design.captureFrameAccent)
+        .foregroundStyle(.white.opacity(0.94))
         .frame(width: size, height: size)
-        .background(.white.opacity(0.18))
+        .background(.white.opacity(0.16))
         .clipShape(Circle())
         .overlay {
             Circle()
@@ -126,18 +139,9 @@ func floatingExportButtonIcon(
 func cardOverlayExportButtonIcon(
     systemImage: String = "square.and.arrow.up"
 ) -> some View {
-    let shape = RoundedRectangle(cornerRadius: Design.innerRadius, style: .continuous)
-
-    return Image(systemName: systemImage)
-        .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(.white.opacity(0.88))
-        .frame(width: 24, height: 24)
-        .background(.black.opacity(0.48))
-        .clipShape(shape)
-        .overlay {
-            shape
-                .stroke(.white.opacity(0.12), lineWidth: 0.7)
-        }
-        .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
-        .contentShape(shape)
+    floatingExportButtonIcon(
+        systemImage: systemImage,
+        size: 24,
+        iconSize: 12
+    )
 }
