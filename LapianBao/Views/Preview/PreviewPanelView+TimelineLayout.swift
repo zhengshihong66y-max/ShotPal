@@ -172,7 +172,7 @@ extension PreviewPanelView {
                 .allowsHitTesting(isAnnotationPopoverPresented)
             }
             .shadow(color: .black.opacity(isExpanded ? 0.18 : 0), radius: isExpanded ? 18 : 0, y: -4)
-            .animation(timelineFadeAnimation, value: expandedPreviewTab)
+            .animation(timelineExpansionAnimation, value: expandedPreviewTab)
     }
 
     @ViewBuilder
@@ -206,20 +206,75 @@ extension PreviewPanelView {
     @ViewBuilder
     func annotationEditorOverlay(for video: VideoItem, in size: CGSize) -> some View {
         if isAnnotationPopoverPresented {
+            let marker = annotationMarkerPoint(in: size)
             let anchor = annotationEditorPoint(in: size)
-            annotationEditorView(for: video)
-                .frame(width: Self.annotationEditorWidth)
-                .background(.black.opacity(0.78))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(.white.opacity(0.16), lineWidth: 0.8)
-                }
-                .shadow(color: .black.opacity(0.34), radius: 18, y: 8)
-                .position(anchor)
-                .zIndex(50)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+
+            ZStack(alignment: .topLeading) {
+                annotationEditorConnector(from: anchor, to: marker)
+
+                annotationEditorView(for: video)
+                    .frame(width: Self.annotationEditorWidth, height: Self.annotationEditorHeight)
+                    .background(.black.opacity(0.78))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(.white.opacity(0.16), lineWidth: 0.8)
+                    }
+                    .shadow(color: .black.opacity(0.34), radius: 18, y: 8)
+                    .position(anchor)
+            }
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .zIndex(50)
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
+    }
+
+    func annotationEditorConnector(from editorCenter: CGPoint, to marker: CGPoint) -> some View {
+        let editorRect = CGRect(
+            x: editorCenter.x - Self.annotationEditorWidth / 2,
+            y: editorCenter.y - Self.annotationEditorHeight / 2,
+            width: Self.annotationEditorWidth,
+            height: Self.annotationEditorHeight
+        )
+        let start = annotationConnectorStart(from: editorRect, to: marker)
+
+        return ZStack(alignment: .topLeading) {
+            Path { path in
+                path.move(to: start)
+                path.addLine(to: marker)
+            }
+            .stroke(
+                Design.annotationAccent.opacity(0.88),
+                style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round)
+            )
+
+            Circle()
+                .fill(Design.annotationAccent.opacity(0.96))
+                .frame(width: 8, height: 8)
+                .position(marker)
+
+            Circle()
+                .stroke(Design.annotationAccent.opacity(0.36), lineWidth: 1)
+                .frame(width: 16, height: 16)
+                .position(marker)
+        }
+        .allowsHitTesting(false)
+    }
+
+    func annotationConnectorStart(from editorRect: CGRect, to marker: CGPoint) -> CGPoint {
+        let center = CGPoint(x: editorRect.midX, y: editorRect.midY)
+        let dx = marker.x - center.x
+        let dy = marker.y - center.y
+        guard abs(dx) > 0.001 || abs(dy) > 0.001 else { return center }
+
+        let scaleX = abs(dx) > 0.001 ? (editorRect.width / 2) / abs(dx) : CGFloat.greatestFiniteMagnitude
+        let scaleY = abs(dy) > 0.001 ? (editorRect.height / 2) / abs(dy) : CGFloat.greatestFiniteMagnitude
+        let scale = min(scaleX, scaleY)
+
+        return CGPoint(
+            x: center.x + dx * scale,
+            y: center.y + dy * scale
+        )
     }
 
     func annotationEditorPoint(in size: CGSize) -> CGPoint {
@@ -324,7 +379,8 @@ extension PreviewPanelView {
         timelineLaneForTab(tab, for: video, detailHeight: detailHeight, clock: clock)
             .frame(height: timelineSlotHeight(for: tab, detailHeight: detailHeight), alignment: .top)
             .clipped()
-            .transition(.identity)
+            .zIndex(timelineLaneZIndex(for: tab))
+            .transition(timelineLaneTransition(for: tab))
     }
 
     func timelineSlotHeight(for tab: PreviewTab, detailHeight: CGFloat) -> CGFloat {
@@ -340,7 +396,45 @@ extension PreviewPanelView {
     }
 
     var timelineFadeAnimation: Animation {
-        .easeInOut(duration: 0.18)
+        timelineExpansionAnimation
+    }
+
+    var timelineExpansionAnimation: Animation {
+        .spring(response: 0.34, dampingFraction: 0.88, blendDuration: 0.08)
+    }
+
+    var timelineDetailAnimation: Animation {
+        .easeOut(duration: 0.18).delay(0.05)
+    }
+
+    func timelineLaneZIndex(for tab: PreviewTab) -> Double {
+        if expandedPreviewTab == tab { return 10 }
+        return Double(PreviewTab.allCases.count - timelineIndex(for: tab))
+    }
+
+    func timelineLaneTransition(for tab: PreviewTab) -> AnyTransition {
+        let removalEdge = timelineRemovalEdge(for: tab)
+        let insertion = AnyTransition.opacity
+            .combined(with: .scale(scale: 0.985, anchor: .top))
+        let removal = AnyTransition.opacity
+            .combined(with: .scale(scale: 0.985, anchor: .center))
+            .combined(with: .move(edge: removalEdge))
+        return .asymmetric(insertion: insertion, removal: removal)
+    }
+
+    func timelineRemovalEdge(for tab: PreviewTab) -> Edge {
+        guard let expandedPreviewTab else { return .bottom }
+        return timelineIndex(for: tab) < timelineIndex(for: expandedPreviewTab) ? .top : .bottom
+    }
+
+    var timelineDetailTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity
+                .combined(with: .move(edge: .top))
+                .combined(with: .scale(scale: 0.985, anchor: .top)),
+            removal: .opacity
+                .combined(with: .scale(scale: 0.99, anchor: .top))
+        )
     }
 
     @ViewBuilder
@@ -440,7 +534,7 @@ extension PreviewPanelView {
     func previewTabAccent(_ tab: PreviewTab) -> Color {
         switch tab {
         case .frames: return Design.captureFrameAccent
-        case .audio: return .orange
+        case .audio: return Design.annotationAccent
         case .content: return Design.annotationAccent
         }
     }
@@ -484,7 +578,7 @@ extension PreviewPanelView {
                     if visibleTimelineDetailTab == tab {
                         detail()
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .transition(.opacity)
+                            .transition(timelineDetailTransition)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -494,6 +588,7 @@ extension PreviewPanelView {
                 .padding(.bottom, 8)
                 .clipped()
                 .allowsHitTesting(visibleTimelineDetailTab == tab)
+                .animation(timelineDetailAnimation, value: visibleTimelineDetailTab)
             }
         }
         .background(.white.opacity(isExpanded ? 0.055 : 0.035))
@@ -521,6 +616,14 @@ extension PreviewPanelView {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: Design.timelineLaneButtonSize, height: Design.timelineLaneButtonSize)
+                    .scaleEffect(isExpanded ? 1.08 : 1)
+                    .background {
+                        if isExpanded {
+                            Circle()
+                                .fill(.white.opacity(0.10))
+                                .transition(.opacity.combined(with: .scale(scale: 0.86)))
+                        }
+                    }
             }
             .buttonStyle(.plain)
             .help(isExpanded ? "收起\(tab.rawValue)" : "展开\(tab.rawValue)")
@@ -529,6 +632,7 @@ extension PreviewPanelView {
                 Spacer(minLength: 0)
 
                 actions()
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .center)))
             }
 
             Spacer(minLength: 0)

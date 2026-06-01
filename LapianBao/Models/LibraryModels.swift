@@ -376,12 +376,15 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
     var ytdlpVersion: String?
     var ffmpegPath: String?
     var youtubeProbeTitle: String?
+    var problemLocation: String?
+    var repairSummary: String?
     var serviceChecks: [ExternalServiceSelfCheckItem] = []
 
     var isRunning: Bool { status == .running }
 
     private enum CodingKeys: String, CodingKey {
-        case status, checkedAt, message, ytdlpPath, ytdlpVersion, ffmpegPath, youtubeProbeTitle, serviceChecks
+        case status, checkedAt, message, ytdlpPath, ytdlpVersion, ffmpegPath, youtubeProbeTitle
+        case problemLocation, repairSummary, serviceChecks
     }
 
     nonisolated init(
@@ -392,6 +395,8 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         ytdlpVersion: String? = nil,
         ffmpegPath: String? = nil,
         youtubeProbeTitle: String? = nil,
+        problemLocation: String? = nil,
+        repairSummary: String? = nil,
         serviceChecks: [ExternalServiceSelfCheckItem] = []
     ) {
         self.status = status
@@ -401,6 +406,8 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         self.ytdlpVersion = ytdlpVersion
         self.ffmpegPath = ffmpegPath
         self.youtubeProbeTitle = youtubeProbeTitle
+        self.problemLocation = problemLocation
+        self.repairSummary = repairSummary
         self.serviceChecks = serviceChecks
     }
 
@@ -413,6 +420,8 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         ytdlpVersion = try container.decodeIfPresent(String.self, forKey: .ytdlpVersion)
         ffmpegPath = try container.decodeIfPresent(String.self, forKey: .ffmpegPath)
         youtubeProbeTitle = try container.decodeIfPresent(String.self, forKey: .youtubeProbeTitle)
+        problemLocation = try container.decodeIfPresent(String.self, forKey: .problemLocation)
+        repairSummary = try container.decodeIfPresent(String.self, forKey: .repairSummary)
         serviceChecks = try container.decodeIfPresent([ExternalServiceSelfCheckItem].self, forKey: .serviceChecks) ?? []
     }
 
@@ -425,6 +434,8 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         try container.encodeIfPresent(ytdlpVersion, forKey: .ytdlpVersion)
         try container.encodeIfPresent(ffmpegPath, forKey: .ffmpegPath)
         try container.encodeIfPresent(youtubeProbeTitle, forKey: .youtubeProbeTitle)
+        try container.encodeIfPresent(problemLocation, forKey: .problemLocation)
+        try container.encodeIfPresent(repairSummary, forKey: .repairSummary)
         try container.encode(serviceChecks, forKey: .serviceChecks)
     }
 }

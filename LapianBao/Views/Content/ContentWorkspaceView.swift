@@ -30,8 +30,10 @@ struct ContentWorkspaceView: View {
                         Button {
                             libraryStore.exportTranscriptMarkdown(video: video)
                         } label: {
-                            Label("导出字幕", systemImage: "square.and.arrow.up")
+                            floatingExportButtonIcon(size: 26, iconSize: 12)
                         }
+                        .buttonStyle(.plain)
+                        .help("导出字幕")
                     }
                 }
             }
@@ -174,7 +176,7 @@ struct ContentWorkspaceView: View {
                         HStack(alignment: .top, spacing: 10) {
                             Text(clockText(segment.start))
                                 .font(.caption.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(isSelected ? .white : .orange)
+                                .foregroundStyle(isSelected ? .white : .secondary)
                                 .frame(width: 58, alignment: .leading)
                             Text(segment.text)
                                 .font(.body)
@@ -204,7 +206,7 @@ struct ContentWorkspaceView: View {
                             HStack(spacing: 7) {
                                 Text(clockText(chapter.start))
                                     .font(.caption.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.secondary)
                                 if let end = chapter.end {
                                     Text("- \(clockText(end))")
                                         .font(.caption.monospacedDigit())
@@ -263,7 +265,7 @@ struct ContentWorkspaceView: View {
         case let .failed(videoPath, message) where videoPath == video.url.path:
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(.caption)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Color.red.opacity(0.86))
         case let .loaded(videoPath, chapters) where videoPath == video.url.path && !chapters.isEmpty:
             Label("已生成 \(chapters.count) 个内容时间点", systemImage: "checkmark.circle")
                 .font(.caption)
@@ -289,7 +291,7 @@ struct ContentWorkspaceView: View {
                             HStack(spacing: 5) {
                                 Text(clockText(chapter.start))
                                     .font(.caption2.monospacedDigit().weight(.bold))
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.secondary)
                                 if chapter.isModelGenerated {
                                     Text(chapter.type)
                                         .font(.caption2.weight(.semibold))

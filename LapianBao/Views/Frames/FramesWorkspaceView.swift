@@ -120,6 +120,82 @@ struct FullResolutionFramePreview: View {
     }
 }
 
+private struct FrameBoardImageTile<OverlayControl: View>: View {
+    let image: NSImage?
+    let numberText: String
+    var isSelected = false
+    var selectedStrokeColor: Color = .white.opacity(0.36)
+    var selectedStrokeWidth: CGFloat = 1.1
+    let onTap: () -> Void
+    let dragItemProvider: (() -> NSItemProvider)?
+    @ViewBuilder let overlayControl: (_ isHovered: Bool) -> OverlayControl
+
+    @State private var isHovered = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: onTap) {
+                imageContent
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(tileShape)
+                    .overlay(alignment: .bottom) {
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.56)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 48)
+                        .allowsHitTesting(false)
+                    }
+                    .overlay(alignment: .bottomLeading) {
+                        Text(numberText)
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .shadow(color: .black.opacity(0.72), radius: 2, y: 1)
+                            .padding(.leading, 9)
+                            .padding(.bottom, 7)
+                    }
+                    .overlay {
+                        if isSelected {
+                            tileShape
+                                .strokeBorder(selectedStrokeColor, lineWidth: selectedStrokeWidth)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .fullResolutionImageDrag(dragItemProvider)
+
+            overlayControl(isHovered)
+                .opacity(isHovered ? 1 : 0)
+                .allowsHitTesting(isHovered)
+                .animation(.easeInOut(duration: 0.12), value: isHovered)
+                .padding(8)
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var imageContent: some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.medium)
+                .scaledToFill()
+        } else {
+            Color.black.opacity(0.26)
+        }
+    }
+
+    private var tileShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+    }
+}
+
 struct FramesWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @Binding var selectedVideoPath: String?
@@ -261,6 +337,11 @@ struct FramesWorkspaceView: View {
     private var frameBoard: some View {
         VStack(alignment: .leading, spacing: 12) {
             frameBoardToolbar
+
+            if boardMode == .collection && isFrameTagFilterPresented {
+                frameTagQuickFilterBar
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             switch boardMode {
             case .storyboard:
@@ -405,11 +486,9 @@ struct FramesWorkspaceView: View {
         HStack(spacing: Design.libraryToolbarButtonGap) {
             LibraryToolbarSearchField(placeholder: "搜索图片、标签", text: $frameSearchText)
 
-            frameModeButton(.storyboard)
             frameModeButton(.collection)
-            if boardMode == .storyboard {
-                storyboardVideoPicker
-            } else {
+            frameModeButton(.storyboard)
+            if boardMode == .collection {
                 frameTagFilterButton
             }
 
@@ -421,16 +500,26 @@ struct FramesWorkspaceView: View {
 
     private var frameTagFilterButton: some View {
         Button {
-            isFrameTagFilterPresented.toggle()
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isFrameTagFilterPresented.toggle()
+            }
         } label: {
-            frameToolbarIcon(systemName: selectedFrameTags.isEmpty ? "tag" : "tag.fill", size: 12)
+            frameToolbarIcon(
+                systemName: selectedFrameTags.isEmpty ? "tag" : "tag.fill",
+                size: 12,
+                tint: isFrameTagFilterPresented || !selectedFrameTags.isEmpty
+                    ? Design.neutralStrongAccent
+                    : Design.libraryToolbarIconTint
+            )
+                .background(isFrameTagFilterPresented ? Color.white.opacity(0.10) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(alignment: .topTrailing) {
                     if !selectedFrameTags.isEmpty {
                         Text("\(selectedFrameTags.count)")
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
-                            .background(Color.orange)
+                            .background(Design.neutralBadgeFill)
                             .clipShape(Capsule())
                             .offset(x: 4, y: -3)
                     }
@@ -440,46 +529,143 @@ struct FramesWorkspaceView: View {
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
         .help("图片标签筛选")
-        .popover(isPresented: $isFrameTagFilterPresented, arrowEdge: .bottom) {
-            frameTagFilterPopover
-        }
     }
 
+    private var frameTagQuickFilterBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label("图片标签", systemImage: "tag")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if !selectedFrameTags.isEmpty {
+                    Text("\(selectedFrameTags.count)")
+                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.08))
+                        .clipShape(Capsule())
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    selectedFrameTags.removeAll()
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedFrameTags.isEmpty)
+                .help("显示全部图片")
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isFrameTagFilterPresented = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("收起标签筛选")
+            }
+
+            if libraryStore.allFrameTags.isEmpty {
+                Text("暂无图片标签")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(minHeight: 28, alignment: .leading)
+            } else {
+                WrappingFilterChipGroup {
+                    QuickFilterChoiceChip(
+                        title: "全部",
+                        systemImage: "photo.on.rectangle",
+                        isSelected: selectedFrameTags.isEmpty
+                    ) {
+                        selectedFrameTags.removeAll()
+                    }
+
+                    ForEach(libraryStore.allFrameTags, id: \.self) { tag in
+                        QuickFilterChoiceChip(
+                            title: tag,
+                            tagColorKey: tag,
+                            isSelected: selectedFrameTags.contains(tag)
+                        ) {
+                            toggleFrameTag(tag)
+                        }
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
     private func frameModeButton(_ mode: FramesBoardMode) -> some View {
         let isSelected = boardMode == mode
-
-        return Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                boardMode = mode
-            }
+        let button = Button {
+            handleFrameModeButtonTap(mode)
         } label: {
-            frameToolbarIcon(
-                systemName: mode.icon,
-                size: 12,
-                tint: isSelected ? Color.white.opacity(0.92) : Design.libraryToolbarIconTint
-            )
-                .background(isSelected ? Color.white.opacity(0.12) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            frameModeButtonLabel(for: mode, isSelected: isSelected)
         }
         .buttonStyle(.plain)
-        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .frame(width: frameModeButtonWidth(for: mode), height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help(mode.rawValue)
+        .help(frameModeButtonHelp(for: mode))
+
+        if mode == .storyboard {
+            button
+                .popover(isPresented: $isStoryboardVideoPickerPresented, arrowEdge: .bottom) {
+                    storyboardVideoPickerPopover
+                }
+        } else {
+            button
+        }
     }
 
-    private var storyboardVideoPicker: some View {
-        Button {
-            isStoryboardVideoPickerPresented.toggle()
-        } label: {
-            frameToolbarIcon(systemName: "film.stack", size: 12)
+    private func handleFrameModeButtonTap(_ mode: FramesBoardMode) {
+        if boardMode == mode {
+            if mode == .storyboard && !storyboardVideos.isEmpty {
+                isStoryboardVideoPickerPresented.toggle()
+            }
+            return
         }
-        .buttonStyle(.plain)
-        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .contentShape(Rectangle())
-        .disabled(storyboardVideos.isEmpty)
-        .help(selectedStoryboardVideo?.name ?? "选择视频")
-        .popover(isPresented: $isStoryboardVideoPickerPresented, arrowEdge: .bottom) {
-            storyboardVideoPickerPopover
+
+        isFrameTagFilterPresented = false
+        isStoryboardVideoPickerPresented = false
+        withAnimation(.easeInOut(duration: 0.16)) {
+            boardMode = mode
+        }
+    }
+
+    private func frameModeButtonLabel(for mode: FramesBoardMode, isSelected: Bool) -> some View {
+        Image(systemName: mode.icon)
+            .font(.system(size: 12, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(isSelected ? Color.white.opacity(0.92) : Design.libraryToolbarIconTint)
+            .frame(
+                width: frameModeButtonWidth(for: mode),
+                height: Design.libraryToolbarButtonSlotHeight,
+                alignment: .center
+            )
+            .background(isSelected ? Color.white.opacity(0.12) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private func frameModeButtonWidth(for _: FramesBoardMode) -> CGFloat {
+        Design.libraryToolbarButtonSlotWidth
+    }
+
+    private func frameModeButtonHelp(for mode: FramesBoardMode) -> String {
+        switch mode {
+        case .storyboard:
+            return selectedStoryboardVideo.map { "分镜：\($0.name)" } ?? "分镜"
+        case .collection:
+            return "全部图片"
         }
     }
 
@@ -623,7 +809,7 @@ struct FramesWorkspaceView: View {
     private func storyboardVideoPickerSelectionIcon(isSelected: Bool, size: CGFloat) -> some View {
         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(isSelected ? .orange : .secondary)
+            .foregroundStyle(isSelected ? Design.neutralStrongAccent : .secondary)
     }
 
     private var storyboardVideoPickerThumbnailHeight: CGFloat {
@@ -726,7 +912,7 @@ struct FramesWorkspaceView: View {
                             } label: {
                                 HStack(spacing: 7) {
                                     Image(systemName: selectedFrameTags.contains(tag) ? "checkmark.square.fill" : "square")
-                                        .foregroundStyle(selectedFrameTags.contains(tag) ? Color.orange : .secondary)
+                                        .foregroundStyle(selectedFrameTags.contains(tag) ? Design.neutralStrongAccent : .secondary)
                                         .frame(width: 15)
                                     VideoTagColorDot(tag: tag)
                                     Text(tag)
@@ -966,44 +1152,19 @@ struct FramesWorkspaceView: View {
     }
 
     private func storyboardBoardCard(_ item: FrameStoryboardItem, title: String) -> some View {
-        ZStack(alignment: .topTrailing) {
-            Button {
+        FrameBoardImageTile(
+            image: item.thumbnailImage,
+            numberText: title,
+            isSelected: item.sample?.id == selectedFrameID,
+            selectedStrokeColor: item.isScreenshot ? Design.screenshotFrameAccent.opacity(0.98) : .white.opacity(0.36),
+            selectedStrokeWidth: item.isScreenshot ? 1.4 : 1.1,
+            onTap: {
                 activateStoryboardItem(item)
-            } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    ZStack(alignment: .bottomTrailing) {
-                        if let image = item.thumbnailImage {
-                            Image(nsImage: image)
-                                .resizable()
-                                .interpolation(.medium)
-                                .scaledToFill()
-                        } else {
-                            Color.black.opacity(0.26)
-                        }
-
-                    }
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .padding(8)
-                .background(.white.opacity(item.isExportedScene || item.isScreenshot ? 0.055 : 0.034))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(storyboardCardStroke(for: item), lineWidth: storyboardCardStrokeWidth(for: item))
-                }
-            }
-            .buttonStyle(.plain)
-            .fullResolutionImageDrag {
+            },
+            dragItemProvider: {
                 storyboardDragProvider(for: item)
             }
-            .help(item.sample == nil ? "回到原视频这个分镜" : "\(item.video.name) · \(clockText(item.time))")
-
+        ) { _ in
             if let sample = item.sample {
                 InlineTagEditorButton(
                     title: "图片标签",
@@ -1012,7 +1173,6 @@ struct FramesWorkspaceView: View {
                     onAdd: { libraryStore.addFrameTag($0, to: sample) },
                     onRemove: { libraryStore.removeFrameTag($0, from: sample) }
                 )
-                .padding(8)
             } else if let cut = item.cut {
                 Button {
                     libraryStore.markSceneFrameExported(video: item.video, cut: cut, sceneIndex: item.sceneIndex)
@@ -1020,24 +1180,10 @@ struct FramesWorkspaceView: View {
                     cardOverlayExportButtonIcon()
                 }
                 .buttonStyle(.plain)
-                .padding(14)
                 .help("导出这张分镜")
             }
         }
-    }
-
-    private func storyboardCardStroke(for item: FrameStoryboardItem) -> Color {
-        if item.isScreenshot {
-            return Design.captureFrameAccent.opacity(item.sample?.id == selectedFrameID ? 0.98 : 0.82)
-        }
-        if item.sample?.id == selectedFrameID {
-            return .white.opacity(0.36)
-        }
-        return .white.opacity(item.isExportedScene ? 0.10 : 0.07)
-    }
-
-    private func storyboardCardStrokeWidth(for item: FrameStoryboardItem) -> CGFloat {
-        item.isScreenshot ? 1.4 : 0.8
+        .help(item.sample == nil ? "回到原视频这个分镜" : "\(item.video.name) · \(clockText(item.time))")
     }
 
     private func activateStoryboardItem(_ item: FrameStoryboardItem) {
@@ -1063,51 +1209,18 @@ struct FramesWorkspaceView: View {
     }
 
     private func frameBoardCard(_ frame: SampledFrame, title: String) -> some View {
-        ZStack(alignment: .topTrailing) {
-            Button {
+        FrameBoardImageTile(
+            image: libraryStore.thumbnailImage(for: frame),
+            numberText: title,
+            isSelected: selectedFrameID == frame.id,
+            onTap: {
                 selectedFrameID = frame.id
                 detailFrame = latestFrame(frame)
-            } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    ZStack(alignment: .bottomTrailing) {
-                        if let image = libraryStore.thumbnailImage(for: frame) {
-                            Image(nsImage: image)
-                                .resizable()
-                                .interpolation(.medium)
-                                .scaledToFill()
-                        } else {
-                            Color.black.opacity(0.26)
-                        }
-                    }
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    HStack(spacing: 5) {
-                        Text(frame.kind == .screenshot ? "截图" : "场景")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ScaledCardTagCloud(tags: Array(frame.tags.prefix(3)))
-                    }
-                    .frame(height: 18, alignment: .leading)
-                }
-                .padding(8)
-                .background(.white.opacity(0.055))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(selectedFrameID == frame.id ? .white.opacity(0.36) : .white.opacity(0.08), lineWidth: 0.8)
-                }
-            }
-            .buttonStyle(.plain)
-            .fullResolutionImageDrag {
+            },
+            dragItemProvider: {
                 libraryStore.fullResolutionFrameProvider(for: frame)
             }
-
+        ) { _ in
             InlineTagEditorButton(
                 title: "图片标签",
                 tags: frame.tags,
@@ -1115,7 +1228,6 @@ struct FramesWorkspaceView: View {
                 onAdd: { libraryStore.addFrameTag($0, to: frame) },
                 onRemove: { libraryStore.removeFrameTag($0, from: frame) }
             )
-            .padding(8)
         }
     }
 
@@ -1126,17 +1238,35 @@ struct FramesWorkspaceView: View {
 
     private func frameCardTitle(for frame: SampledFrame, index: Int) -> String {
         let number = String(format: "%02d", (frame.sceneIndex ?? index) + 1)
-        return frame.kind == .screenshot ? "截图 \(number)" : "画面 \(number)"
+        return number
+    }
+
+    private func detailOverlayContainer<Content: View>(
+        dismiss: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.black.opacity(0.44)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: dismiss)
+
+                content()
+            }
+            .frame(
+                width: proxy.size.width + Design.railWidth,
+                height: proxy.size.height,
+                alignment: .center
+            )
+            .offset(x: -Design.railWidth)
+        }
+        .ignoresSafeArea()
+        .zIndex(10)
+        .transition(.opacity.combined(with: .scale(scale: 0.985)))
     }
 
     private func frameDetailOverlay(_ frame: SampledFrame) -> some View {
-        ZStack {
-            Color.black.opacity(0.52)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    detailFrame = nil
-                }
-
+        detailOverlayContainer(dismiss: { detailFrame = nil }) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -1196,18 +1326,10 @@ struct FramesWorkspaceView: View {
             }
             .shadow(color: .black.opacity(0.40), radius: 26, y: 16)
         }
-        .zIndex(10)
-        .transition(.opacity.combined(with: .scale(scale: 0.985)))
     }
 
     private func storyboardDetailOverlay(_ item: FrameStoryboardItem) -> some View {
-        ZStack {
-            Color.black.opacity(0.52)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    detailStoryboardItem = nil
-                }
-
+        detailOverlayContainer(dismiss: { detailStoryboardItem = nil }) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -1270,8 +1392,6 @@ struct FramesWorkspaceView: View {
             }
             .shadow(color: .black.opacity(0.40), radius: 26, y: 16)
         }
-        .zIndex(10)
-        .transition(.opacity.combined(with: .scale(scale: 0.985)))
     }
 
     private func latestFrame(_ frame: SampledFrame) -> SampledFrame {
@@ -1346,7 +1466,7 @@ struct FramesWorkspaceView: View {
             case let .failed(message) where analyzedFrameID == frame.id:
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.red.opacity(0.86))
                     .fixedSize(horizontal: false, vertical: true)
             default:
                 EmptyView()

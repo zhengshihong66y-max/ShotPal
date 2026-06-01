@@ -19,7 +19,7 @@ enum PreviewKeyboardCommand {
     case exportAudioSelection
 }
 
-enum PreviewShortcutAction: String, CaseIterable, Identifiable {
+enum PreviewShortcutAction: String, Identifiable {
     case togglePlayback
     case shuttleSpeed
     case shuttleBackward
@@ -35,6 +35,20 @@ enum PreviewShortcutAction: String, CaseIterable, Identifiable {
     case exportAudioSelection
 
     var id: String { rawValue }
+
+    static let allCases: [PreviewShortcutAction] = [
+        .togglePlayback,
+        .shuttleSpeed,
+        .shuttleBackward,
+        .shuttleForward,
+        .stepBackward,
+        .stepForward,
+        .setAudioIn,
+        .setAudioOut,
+        .clearAudioSelection,
+        .captureCurrentFrame,
+        .exportAudioSelection
+    ]
 
     var title: String {
         switch self {
@@ -77,13 +91,11 @@ enum PreviewShortcutAction: String, CaseIterable, Identifiable {
     }
 
     var keyCode: UInt16 {
-        let stored = UserDefaults.standard.integer(forKey: defaultsKey)
-        guard stored > 0, stored < Int(UInt16.max) else { return defaultKeyCode }
-        return UInt16(stored)
+        defaultKeyCode
     }
 
     func setKeyCode(_ keyCode: UInt16) {
-        UserDefaults.standard.set(Int(keyCode), forKey: defaultsKey)
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
 
     func command(isShuttling: Bool) -> PreviewKeyboardCommand {
@@ -217,6 +229,10 @@ enum PreviewKeyboardCommandDispatcher {
         handler = nil
     }
 
+    static var hasHandler: Bool {
+        handler != nil
+    }
+
     @discardableResult
     static func dispatch(_ command: PreviewKeyboardCommand) -> Bool {
         handler?(command) ?? false
@@ -224,6 +240,10 @@ enum PreviewKeyboardCommandDispatcher {
 }
 
 enum PreviewKeyboardEventRouter {
+    static var hasActiveHandler: Bool {
+        PreviewKeyboardCommandDispatcher.hasHandler
+    }
+
     static func isHandledKeyCode(_ keyCode: UInt16) -> Bool {
         PreviewShortcutAction.action(for: keyCode) != nil
     }
@@ -246,7 +266,8 @@ enum PreviewKeyboardEventRouter {
         PreviewShortcutAction.action(for: keyCode)?.command(isShuttling: isShuttling)
     }
 
-    static func post(_ command: PreviewKeyboardCommand) {
+    @discardableResult
+    static func post(_ command: PreviewKeyboardCommand) -> Bool {
         PreviewKeyboardCommandDispatcher.dispatch(command)
     }
 
@@ -275,8 +296,6 @@ enum PreviewKeyboardEventRouter {
 }
 
 final class PreviewKeyboardWindow: NSWindow {
-    private var pressedPreviewKeyCodes = Set<UInt16>()
-
     override func keyDown(with event: NSEvent) {
         guard let forwardedEvent = processPreviewKeyboardEvent(event) else { return }
         super.keyDown(with: forwardedEvent)
@@ -295,30 +314,11 @@ final class PreviewKeyboardWindow: NSWindow {
         let isPlainShortcut = PreviewKeyboardEventRouter.isPlainShortcutEvent(event)
 
         if event.type == .keyUp {
-            pressedPreviewKeyCodes.remove(event.keyCode)
-            if isPlainShortcut && PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
-                PreviewKeyboardEventRouter.post(.stopShuttle)
-                return nil
-            }
             return isPlainShortcut && PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) ? nil : event
         }
 
         guard event.type == .keyDown else { return event }
         guard isPlainShortcut, PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) else { return event }
-
-        if event.isARepeat {
-            return nil
-        }
-
-        pressedPreviewKeyCodes.insert(event.keyCode)
-        guard let command = PreviewKeyboardEventRouter.command(
-            for: event.keyCode,
-            isShuttling: PreviewKeyboardEventRouter.isShuttling(pressedPreviewKeyCodes)
-        ) else {
-            return nil
-        }
-
-        _ = command
         return nil
     }
 }
@@ -442,7 +442,6 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
         var handle: (PreviewKeyboardCommand) -> Bool
         fileprivate weak var captureView: KeyboardCaptureNSView?
         private var mouseMonitor: Any?
-        private var pressedKeyCodes = Set<UInt16>()
 
         init(handle: @escaping (PreviewKeyboardCommand) -> Bool) {
             self.handle = handle
@@ -472,25 +471,11 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
             let isPlainShortcut = isPlainShortcutEvent(event)
 
             if event.type == .keyUp {
-                pressedKeyCodes.remove(event.keyCode)
-                if isPlainShortcut && PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
-                    return nil
-                }
                 return isPlainShortcut && isHandledKeyCode(event.keyCode) ? nil : event
             }
 
             guard event.type == .keyDown else { return event }
             guard isPlainShortcut, isHandledKeyCode(event.keyCode) else { return event }
-
-            if event.isARepeat {
-                return nil
-            }
-
-            pressedKeyCodes.insert(event.keyCode)
-            if let command = command(for: event) {
-                _ = command
-                return nil
-            }
             return nil
         }
 
@@ -514,10 +499,6 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
             PreviewKeyboardEventRouter.isHandledKeyCode(keyCode)
         }
 
-        private var isShuttling: Bool {
-            PreviewKeyboardEventRouter.isShuttling(pressedKeyCodes)
-        }
-
         static func isEditableTextResponder(_ responder: Any?) -> Bool {
             PreviewKeyboardEventRouter.isEditableTextResponder(responder)
         }
@@ -526,9 +507,6 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
             PreviewKeyboardEventRouter.hasEditableTextAncestor(view)
         }
 
-        private func command(for event: NSEvent) -> PreviewKeyboardCommand? {
-            PreviewKeyboardEventRouter.command(for: event.keyCode, isShuttling: isShuttling)
-        }
     }
 }
 
@@ -830,7 +808,7 @@ private final class TrafficLightButton: NSButton {
         case .close:
             return NSColor(calibratedRed: 0.82, green: 0.22, blue: 0.20, alpha: 1)
         case .miniaturize:
-            return NSColor(calibratedRed: 0.78, green: 0.50, blue: 0.13, alpha: 1)
+            return NSColor(calibratedRed: 0.54, green: 0.44, blue: 0.08, alpha: 1)
         case .zoom:
             return NSColor(calibratedRed: 0.16, green: 0.60, blue: 0.22, alpha: 1)
         }

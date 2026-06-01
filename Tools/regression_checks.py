@@ -115,6 +115,9 @@ def main() -> None:
         "ChromeCookieFileCache",
         "prewarmChromeCookieCache",
         "cachedOrExportedChromeCookieURL",
+        "instagramBundledImportURL",
+        "downloadInstagramCarouselBundleIfNeeded",
+        "concatenateVideosWithFFmpeg",
     ]:
         require(
             helper in library_store,
@@ -134,6 +137,11 @@ def main() -> None:
         "App launch must prewarm Chrome cookies before the user clicks saved-collection sync.",
     )
     require(
+        'links.append("https://www.instagram.com/p/\\(parentCode)/")' in library_store
+        and 'return "\\(content.type):\\(content.shortcode)"' in library_store,
+        "Instagram carousel imports must queue and de-dupe by base post so carousel videos can be bundled.",
+    )
+    require(
         "Self.isTerminalRemoteImportStatus(previousJob.status)" in library_store
         and "updatedJobs[index] = previousJob" in library_store,
         "Remote import jobs must not regress from terminal states back to active progress states.",
@@ -144,13 +152,37 @@ def main() -> None:
         "External service self-check results must be stored with the downloader report.",
     )
     require(
+        "var problemLocation: String?" in library_store
+        and "var repairSummary: String?" in library_store,
+        "External service self-check must persist problem location and repair summary.",
+    )
+    require(
         "func startExternalServiceSelfCheck(force: Bool = true)" in library_store
         and "func startDailyExternalServiceSelfCheckIfNeeded()" in library_store,
         "External service self-check must expose manual and daily entry points.",
     )
     require(
+        "func startExternalServiceRepair()" in library_store
+        and "repairMode: .always" in library_store,
+        "External service self-check must expose an independent update/repair entry point.",
+    )
+    require(
         "func prepareExternalServiceWork()" in library_store,
         "External service work must have a reusable preflight entry point.",
+    )
+    require(
+        "runDownloaderSelfCheck(" in library_store
+        and "repairMode: DownloaderSelfCheckRepairMode = .afterFailure" in library_store
+        and "runDownloaderAutoRepair(" in library_store
+        and "for report: DownloaderSelfCheckReport" in library_store
+        and "removeUnresponsiveAppManagedYTDLP()" in library_store
+        and "安装 Homebrew ffmpeg" in library_store,
+        "Downloader self-check repair must be target-aware and cover stale app-managed yt-dlp plus missing ffmpeg.",
+    )
+    require(
+        "--lapianbao-self-repair" in app_swift
+        and "--lapianbao-self-check" in app_swift,
+        "External service self-check must be runnable from a command-line self-check hook.",
     )
     require(
         app_swift.count("startDailyExternalServiceSelfCheckIfNeeded()") >= 2,

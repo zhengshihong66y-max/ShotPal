@@ -110,7 +110,7 @@ extension PreviewPanelView {
     }
 
     var timelinePlayheadTint: Color {
-        audioInPoint != nil && audioOutPoint == nil ? .orange : .white.opacity(0.92)
+        audioInPoint != nil && audioOutPoint == nil ? Design.timelineIOAccent : Design.timelinePlayheadAccent
     }
 
     func normalizedAnnotations(for video: VideoItem, kind: AnnotationItem.Kind? = nil) -> [TimelineAnnotationMarker] {
@@ -191,7 +191,14 @@ extension PreviewPanelView {
     func panTimelineViewport(_ delta: Double) {
         let span = timelineViewportSpan
         let maxOffset = max(0, 1 - span)
-        timelineOffset = min(maxOffset, max(0, timelineOffset + delta))
+        let nextOffset = min(maxOffset, max(0, timelineOffset + delta))
+        guard abs(nextOffset - timelineOffset) > 0.000001 else {
+            protectManualTimelineScroll()
+            return
+        }
+        timelineOffset = nextOffset
+        timelineAutoScrollLastUpdate = .distantPast
+        protectManualTimelineScroll()
     }
 
     func panAudioTimelinePlayback(_ delta: Double) {
@@ -204,18 +211,28 @@ extension PreviewPanelView {
         let nextZoom = min(50, max(1, timelineZoom * factor))
         let nextSpan = min(1, max(0.02, 1 / nextZoom))
         let maxOffset = max(0, 1 - nextSpan)
+        guard abs(nextZoom - timelineZoom) > 0.000001 else {
+            protectManualTimelineScroll()
+            return
+        }
         timelineZoom = nextZoom
         timelineOffset = min(maxOffset, max(0, anchorProgress - min(1, max(0, anchor)) * nextSpan))
+        timelineAutoScrollLastUpdate = .distantPast
+        protectManualTimelineScroll()
     }
 
     func resetTimelineViewport() {
         timelineZoom = 1
         timelineOffset = 0
+        timelineAutoScrollLastUpdate = .distantPast
+        timelineManualScrollProtectionUntil = .distantPast
     }
 
     func keepTimelineProgressVisible(_ progress: Double) {
         let span = timelineViewportSpan
         guard span < 0.999 else { return }
+        let now = Date()
+        guard now >= timelineManualScrollProtectionUntil else { return }
 
         let clamped = min(1, max(0, progress))
         let maxOffset = max(0, 1 - span)
@@ -234,12 +251,24 @@ extension PreviewPanelView {
 
         guard let targetOffset, abs(targetOffset - timelineOffset) > 0.0005 else { return }
         if controller.isPlaying || keyboardShuttleDirection != 0 {
+            let minInterval = 0.12
+            let largeJumpThreshold = span * 0.18
+            guard now.timeIntervalSince(timelineAutoScrollLastUpdate) >= minInterval
+                    || abs(targetOffset - timelineOffset) >= largeJumpThreshold else {
+                return
+            }
+            timelineAutoScrollLastUpdate = now
             timelineOffset = targetOffset
         } else {
             withAnimation(.easeOut(duration: 0.14)) {
                 timelineOffset = targetOffset
             }
+            timelineAutoScrollLastUpdate = .distantPast
         }
+    }
+
+    func protectManualTimelineScroll() {
+        timelineManualScrollProtectionUntil = Date().addingTimeInterval(0.75)
     }
 
     func handlePlaybackClockTick(_ elapsed: Double) {

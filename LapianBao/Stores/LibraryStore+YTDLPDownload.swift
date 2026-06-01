@@ -160,6 +160,117 @@ extension LibraryStore {
         }.value
     }
 
+    nonisolated struct InstagramCarouselBundlePlan {
+        let baseURL: URL
+        let itemLinks: [String]
+        let info: YTDLPVideoInfo
+        let extraArguments: [String]
+    }
+
+    nonisolated static func instagramCarouselBundlePlan(
+        executableURL: URL,
+        sourceURL: URL
+    ) -> InstagramCarouselBundlePlan? {
+        guard let content = instagramContentParts(from: sourceURL),
+              content.type == "p",
+              let baseURL = instagramBaseContentURL(from: sourceURL)
+        else { return nil }
+
+        for attempt in ytdlpArgumentAttempts(for: baseURL) {
+            guard let info = fetchYTDLPInstagramPlaylistInfo(
+                executableURL: executableURL,
+                sourceURL: baseURL,
+                extraArguments: attempt.arguments
+            ) else { continue }
+
+            let itemLinks = instagramPostVideoItemLinks(from: info, baseURL: baseURL)
+            guard itemLinks.count > 1 else { continue }
+            return InstagramCarouselBundlePlan(
+                baseURL: baseURL,
+                itemLinks: itemLinks,
+                info: info,
+                extraArguments: attempt.arguments
+            )
+        }
+
+        return nil
+    }
+
+    nonisolated static func downloadInstagramCarouselBundleIfNeeded(
+        executableURL: URL,
+        sourceURL: URL,
+        destinationDirectory: URL,
+        progressCallback: (@Sendable (Double?, String?) -> Void)? = nil,
+        processCallback: (@Sendable (Process?) -> Void)? = nil
+    ) async throws -> DownloadedVideoResult? {
+        guard let plan = instagramCarouselBundlePlan(
+            executableURL: executableURL,
+            sourceURL: sourceURL
+        ) else { return nil }
+
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("lapianbao-ig-carousel-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+        let authorName = normalizedImportTag(plan.info.bestUploader ?? "")
+        let sourceTitle = screenedSourceTitle(
+            rawTitle: plan.info.title,
+            description: plan.info.description,
+            sourceURL: plan.baseURL
+        )
+        let itemCount = plan.itemLinks.count
+        let downloadCompletionProgress = 0.88
+        var downloadedPartURLs: [URL] = []
+
+        for (offset, itemLink) in plan.itemLinks.enumerated() {
+            try Task.checkCancellation()
+            guard let itemURL = URL(string: itemLink) else {
+                throw RemoteImportError.invalidAPIResponse
+            }
+            let itemProgressCallback: @Sendable (Double?, String?) -> Void = { progress, speed in
+                guard let progress else {
+                    progressCallback?(nil, speed)
+                    return
+                }
+                let mappedProgress = (Double(offset) + Self.normalizedProgress(progress)) / Double(itemCount) * downloadCompletionProgress
+                progressCallback?(mappedProgress, speed)
+            }
+            let result = try await runYTDLPOnce(
+                executableURL: executableURL,
+                sourceURL: itemURL,
+                destinationDirectory: temporaryDirectory,
+                extraArguments: plan.extraArguments,
+                progressCallback: itemProgressCallback,
+                processCallback: processCallback
+            )
+            downloadedPartURLs.append(result.url)
+        }
+
+        try Task.checkCancellation()
+        let outputURL = cleanedImportVideoURL(
+            in: destinationDirectory,
+            sourceURL: plan.baseURL,
+            rawTitle: plan.info.title,
+            description: plan.info.description,
+            uploader: plan.info.bestUploader,
+            preferredExtension: "mp4"
+        )
+        progressCallback?(0.92, nil)
+        let bundledURL = try await concatenateVideosWithFFmpeg(
+            downloadedPartURLs,
+            outputURL: outputURL
+        )
+        progressCallback?(0.98, nil)
+
+        return DownloadedVideoResult(
+            url: bundledURL,
+            authorName: authorName,
+            sourceTitle: sourceTitle
+        )
+    }
+
     nonisolated static func downloaderProcessEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/opt/miniconda3/bin:/opt/anaconda3/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")

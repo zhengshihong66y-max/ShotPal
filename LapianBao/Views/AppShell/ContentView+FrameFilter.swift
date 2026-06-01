@@ -27,7 +27,7 @@ extension ContentView {
                     frameAllButton
                 }
             }
-            .frame(minHeight: 22)
+            .frame(minHeight: Design.libraryToolbarHeight)
             .padding(.horizontal, 14)
 
             ScrollView {
@@ -65,20 +65,22 @@ extension ContentView {
         } label: {
             Image(systemName: frameFilterVideoPath == nil ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled")
                 .font(.system(size: 12, weight: .semibold))
-                .frame(width: 28, height: 22)
+                .foregroundStyle(Design.libraryToolbarIconTint)
+                .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
                 .overlay(alignment: .topTrailing) {
                     if !libraryStore.collectedFrames.isEmpty {
                         Text("\(libraryStore.collectedFrames.count)")
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
-                            .background(Color.orange)
+                            .background(Design.neutralBadgeFill)
                             .clipShape(Capsule())
                             .offset(x: 5, y: -4)
                     }
                 }
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
         .help("全部画面")
     }
 
@@ -152,7 +154,7 @@ extension ContentView {
                         if frame.kind == .screenshot {
                             Image(systemName: "camera.fill")
                                 .font(.system(size: 7, weight: .semibold))
-                                .foregroundStyle(Design.captureFrameAccent)
+                                .foregroundStyle(.white.opacity(0.78))
                                 .shadow(color: .black.opacity(0.55), radius: 1)
                                 .padding(3)
                         }

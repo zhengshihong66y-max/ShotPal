@@ -218,13 +218,10 @@ struct ExportMusicRecognitionRow: View {
                             Text("出现于 \(clockText(song.detectedAt))")
                                 .font(.caption2.monospacedDigit())
                                 .foregroundStyle(.tertiary)
-                            let musicTags = song.displayTags
-                            if !musicTags.isEmpty {
-                                MusicTagStrip(tags: musicTags)
-                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .frame(height: MusicRecognitionLayout.primaryContentHeight, alignment: .center)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -233,6 +230,7 @@ struct ExportMusicRecognitionRow: View {
 
                 MusicRecognitionActionColumn(song: song)
             }
+            .frame(height: MusicRecognitionLayout.primaryContentHeight, alignment: .center)
 
             MusicDownloadExtensionStack(downloadJobs: downloadJobs)
         }
@@ -682,7 +680,7 @@ struct AudioClipWaveformStrip: View, Equatable {
             let barWidth = max(1, min(2.2, step * 0.72))
             let midY = size.height / 2
             let baseOpacity = isPlaceholder ? 0.18 : (isActive ? 0.86 : 0.48)
-            let tint = isActive ? Color.orange : Color.white
+            let tint = Color.white
             let clampedProgress = min(1, max(0, progress))
             var basePath = Path()
             var playedPath = Path()
@@ -729,7 +727,7 @@ struct AudioClipWaveformStrip: View, Equatable {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(isActive ? Color.orange.opacity(0.22) : .white.opacity(0.08), lineWidth: 0.8)
+                .stroke(isActive ? .white.opacity(0.16) : .white.opacity(0.08), lineWidth: 0.8)
         }
         .allowsHitTesting(false)
     }

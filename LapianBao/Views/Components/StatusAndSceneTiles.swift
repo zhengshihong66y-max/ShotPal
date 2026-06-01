@@ -108,7 +108,7 @@ struct AppEmptyState: View {
 struct GenerationProgressRow: View {
     let message: String
     var progress: Double?
-    var tint: Color = .orange
+    var tint: Color = Design.annotationAccent
     var progressTint: Color? = nil
     var systemImage: String? = nil
     var compact = false
@@ -273,7 +273,7 @@ struct SceneCutTile: View {
                     if isScreenshot {
                         Image(systemName: "camera.fill")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Design.captureFrameAccent)
+                            .foregroundStyle(Design.screenshotFrameAccent)
                             .padding(6)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     }
@@ -330,17 +330,11 @@ struct SceneCutTile: View {
 
     private func collectButton(onCollect: @escaping () -> Void) -> some View {
         Button(action: onCollect) {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.88))
-                .frame(width: 24, height: 24)
-                .background(.black.opacity(0.48))
-                .clipShape(overlayControlShape)
-                .overlay {
-                    overlayControlShape
-                        .stroke(.white.opacity(0.12), lineWidth: 0.7)
-                }
-                .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
+            floatingExportButtonIcon(
+                systemImage: "plus",
+                size: 24,
+                iconSize: 12
+            )
         }
         .buttonStyle(.plain)
         .help("加入画面收藏")
@@ -381,7 +375,8 @@ struct SceneCutTile: View {
     private var borderColor: Color {
         if isActive { return Design.currentFrameAccent.opacity(0.98) }
         if isSelected { return .white.opacity(0.46) }
-        if isExported || isScreenshot { return Design.captureFrameAccent.opacity(0.92) }
+        if isScreenshot { return Design.screenshotFrameAccent.opacity(0.92) }
+        if isExported { return .white.opacity(0.18) }
         return .white.opacity(0.10)
     }
 
@@ -396,7 +391,7 @@ struct CaptureFrameBadge: View {
     var body: some View {
         Image(systemName: "camera.fill")
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Design.captureFrameAccent)
+            .foregroundStyle(Design.screenshotFrameAccent)
             .shadow(color: .black.opacity(0.55), radius: 2, y: 1)
     }
 }

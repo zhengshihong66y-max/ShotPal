@@ -103,13 +103,13 @@ struct AudioWaveformView: View {
                         var line = Path()
                         line.move(to: CGPoint(x: x, y: 0))
                         line.addLine(to: CGPoint(x: x, y: size.height))
-                        context.stroke(line, with: .color(Color.orange.opacity(0.85)),
+                        context.stroke(line, with: .color(Design.timelineIOAccent.opacity(0.85)),
                                        style: StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
                         // 顶部小标签圆
                         let labelR: CGFloat = 5
                         var dot = Path()
                         dot.addEllipse(in: CGRect(x: x - labelR, y: 1, width: labelR * 2, height: labelR * 2))
-                        context.fill(dot, with: .color(Color.orange.opacity(isIn ? 0.92 : 0.70)))
+                        context.fill(dot, with: .color(Design.timelineIOAccent.opacity(isIn ? 0.92 : 0.70)))
                     }
 
                     if samples != nil, size.width > 0 {
@@ -119,7 +119,7 @@ struct AudioWaveformView: View {
                             in: CGRect(x: headX - 1, y: 2, width: 2, height: size.height - 4),
                             cornerSize: CGSize(width: 1, height: 1)
                         )
-                        context.fill(headPath, with: .color(.white.opacity(0.95)))
+                        context.fill(headPath, with: .color(Design.timelinePlayheadAccent))
                     }
 
                     var drawnCutColumns = Set<Int>()
@@ -132,7 +132,7 @@ struct AudioWaveformView: View {
                         cutPath.addLine(to: CGPoint(x: x, y: size.height - 5))
                         context.stroke(
                             cutPath,
-                            with: .color(Color.orange.opacity(0.80)),
+                            with: .color(.white.opacity(0.42)),
                             style: StrokeStyle(lineWidth: 1.5)
                         )
                         var diamondPath = Path()
@@ -141,7 +141,7 @@ struct AudioWaveformView: View {
                         diamondPath.addLine(to: CGPoint(x: x, y: 8))
                         diamondPath.addLine(to: CGPoint(x: x - 3, y: 5))
                         diamondPath.closeSubpath()
-                        context.fill(diamondPath, with: .color(Color.orange.opacity(0.90)))
+                        context.fill(diamondPath, with: .color(.white.opacity(0.52)))
                     }
                 }
 
@@ -221,7 +221,7 @@ struct CenteredWaveformTimeline: View {
     var onAnnotationSelect: ((UUID) -> Void)? = nil
     var onClearSelection: (() -> Void)? = nil
     var viewportSpan: Double = 1
-    var playheadTint: Color = .white.opacity(0.96)
+    var playheadTint: Color = Design.timelinePlayheadAccent
     var panViewport: ((Double) -> Void)? = nil
     var zoomViewport: ((Double, Double) -> Void)? = nil
 
@@ -256,7 +256,7 @@ struct CenteredWaveformTimeline: View {
                             height: size.height
                         )
                         if rect.width > 0 {
-                            context.fill(Path(rect), with: .color(Color.orange.opacity(0.14)))
+                            context.fill(Path(rect), with: .color(Design.timelineIOAccent.opacity(0.14)))
                         }
                     }
 
@@ -293,7 +293,7 @@ struct CenteredWaveformTimeline: View {
                         var path = Path()
                         path.move(to: CGPoint(x: x, y: 5))
                         path.addLine(to: CGPoint(x: x, y: size.height - 5))
-                        context.stroke(path, with: .color(Color.orange.opacity(0.64)), style: StrokeStyle(lineWidth: 1.2))
+                        context.stroke(path, with: .color(.white.opacity(0.42)), style: StrokeStyle(lineWidth: 1.2))
                     }
 
                     var centerLine = Path()
@@ -309,7 +309,7 @@ struct CenteredWaveformTimeline: View {
                         onAnnotationSelect?(item.id)
                     } label: {
                         Circle()
-                            .fill(Color.orange.opacity(0.92))
+                            .fill(Design.annotationAccent.opacity(0.88))
                             .frame(width: 8, height: 8)
                             .overlay {
                                 Circle().stroke(.black.opacity(0.36), lineWidth: 0.6)
@@ -343,7 +343,7 @@ struct CenteredWaveformTimeline: View {
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.92))
                             .frame(width: 22, height: 22)
-                            .background(Color.orange.opacity(0.82))
+                            .background(.white.opacity(0.18))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -695,7 +695,7 @@ struct TimelineCaptureMarker: View {
         VStack(spacing: 0) {
             Image(systemName: "camera.fill")
                 .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(Design.captureFrameAccent)
+                .foregroundStyle(Design.screenshotFrameAccent)
                 .frame(width: 14, height: 11)
                 .background(
                     Capsule()
@@ -703,11 +703,11 @@ struct TimelineCaptureMarker: View {
                 )
                 .overlay {
                     Capsule()
-                        .stroke(Design.captureFrameAccent.opacity(0.72), lineWidth: 0.8)
+                        .stroke(Design.screenshotFrameAccent.opacity(0.72), lineWidth: 0.8)
                 }
 
             Rectangle()
-                .fill(Design.captureFrameAccent.opacity(0.92))
+                .fill(Design.screenshotFrameAccent.opacity(0.92))
                 .frame(width: 1.5, height: 6)
         }
         .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
@@ -779,6 +779,10 @@ struct ScrollPanLayer: NSViewRepresentable {
         var panViewport:  ((Double) -> Void)?
         var viewportSpan: Double = 1.0
         private var monitor: Any?
+        private var pendingPanDelta = 0.0
+        private var isPanFlushScheduled = false
+        private var lastPanFlushTime = Date.distantPast
+        private let panFrameInterval = 1.0 / 60.0
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -810,8 +814,34 @@ struct ScrollPanLayer: NSViewRepresentable {
             guard panViewport != nil, abs(dx) > abs(dy) * 0.5, abs(dx) > 0.5 else { return event }
 
             let fraction = -Double(dx) / Double(max(bounds.width, 1)) * viewportSpan
-            panViewport?(fraction)
+            enqueuePan(fraction)
             return nil
+        }
+
+        private func enqueuePan(_ delta: Double) {
+            pendingPanDelta += delta
+
+            guard !isPanFlushScheduled else { return }
+            let now = Date()
+            let elapsed = now.timeIntervalSince(lastPanFlushTime)
+            if elapsed >= panFrameInterval {
+                flushPendingPan(at: now)
+                return
+            }
+
+            isPanFlushScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + (panFrameInterval - elapsed)) { [weak self] in
+                self?.flushPendingPan(at: Date())
+            }
+        }
+
+        private func flushPendingPan(at date: Date) {
+            isPanFlushScheduled = false
+            let delta = pendingPanDelta
+            pendingPanDelta = 0
+            lastPanFlushTime = date
+            guard abs(delta) > 0.000001 else { return }
+            panViewport?(delta)
         }
     }
 }

@@ -33,7 +33,7 @@ enum VideoAnalysisTone: Equatable {
         case .completed:
             return Color(red: 0.42, green: 0.78, blue: 0.48)
         case .failed:
-            return Color(red: 0.96, green: 0.58, blue: 0.24)
+            return Color.red.opacity(0.86)
         }
     }
 }
@@ -294,7 +294,7 @@ struct LibraryVideoTile: View, Equatable {
                     isMorePresented = false
                     onDelete()
                 } label: {
-                    Label("从素材库删除", systemImage: "trash")
+                    Label("移到废纸篓", systemImage: "trash")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)

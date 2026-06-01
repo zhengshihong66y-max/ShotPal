@@ -16,6 +16,7 @@ struct AudioWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let goHome: (String, Double) -> Void
     @State private var selectedAudioFilters: Set<AudioFilterOption> = []
+    @State private var isAudioTagFilterBarPresented = false
     @State private var searchText = ""
     @State private var audioPreviewPlayer: AVPlayer?
     @State private var audioPreviewTimeObserver: Any?
@@ -34,6 +35,11 @@ struct AudioWorkspaceView: View {
 
         VStack(alignment: .leading, spacing: 12) {
             audioHeader()
+
+            if isAudioTagFilterBarPresented {
+                audioTagQuickFilterBar
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
@@ -60,9 +66,9 @@ struct AudioWorkspaceView: View {
 
     private func audioHeader() -> some View {
         HStack(spacing: Design.libraryToolbarButtonGap) {
-            LibraryToolbarSearchField(placeholder: "搜索名字、标签", text: $searchText)
+            LibraryToolbarSearchField(placeholder: "搜索声音、标签", text: $searchText)
 
-            audioTagFilterMenu
+            audioTagFilterButton
 
             if !selectedAudioFilters.isEmpty {
                 Button {
@@ -80,59 +86,179 @@ struct AudioWorkspaceView: View {
         .padding(.horizontal, 14)
     }
 
-    private var audioTagFilterMenu: some View {
-        Menu {
-            let tagValues = audioFilterValues(for: .tag)
-
-            if tagValues.isEmpty {
-                Button("暂无标签") {}
-                    .disabled(true)
-            } else {
-                Button {
-                    selectedAudioFilters = selectedAudioFilters.filter { $0.kind != .tag }
-                } label: {
-                    HStack {
-                        if selectedAudioTagFilterCount == 0 { Image(systemName: "checkmark") }
-                        Text("全部标签")
-                    }
-                }
-
-                Divider()
-
-                Section("标签") {
-                    ForEach(tagValues, id: \.self) { value in
-                        let option = AudioFilterOption(kind: .tag, value: value)
-                        Button {
-                            toggleAudioFilter(option)
-                        } label: {
-                            HStack {
-                                Image(systemName: selectedAudioFilters.contains(option) ? "checkmark.square.fill" : "square")
-                                VideoTagColorDot(tag: value)
-                                Text(value)
-                            }
-                        }
-                    }
-                }
+    private var audioTagFilterButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isAudioTagFilterBarPresented.toggle()
             }
         } label: {
-            audioToolbarIcon(systemName: "tag", size: 12)
+            audioToolbarIcon(
+                systemName: selectedAudioTagFilterCount == 0 ? "tag" : "tag.fill",
+                size: 12,
+                tint: isAudioTagFilterBarPresented || selectedAudioTagFilterCount > 0
+                    ? Design.neutralStrongAccent
+                    : Design.libraryToolbarIconTint
+            )
+                .background(isAudioTagFilterBarPresented ? Color.white.opacity(0.10) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(alignment: .topTrailing) {
                     if selectedAudioTagFilterCount > 0 {
                         Text("\(selectedAudioTagFilterCount)")
                             .font(.system(size: 8, weight: .bold))
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
-                            .background(Color.orange)
+                            .background(Design.neutralBadgeFill)
                             .clipShape(Capsule())
-                            .offset(x: 4, y: -3)
+                        .offset(x: 4, y: -3)
                     }
                 }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .contentShape(Rectangle())
         .help("标签筛选")
     }
+
+    private var audioTagQuickFilterBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let tagValues = audioFilterValues(for: .tag)
+            if tagValues.isEmpty {
+                HStack(spacing: 8) {
+                    Text("暂无声音标签")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                    audioTagFilterBarControls
+                }
+                .frame(minHeight: 28, alignment: .leading)
+            } else {
+                let primaryTags = primaryAudioTagValues(from: tagValues)
+                let secondaryTags = secondaryAudioTagValues(from: tagValues)
+
+                HStack(alignment: .top, spacing: 8) {
+                    WrappingFilterChipGroup {
+                        ForEach(primaryTags, id: \.self) { tag in
+                            audioTagChoiceChip(tag)
+                        }
+                    }
+                    .layoutPriority(1)
+
+                    audioTagFilterBarControls
+                }
+
+                if !secondaryTags.isEmpty {
+                    WrappingFilterChipGroup {
+                        ForEach(secondaryTags, id: \.self) { tag in
+                            let option = AudioFilterOption(kind: .tag, value: tag)
+                            audioTagChoiceChip(
+                                tag,
+                                isEnabled: selectedAudioFilters.contains(option) || isSecondaryAudioTagAvailable(tag)
+                            )
+                        }
+                    }
+                    .padding(.top, 1)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private var audioTagFilterBarControls: some View {
+        HStack(spacing: 4) {
+            Button {
+                selectedAudioFilters = selectedAudioFilters.filter { $0.kind != .tag }
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedAudioTagFilterCount == 0)
+            .help("显示全部声音")
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isAudioTagFilterBarPresented = false
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("收起标签筛选")
+        }
+        .fixedSize()
+    }
+
+    private func audioTagChoiceChip(_ tag: String, isEnabled: Bool = true) -> some View {
+        let option = AudioFilterOption(kind: .tag, value: tag)
+        return QuickFilterChoiceChip(
+            title: tag,
+            tagColorKey: tag,
+            isSelected: selectedAudioFilters.contains(option)
+        ) {
+            toggleAudioFilter(option)
+        }
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.34)
+    }
+
+    private func primaryAudioTagValues(from tags: [String]) -> [String] {
+        let tagsByKey = Dictionary(uniqueKeysWithValues: tags.map { (normalizedSearch($0), $0) })
+        return Self.primaryAudioTagOrder.compactMap { tagsByKey[normalizedSearch($0)] }
+    }
+
+    private func secondaryAudioTagValues(from tags: [String]) -> [String] {
+        let primaryKeys = Set(Self.primaryAudioTagOrder.map(normalizedSearch))
+        return tags.filter { !primaryKeys.contains(normalizedSearch($0)) }
+    }
+
+    private var selectedAudioCategoryTags: [String] {
+        let selectedTagValues = Set(
+            selectedAudioFilters
+                .filter { $0.kind == .tag }
+                .map { normalizedSearch($0.value) }
+        )
+        return Self.audioCategoryTagOrder.filter { selectedTagValues.contains(normalizedSearch($0)) }
+    }
+
+    private func isSecondaryAudioTagAvailable(_ tag: String) -> Bool {
+        let selectedCategories = selectedAudioCategoryTags
+        guard !selectedCategories.isEmpty else { return true }
+
+        return libraryStore.localAudioAssets.contains { asset in
+            audioTagsMatch(visibleTags(for: asset), selectedCategories: selectedCategories, candidate: tag)
+        } || libraryStore.audioClips.contains { clip in
+            audioTagsMatch(visibleTags(for: clip), selectedCategories: selectedCategories, candidate: tag)
+        }
+    }
+
+    private func audioTagsMatch(
+        _ tags: [String],
+        selectedCategories: [String],
+        candidate: String
+    ) -> Bool {
+        let tagKeys = Set(tags.map(normalizedSearch))
+        return tagKeys.contains(normalizedSearch(candidate))
+            && selectedCategories.allSatisfy { tagKeys.contains(normalizedSearch($0)) }
+    }
+
+    private static let audioCategoryTagOrder = [
+        "Whoosh",
+        "Riser",
+        "Hit",
+        "Ambience",
+        "Foley"
+    ]
+
+    private static let primaryAudioTagOrder = [
+        "Whoosh",
+        "Riser",
+        "Hit",
+        "Ambience",
+        "Foley",
+        "精选"
+    ]
 
     @ViewBuilder
     private func audioFilterSection(kind: AudioFilterKind) -> some View {
@@ -186,11 +312,15 @@ struct AudioWorkspaceView: View {
         }
     }
 
-    private func audioToolbarIcon(systemName: String, size: CGFloat) -> some View {
+    private func audioToolbarIcon(
+        systemName: String,
+        size: CGFloat,
+        tint: Color = Design.libraryToolbarIconTint
+    ) -> some View {
         Image(systemName: systemName)
             .font(.system(size: size, weight: .semibold))
             .symbolRenderingMode(.monochrome)
-            .foregroundStyle(Design.libraryToolbarIconTint)
+            .foregroundStyle(tint)
             .frame(
                 width: Design.libraryToolbarButtonSlotWidth,
                 height: Design.libraryToolbarButtonSlotHeight,
@@ -243,9 +373,9 @@ struct AudioWorkspaceView: View {
                 } label: {
                     Image(systemName: isPreviewing ? "pause.fill" : "play.fill")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(isPreviewing ? .white : .orange)
+                        .foregroundStyle(isPreviewing ? .white : .secondary)
                         .frame(width: 28, height: 28)
-                        .background(.orange.opacity(isPreviewing ? 0.82 : 0.13))
+                        .background(.white.opacity(isPreviewing ? 0.20 : 0.08))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -317,9 +447,9 @@ struct AudioWorkspaceView: View {
                 } label: {
                     Image(systemName: isPreviewing ? "pause.fill" : "play.fill")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(isPreviewing ? .white : .orange)
+                        .foregroundStyle(isPreviewing ? .white : .secondary)
                         .frame(width: 28, height: 28)
-                        .background(.orange.opacity(isPreviewing ? 0.82 : 0.13))
+                        .background(.white.opacity(isPreviewing ? 0.20 : 0.08))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)

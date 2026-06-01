@@ -154,106 +154,227 @@ struct HiddenScrollIndicators: NSViewRepresentable {
     }
 }
 
-struct SceneStoryboardStrip: View {
+private enum TimelineStripMetrics {
+    static let segmentGap: CGFloat = 7
+    static let segmentRadius: CGFloat = 5
+}
+
+private func sameNSImageIdentities(_ lhs: [NSImage], _ rhs: [NSImage]) -> Bool {
+    guard lhs.count == rhs.count else { return false }
+    return zip(lhs, rhs).allSatisfy { pair in
+        ObjectIdentifier(pair.0) == ObjectIdentifier(pair.1)
+    }
+}
+
+private struct TimelineImageLayerStrip: NSViewRepresentable {
     let images: [NSImage]
-    let sceneCuts: [Double]
+    let sceneCuts: [Double]?
     let viewportStart: Double
     let viewportSpan: Double
-    let activeProgress: Double
-    let previewProgress: Double?
 
-    private let segmentGap: CGFloat = 7
-    private let segmentRadius: CGFloat = 5
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let height = proxy.size.height
-            let visibleRange = visibleSceneRange()
-
-            ZStack(alignment: .leading) {
-                if images.count == sceneCuts.count + 1,
-                   viewportSpan > 0,
-                   let visibleRange {
-                    ForEach(Array(visibleRange), id: \.self) { index in
-                        if let frame = visibleFrame(for: index, width: width) {
-                            Image(nsImage: images[index])
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: frame.width, height: height)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: segmentRadius, style: .continuous))
-                                .overlay(alignment: .leading) {
-                                    Rectangle()
-                                        .fill(.white.opacity(0.16))
-                                        .frame(width: playbackWidth(for: index, visibleFrameWidth: frame.width))
-                                        .clipShape(RoundedRectangle(cornerRadius: segmentRadius, style: .continuous))
-                                }
-                                .overlay {
-                                    if isActive(index) {
-                                        CurrentFrameFocusOverlay(cornerRadius: segmentRadius)
-                                    }
-                                }
-                                .offset(x: frame.x)
-                        }
-                    }
-                }
-            }
-            .frame(width: width, height: height, alignment: .leading)
-            .clipped()
-        }
-        .allowsHitTesting(false)
+    func makeNSView(context: Context) -> TimelineImageLayerStripView {
+        TimelineImageLayerStripView()
     }
 
-    private func visibleSceneRange() -> ClosedRange<Int>? {
+    func updateNSView(_ nsView: TimelineImageLayerStripView, context: Context) {
+        nsView.configure(
+            images: images,
+            sceneCuts: sceneCuts,
+            viewportStart: viewportStart,
+            viewportSpan: viewportSpan
+        )
+    }
+}
+
+private final class TimelineImageLayerStripView: NSView {
+    private struct Configuration {
+        var images: [NSImage]
+        var sceneCuts: [Double]?
+        var viewportStart: Double
+        var viewportSpan: Double
+    }
+
+    private struct VisibleImage {
+        var image: NSImage
+        var x: CGFloat
+        var width: CGFloat
+    }
+
+    private var configuration: Configuration?
+    private var imageLayers: [CALayer] = []
+    private var imageCache: [ObjectIdentifier: CGImage] = [:]
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        wantsLayer = true
+        let rootLayer = CALayer()
+        rootLayer.masksToBounds = true
+        rootLayer.backgroundColor = NSColor.clear.cgColor
+        layer = rootLayer
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func configure(
+        images: [NSImage],
+        sceneCuts: [Double]?,
+        viewportStart: Double,
+        viewportSpan: Double
+    ) {
+        configuration = Configuration(
+            images: images,
+            sceneCuts: sceneCuts,
+            viewportStart: viewportStart,
+            viewportSpan: viewportSpan
+        )
+        trimImageCache(to: images)
+        render()
+    }
+
+    override func layout() {
+        super.layout()
+        render()
+    }
+
+    private func render() {
+        guard
+            let configuration,
+            bounds.width > 0,
+            bounds.height > 0,
+            !configuration.images.isEmpty
+        else {
+            hideAllImageLayers()
+            return
+        }
+
+        let visibleImages = visibleImages(for: configuration, width: bounds.width)
+        ensureImageLayerCount(visibleImages.count)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        for (index, item) in visibleImages.enumerated() {
+            let imageLayer = imageLayers[index]
+            imageLayer.isHidden = false
+            imageLayer.contentsScale = scale
+            imageLayer.contentsGravity = .resizeAspectFill
+            imageLayer.masksToBounds = true
+            imageLayer.cornerRadius = min(
+                TimelineStripMetrics.segmentRadius,
+                max(0, min(item.width, bounds.height) / 2)
+            )
+            imageLayer.frame = CGRect(x: item.x, y: 0, width: item.width, height: bounds.height)
+            imageLayer.contents = cgImage(for: item.image)
+        }
+
+        if visibleImages.count < imageLayers.count {
+            for index in visibleImages.count..<imageLayers.count {
+                imageLayers[index].isHidden = true
+                imageLayers[index].contents = nil
+            }
+        }
+
+        CATransaction.commit()
+    }
+
+    private func visibleImages(for configuration: Configuration, width: CGFloat) -> [VisibleImage] {
+        if let sceneCuts = configuration.sceneCuts {
+            return visibleSceneImages(
+                images: configuration.images,
+                sceneCuts: sceneCuts,
+                viewportStart: configuration.viewportStart,
+                viewportSpan: configuration.viewportSpan,
+                width: width
+            )
+        }
+
+        return visibleUniformImages(
+            images: configuration.images,
+            viewportStart: configuration.viewportStart,
+            viewportSpan: configuration.viewportSpan,
+            width: width
+        )
+    }
+
+    private func visibleUniformImages(
+        images: [NSImage],
+        viewportStart: Double,
+        viewportSpan: Double,
+        width: CGFloat
+    ) -> [VisibleImage] {
+        let count = images.count
+        guard count > 0, viewportSpan > 0 else { return [] }
+
+        let span = max(0.0001, min(1, viewportSpan))
+        let start = min(1, max(0, viewportStart))
+        let end = min(1, max(start, start + span))
+        let frameWidth = width / (CGFloat(span) * CGFloat(count))
+        let originX = -CGFloat(start / span) * width
+        let first = max(0, Int(floor(start * Double(count))) - 1)
+        let last = min(count - 1, Int(ceil(end * Double(count))) + 1)
+
+        guard first <= last else { return [] }
+
+        return (first...last).map { index in
+            VisibleImage(
+                image: images[index],
+                x: CGFloat(index) * frameWidth + originX,
+                width: max(1, frameWidth)
+            )
+        }
+    }
+
+    private func visibleSceneImages(
+        images: [NSImage],
+        sceneCuts: [Double],
+        viewportStart: Double,
+        viewportSpan: Double,
+        width: CGFloat
+    ) -> [VisibleImage] {
         let sceneCount = sceneCuts.count + 1
-        guard images.count == sceneCount, sceneCount > 0, viewportSpan > 0 else { return nil }
+        guard images.count == sceneCount, sceneCount > 0, viewportSpan > 0 else { return [] }
 
         let start = min(1, max(0, viewportStart))
-        let end = min(1, max(start, viewportStart + viewportSpan))
-        guard end > start else { return nil }
+        let end = min(1, max(start, start + viewportSpan))
+        guard end > start else { return [] }
 
-        let first = min(sceneCount - 1, firstSceneIndexEnding(after: start))
-        let last = min(sceneCount - 1, lastSceneIndexStarting(before: end))
-        guard first <= last else { return nil }
-        return first...last
-    }
+        let first = min(sceneCount - 1, firstSceneIndexEnding(after: start, sceneCuts: sceneCuts))
+        let last = min(sceneCount - 1, lastSceneIndexStarting(before: end, sceneCuts: sceneCuts))
+        guard first <= last else { return [] }
 
-    private func firstSceneIndexEnding(after progress: Double) -> Int {
-        var lower = 0
-        var upper = sceneCuts.count
-        while lower < upper {
-            let middle = (lower + upper) / 2
-            if cutProgress(at: middle) <= progress {
-                lower = middle + 1
-            } else {
-                upper = middle
-            }
+        return (first...last).compactMap { index in
+            guard let frame = visibleSceneFrame(
+                for: index,
+                sceneCuts: sceneCuts,
+                viewportStart: start,
+                viewportSpan: viewportSpan,
+                imageCount: images.count,
+                width: width
+            ) else { return nil }
+
+            return VisibleImage(image: images[index], x: frame.x, width: frame.width)
         }
-        return lower
     }
 
-    private func lastSceneIndexStarting(before progress: Double) -> Int {
-        var lower = 0
-        var upper = sceneCuts.count
-        while lower < upper {
-            let middle = (lower + upper) / 2
-            if cutProgress(at: middle) < progress {
-                lower = middle + 1
-            } else {
-                upper = middle
-            }
-        }
-        return lower
-    }
+    private func visibleSceneFrame(
+        for index: Int,
+        sceneCuts: [Double],
+        viewportStart: Double,
+        viewportSpan: Double,
+        imageCount: Int,
+        width: CGFloat
+    ) -> (x: CGFloat, width: CGFloat)? {
+        guard viewportSpan > 0, index >= 0, index < imageCount else { return nil }
 
-    private func visibleFrame(for index: Int, width: CGFloat) -> (x: CGFloat, width: CGFloat)? {
-        guard viewportSpan > 0, index >= 0, index < images.count else { return nil }
-
-        let viewportStart = min(1, max(0, self.viewportStart))
-        let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
-        let start = sceneStart(for: index)
-        let end = sceneEnd(for: index)
+        let viewportEnd = min(1, max(viewportStart, viewportStart + viewportSpan))
+        let start = sceneStart(for: index, sceneCuts: sceneCuts)
+        let end = sceneEnd(for: index, sceneCuts: sceneCuts)
         let visibleStart = max(start, viewportStart)
         let visibleEnd = min(end, viewportEnd)
         guard visibleEnd > visibleStart else { return nil }
@@ -262,8 +383,8 @@ struct SceneStoryboardStrip: View {
         var x1 = CGFloat((visibleEnd - viewportStart) / viewportSpan) * width
         let rawWidth = max(0, x1 - x0)
 
-        var leadingInset: CGFloat = index > 0 && start >= viewportStart ? segmentGap / 2 : 0
-        var trailingInset: CGFloat = index < images.count - 1 && end <= viewportEnd ? segmentGap / 2 : 0
+        var leadingInset: CGFloat = index > 0 && start >= viewportStart ? TimelineStripMetrics.segmentGap / 2 : 0
+        var trailingInset: CGFloat = index < imageCount - 1 && end <= viewportEnd ? TimelineStripMetrics.segmentGap / 2 : 0
         let totalInset = leadingInset + trailingInset
         if totalInset > 0 {
             let scale = min(1, max(0, (rawWidth - 2) / totalInset))
@@ -277,23 +398,202 @@ struct SceneStoryboardStrip: View {
         return (x: x0, width: x1 - x0)
     }
 
-    private func isActive(_ index: Int) -> Bool {
-        guard index >= 0, index < images.count else { return false }
-        let progress = min(1, max(0, activeProgress))
-        if index == images.count - 1 {
-            return progress >= sceneStart(for: index) && progress <= sceneEnd(for: index)
+    private func firstSceneIndexEnding(after progress: Double, sceneCuts: [Double]) -> Int {
+        var lower = 0
+        var upper = sceneCuts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cutProgress(at: middle, sceneCuts: sceneCuts) <= progress {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
         }
-        return progress >= sceneStart(for: index) && progress < sceneEnd(for: index)
+        return lower
+    }
+
+    private func lastSceneIndexStarting(before progress: Double, sceneCuts: [Double]) -> Int {
+        var lower = 0
+        var upper = sceneCuts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cutProgress(at: middle, sceneCuts: sceneCuts) < progress {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
+    }
+
+    private func sceneStart(for index: Int, sceneCuts: [Double]) -> Double {
+        index <= 0 ? 0 : cutProgress(at: index - 1, sceneCuts: sceneCuts)
+    }
+
+    private func sceneEnd(for index: Int, sceneCuts: [Double]) -> Double {
+        index < sceneCuts.count ? cutProgress(at: index, sceneCuts: sceneCuts) : 1
+    }
+
+    private func cutProgress(at index: Int, sceneCuts: [Double]) -> Double {
+        guard sceneCuts.indices.contains(index) else { return index < 0 ? 0 : 1 }
+        return min(1, max(0, sceneCuts[index]))
+    }
+
+    private func ensureImageLayerCount(_ count: Int) {
+        guard count > imageLayers.count else { return }
+        for _ in imageLayers.count..<count {
+            let imageLayer = CALayer()
+            imageLayer.magnificationFilter = .linear
+            imageLayer.minificationFilter = .linear
+            layer?.addSublayer(imageLayer)
+            imageLayers.append(imageLayer)
+        }
+    }
+
+    private func hideAllImageLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for imageLayer in imageLayers {
+            imageLayer.isHidden = true
+            imageLayer.contents = nil
+        }
+        CATransaction.commit()
+    }
+
+    private func cgImage(for image: NSImage) -> CGImage? {
+        let identifier = ObjectIdentifier(image)
+        if let cached = imageCache[identifier] {
+            return cached
+        }
+
+        var proposedRect = NSRect(origin: .zero, size: image.size)
+        guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
+            return nil
+        }
+
+        imageCache[identifier] = cgImage
+        return cgImage
+    }
+
+    private func trimImageCache(to images: [NSImage]) {
+        let visibleImageIDs = Set(images.map { ObjectIdentifier($0) })
+        imageCache = imageCache.filter { visibleImageIDs.contains($0.key) }
+    }
+}
+
+struct SceneStoryboardStrip: View, Equatable {
+    let images: [NSImage]
+    let sceneCuts: [Double]
+    let viewportStart: Double
+    let viewportSpan: Double
+
+    static func == (lhs: SceneStoryboardStrip, rhs: SceneStoryboardStrip) -> Bool {
+        sameNSImageIdentities(lhs.images, rhs.images)
+            && lhs.sceneCuts == rhs.sceneCuts
+            && lhs.viewportStart == rhs.viewportStart
+            && lhs.viewportSpan == rhs.viewportSpan
+    }
+
+    var body: some View {
+        TimelineImageLayerStrip(
+            images: images,
+            sceneCuts: sceneCuts,
+            viewportStart: viewportStart,
+            viewportSpan: viewportSpan
+        )
+        .allowsHitTesting(false)
+    }
+}
+
+struct SceneStoryboardProgressOverlay: View {
+    let sceneCuts: [Double]
+    let viewportStart: Double
+    let viewportSpan: Double
+    let activeProgress: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+
+            ZStack(alignment: .leading) {
+                if let activeFrame = activeVisibleFrame(width: width) {
+                    Rectangle()
+                        .fill(.white.opacity(0.16))
+                        .frame(width: activeFrame.playedWidth, height: height)
+                        .clipShape(RoundedRectangle(cornerRadius: TimelineStripMetrics.segmentRadius, style: .continuous))
+                        .offset(x: activeFrame.x)
+
+                    CurrentFrameFocusOverlay(cornerRadius: TimelineStripMetrics.segmentRadius)
+                        .frame(width: activeFrame.width, height: height)
+                        .offset(x: activeFrame.x)
+                }
+            }
+            .frame(width: width, height: height, alignment: .leading)
+            .clipped()
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func activeVisibleFrame(width: CGFloat) -> (x: CGFloat, width: CGFloat, playedWidth: CGFloat)? {
+        guard viewportSpan > 0 else { return nil }
+        let index = activeSceneIndex()
+        guard let frame = visibleFrame(for: index, width: width) else { return nil }
+        return (x: frame.x, width: frame.width, playedWidth: playbackWidth(for: index, visibleFrameWidth: frame.width))
+    }
+
+    private func activeSceneIndex() -> Int {
+        let sceneCount = sceneCuts.count + 1
+        guard sceneCount > 1 else { return 0 }
+
+        let progress = min(1, max(0, activeProgress))
+        var lower = 0
+        var upper = sceneCuts.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if cutProgress(at: middle) <= progress {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return min(sceneCount - 1, lower)
+    }
+
+    private func visibleFrame(for index: Int, width: CGFloat) -> (x: CGFloat, width: CGFloat)? {
+        guard viewportSpan > 0, index >= 0, index <= sceneCuts.count else { return nil }
+
+        let viewportStart = min(1, max(0, self.viewportStart))
+        let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
+        let start = sceneStart(for: index)
+        let end = sceneEnd(for: index)
+        let visibleStart = max(start, viewportStart)
+        let visibleEnd = min(end, viewportEnd)
+        guard visibleEnd > visibleStart else { return nil }
+
+        var x0 = CGFloat((visibleStart - viewportStart) / viewportSpan) * width
+        var x1 = CGFloat((visibleEnd - viewportStart) / viewportSpan) * width
+        let rawWidth = max(0, x1 - x0)
+
+        var leadingInset: CGFloat = index > 0 && start >= viewportStart ? TimelineStripMetrics.segmentGap / 2 : 0
+        var trailingInset: CGFloat = index < sceneCuts.count && end <= viewportEnd ? TimelineStripMetrics.segmentGap / 2 : 0
+        let totalInset = leadingInset + trailingInset
+        if totalInset > 0 {
+            let scale = min(1, max(0, (rawWidth - 2) / totalInset))
+            leadingInset *= scale
+            trailingInset *= scale
+        }
+
+        x0 += leadingInset
+        x1 -= trailingInset
+        guard x1 > x0 else { return nil }
+        return (x: x0, width: x1 - x0)
     }
 
     private func playbackWidth(for index: Int, visibleFrameWidth: CGFloat) -> CGFloat {
-        guard index >= 0, index < images.count else { return 0 }
+        guard index >= 0, index <= sceneCuts.count else { return 0 }
         let start = sceneStart(for: index)
         let end = sceneEnd(for: index)
-        let isActive = index == images.count - 1
-            ? activeProgress >= start && activeProgress <= end
-            : activeProgress >= start && activeProgress < end
-        guard isActive else { return 0 }
 
         let viewportStart = min(1, max(0, self.viewportStart))
         let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
@@ -318,6 +618,28 @@ struct SceneStoryboardStrip: View {
     }
 }
 
+struct FrameStripTimelineStrip: View, Equatable {
+    let frames: [NSImage]
+    let viewportStart: Double
+    let viewportSpan: Double
+
+    static func == (lhs: FrameStripTimelineStrip, rhs: FrameStripTimelineStrip) -> Bool {
+        sameNSImageIdentities(lhs.frames, rhs.frames)
+            && lhs.viewportStart == rhs.viewportStart
+            && lhs.viewportSpan == rhs.viewportSpan
+    }
+
+    var body: some View {
+        TimelineImageLayerStrip(
+            images: frames,
+            sceneCuts: nil,
+            viewportStart: viewportStart,
+            viewportSpan: viewportSpan
+        )
+        .allowsHitTesting(false)
+    }
+}
+
 struct FrameScrubberView: View {
     let frames: [NSImage]?
     let progress: Double
@@ -339,7 +661,7 @@ struct FrameScrubberView: View {
     var viewportSpan: Double = 1
     var duration: Double = 0
     var zoomLevel: Double = 1
-    var playheadTint: Color = .white.opacity(0.92)
+    var playheadTint: Color = Design.timelinePlayheadAccent
     var showsPlayhead: Bool = false
     var panViewport: ((Double) -> Void)? = nil
     var zoomViewport: ((Double, Double) -> Void)? = nil
@@ -368,38 +690,35 @@ struct FrameScrubberView: View {
                     // 优先使用场景识别缩略图（每场景宽度 ∝ 时长）
                     if let sceneImages, !sceneImages.isEmpty,
                        sceneCuts.count == sceneImages.count - 1 {
-                        SceneStoryboardStrip(
-                            images: sceneImages,
-                            sceneCuts: sceneCuts,
-                            viewportStart: viewportStart,
-                            viewportSpan: viewportSpan,
-                            activeProgress: draftProgress ?? progress,
-                            previewProgress: hoverProgress
-                        )
+                        ZStack(alignment: .leading) {
+                            SceneStoryboardStrip(
+                                images: sceneImages,
+                                sceneCuts: sceneCuts,
+                                viewportStart: viewportStart,
+                                viewportSpan: viewportSpan
+                            )
+                            .equatable()
+
+                            SceneStoryboardProgressOverlay(
+                                sceneCuts: sceneCuts,
+                                viewportStart: viewportStart,
+                                viewportSpan: viewportSpan,
+                                activeProgress: draftProgress ?? progress
+                            )
+                        }
                     } else if let frames, !frames.isEmpty {
                         // 暂无场景识别结果时：均匀采样帧带，随 viewport 缩放/平移
-                        let count   = frames.count
-                        let frameW  = width / (CGFloat(viewportSpan) * CGFloat(count))
-                        let originX = -CGFloat(viewportStart / viewportSpan) * width
-                        let first   = max(0, Int(viewportStart * Double(count)))
-                        let last    = min(count - 1, Int((viewportStart + viewportSpan) * Double(count)) + 1)
-                        if first <= last {
-                            ZStack(alignment: .leading) {
-                                ForEach(first...last, id: \.self) { i in
-                                    Image(nsImage: frames[i])
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: max(1, frameW), height: height)
-                                        .clipped()
-                                        .offset(x: CGFloat(i) * frameW + originX)
-                                }
+                        ZStack(alignment: .leading) {
+                            FrameStripTimelineStrip(
+                                frames: frames,
+                                viewportStart: viewportStart,
+                                viewportSpan: viewportSpan
+                            )
+                            .equatable()
 
-                                Rectangle()
-                                    .fill(.white.opacity(0.16))
-                                    .frame(width: width * CGFloat(dp))
-                            }
-                            .frame(width: width, height: height, alignment: .leading)
-                            .clipped()
+                            Rectangle()
+                                .fill(.white.opacity(0.16))
+                                .frame(width: width * CGFloat(dp))
                         }
                     } else {
                         LinearGradient(
@@ -602,7 +921,7 @@ struct FrameScrubberView: View {
     private func annotationTint(for kind: AnnotationItem.Kind) -> Color {
         switch kind {
         case .frame: return Design.captureFrameAccent
-        case .audio: return .orange
+        case .audio: return Design.annotationAccent
         case .content: return Design.annotationAccent
         }
     }
@@ -626,7 +945,7 @@ struct SimpleProgressBar: View {
     var duration: Double = 0
     var annotationItems: [TimelineAnnotationMarker] = []
     var onAnnotationSelect: ((UUID) -> Void)? = nil
-    var playheadTint: Color = .white.opacity(0.92)
+    var playheadTint: Color = Design.timelinePlayheadAccent
     var stepBack: (() -> Void)? = nil
     var stepForward: (() -> Void)? = nil
     var onScreenshot: (() -> Void)? = nil

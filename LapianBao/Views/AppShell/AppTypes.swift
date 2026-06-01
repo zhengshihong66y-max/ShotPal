@@ -207,6 +207,15 @@ enum ImportHistoryItem: Identifiable {
     }
 }
 
+struct PendingImportVideo: Identifiable, Equatable {
+    var id: String
+    var urlString: String
+    var platform: String
+    var title: String
+    var subtitle: String
+    var isSupported: Bool
+}
+
 enum VideoSourcePlatform: String, CaseIterable {
     case instagram = "Instagram"
     case youtube = "YouTube"

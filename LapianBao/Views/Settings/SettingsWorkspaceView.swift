@@ -18,6 +18,10 @@ struct SettingsWorkspaceView: View {
     @AppStorage(LibraryStore.autoTranscriptBatchKey) private var autoTranscriptBatch = false
     @AppStorage(LibraryStore.autoMusicDownloadBatchKey) private var autoMusicDownloadBatch = false
 
+    private static let rowContentHeight: CGFloat = 78
+    private static let rowVerticalPadding: CGFloat = 10
+    private static let rowActionButtonSize: CGFloat = 22
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -59,9 +63,8 @@ struct SettingsWorkspaceView: View {
                     clear: { libraryStore.clearMusicDownloadState() }
                 )
             }
-            .padding(.horizontal, 18)
             .padding(.vertical, 16)
-            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .scrollIndicators(.hidden)
@@ -72,21 +75,46 @@ struct SettingsWorkspaceView: View {
 
     private func downloaderSelfCheckCard() -> some View {
         let report = libraryStore.downloaderSelfCheckReport
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: downloaderSelfCheckIcon(for: report))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(downloaderSelfCheckColor(for: report))
-                    .frame(width: 18)
-                Text("外部服务自检")
-                    .font(.headline.weight(.semibold))
-                Text(downloaderSelfCheckDateText(report))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(action: { libraryStore.startExternalServiceSelfCheck() }) {
-                    Label("立即自检", systemImage: "arrow.clockwise")
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                settingsRowIcon(
+                    downloaderSelfCheckIcon(for: report),
+                    tint: downloaderSelfCheckColor(for: report)
+                )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("外部服务自检")
+                            .font(.headline.weight(.semibold))
+                        Text(downloaderSelfCheckDateText(report))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Text(downloaderSelfCheckStatusText(report))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
+                .frame(height: Self.rowContentHeight, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    settingsActionButton(
+                        systemImage: "arrow.clockwise",
+                        help: "立即自检",
+                        action: { libraryStore.startExternalServiceSelfCheck() }
+                    )
+
+                    settingsActionButton(
+                        systemImage: "wrench.and.screwdriver",
+                        help: "更新修复",
+                        action: { libraryStore.startExternalServiceRepair() }
+                    )
+                }
+                .frame(height: Self.rowContentHeight, alignment: .center)
                 .disabled(report.isRunning)
             }
 
@@ -94,13 +122,8 @@ struct SettingsWorkspaceView: View {
                 ProgressView()
                     .controlSize(.small)
                     .progressViewStyle(.linear)
-                    .tint(.orange)
+                    .tint(Design.annotationAccent)
             }
-
-            Text(downloaderSelfCheckStatusText(report))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(5)
 
             if !report.serviceChecks.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -124,12 +147,13 @@ struct SettingsWorkspaceView: View {
                 }
             }
         }
-        .padding(14)
+        .padding(.horizontal, 9)
+        .padding(.vertical, Self.rowVerticalPadding)
         .background(.white.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 0.8)
         }
     }
 
@@ -144,67 +168,116 @@ struct SettingsWorkspaceView: View {
         stop: @escaping () -> Void,
         clear: @escaping () -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.orange)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.headline.weight(.semibold))
-                Text(countText)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Toggle(isOn: Binding(
-                    get: { autoEnabled.wrappedValue },
-                    set: { enabled in
-                        autoEnabled.wrappedValue = enabled
-                        if enabled { start() }
-                    }
-                )) {
-                    Text("启动自动")
-                        .font(.caption)
+        let running = isBatchRunning(job)
+        let paused = isBatchPaused(job)
+
+        return HStack(alignment: .center, spacing: 10) {
+            settingsRowIcon(icon, tint: Design.annotationAccent)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.headline.weight(.semibold))
+                    Text(countText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
-                .toggleStyle(.checkbox)
+
+                if shouldShowProgress(job) {
+                    ProgressView(value: normalizedProgressFraction(job.progress))
+                        .progressViewStyle(.linear)
+                        .tint(Design.annotationAccent)
+                        .frame(height: 4)
+                }
+
+                if let status = batchStatusText(job, title: title) {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
+            .frame(height: Self.rowContentHeight, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 8) {
-                Button(action: start) {
-                    Label(startTitle, systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isBatchRunning(job))
+                settingsAutoButton(
+                    isOn: autoEnabled.wrappedValue,
+                    action: {
+                        autoEnabled.wrappedValue.toggle()
+                        if autoEnabled.wrappedValue { start() }
+                    }
+                )
 
-                Spacer()
+                settingsActionButton(
+                    systemImage: "play.fill",
+                    help: startTitle,
+                    action: start
+                )
+                .disabled(running)
 
-                Button(action: stop) {
-                    Label("停止", systemImage: "stop.fill")
-                }
-                .disabled(!isBatchRunning(job) && !isBatchPaused(job))
+                settingsActionButton(
+                    systemImage: "stop.fill",
+                    help: "停止",
+                    action: stop
+                )
+                .disabled(!running && !paused)
 
-                Button(role: .destructive, action: clear) {
-                    Label("清空状态", systemImage: "trash")
-                }
+                settingsActionButton(
+                    systemImage: "trash",
+                    help: "清空状态",
+                    role: .destructive,
+                    action: clear
+                )
             }
-
-            if shouldShowProgress(job) {
-                ProgressView(value: normalizedProgressFraction(job.progress))
-                    .progressViewStyle(.linear)
-                    .tint(.orange)
-            }
-
-            Text(batchStatusText(job, title: title))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .frame(height: Self.rowContentHeight, alignment: .center)
         }
-        .padding(14)
+        .padding(.horizontal, 9)
+        .padding(.vertical, Self.rowVerticalPadding)
+        .frame(minHeight: Self.rowContentHeight + Self.rowVerticalPadding * 2)
         .background(.white.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 0.8)
         }
+    }
+
+    private func settingsRowIcon(_ systemImage: String, tint: Color) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 34, height: Self.rowContentHeight)
+            .background(.white.opacity(0.075))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private func settingsAutoButton(isOn: Bool, action: @escaping () -> Void) -> some View {
+        settingsActionButton(
+            systemImage: isOn ? "checkmark.square.fill" : "square",
+            tint: isOn ? Design.annotationAccent : .white.opacity(0.54),
+            help: "启动自动",
+            action: action
+        )
+    }
+
+    private func settingsActionButton(
+        systemImage: String,
+        tint: Color = .white.opacity(0.70),
+        help: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: min(13, Self.rowActionButtonSize - 9), weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: Self.rowActionButtonSize, height: Self.rowActionButtonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func downloaderSelfCheckIcon(for report: DownloaderSelfCheckReport) -> String {
@@ -218,7 +291,7 @@ struct SettingsWorkspaceView: View {
 
     private func downloaderSelfCheckColor(for report: DownloaderSelfCheckReport) -> Color {
         switch report.status {
-        case .idle, .running: return .orange
+        case .idle, .running: return Design.annotationAccent
         case .succeeded: return .green
         case .failed: return .red
         }
@@ -233,6 +306,14 @@ struct SettingsWorkspaceView: View {
 
     private func downloaderSelfCheckStatusText(_ report: DownloaderSelfCheckReport) -> String {
         var parts = [report.message]
+        if let location = report.problemLocation,
+           !location.isEmpty {
+            parts.append("问题位置：\(location)")
+        }
+        if let repairSummary = report.repairSummary,
+           !repairSummary.isEmpty {
+            parts.append("修复：\(repairSummary)")
+        }
         if let version = report.ytdlpVersion {
             parts.append("yt-dlp \(version)")
         }
@@ -253,7 +334,7 @@ struct SettingsWorkspaceView: View {
     private func externalServiceCheckColor(for status: ExternalServiceSelfCheckItem.Status) -> Color {
         switch status {
         case .succeeded: return .green
-        case .warning: return .orange
+        case .warning: return Design.annotationAccent
         case .failed: return .red
         }
     }
@@ -295,10 +376,10 @@ struct SettingsWorkspaceView: View {
         return false
     }
 
-    private func batchStatusText(_ job: TranscriptBatchJob, title: String) -> String {
+    private func batchStatusText(_ job: TranscriptBatchJob, title: String) -> String? {
         switch job.status {
         case .idle:
-            return "未开始"
+            return nil
         case .running:
             let name = job.currentVideoName ?? "准备中"
             return "\(title)进行中：\(name) · \(job.completed)/\(job.total)"

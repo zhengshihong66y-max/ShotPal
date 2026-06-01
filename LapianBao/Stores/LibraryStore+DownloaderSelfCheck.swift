@@ -89,6 +89,16 @@ extension LibraryStore {
         return Calendar.current.isDateInToday(checkedAt)
     }
 
+    nonisolated enum DownloaderSelfCheckRepairMode: Sendable {
+        case afterFailure
+        case always
+    }
+
+    nonisolated static let downloaderProblemYTDLP = "yt-dlp 下载器"
+    nonisolated static let downloaderProblemYTDLPLaunch = "yt-dlp 启动"
+    nonisolated static let downloaderProblemFFmpeg = "ffmpeg 转码器"
+    nonisolated static let downloaderProblemYouTube = "YouTube 抓取"
+
     nonisolated struct DownloaderSelfCheckProcessResult: Sendable {
         var terminationStatus: Int32?
         var didTimeOut: Bool = false
@@ -104,32 +114,47 @@ extension LibraryStore {
 
         var summary: String {
             guard !steps.isEmpty else { return "未找到可自动更新渠道" }
-            return steps.suffix(4).joined(separator: "；")
+            return steps.suffix(6).joined(separator: "；")
         }
     }
 
-    nonisolated static func runDownloaderSelfCheck(startedAt: Date) async -> DownloaderSelfCheckReport {
+    nonisolated static func runDownloaderSelfCheck(
+        startedAt: Date,
+        repairMode: DownloaderSelfCheckRepairMode = .afterFailure
+    ) async -> DownloaderSelfCheckReport {
         await Task.detached(priority: .utility) {
-            let initialReport = runDownloaderSelfCheckOnce(startedAt: startedAt)
-            guard initialReport.status == .failed else {
-                return await reportByAddingExternalServiceChecks(to: initialReport)
-            }
-
-            let repairResult = runDownloaderAutoRepair()
-            guard repairResult.didAttemptRepair else {
-                var report = initialReport
-                report.message = "\(initialReport.message)\n自动修复：\(repairResult.summary)"
+            var report = runDownloaderSelfCheckOnce(startedAt: startedAt)
+            let repairLabel = repairMode == .always ? "更新修复" : "自动修复"
+            guard repairMode == .always || report.status == .failed else {
                 return await reportByAddingExternalServiceChecks(to: report)
             }
 
-            var repairedReport = runDownloaderSelfCheckOnce(startedAt: Date())
-            if repairedReport.status == .succeeded {
-                repairedReport.message = "\(repairedReport.message)\n自动修复：\(repairResult.summary)"
-                return await reportByAddingExternalServiceChecks(to: repairedReport)
+            let maximumRepairPasses = repairMode == .always ? 1 : 2
+            var repairSummaries: [String] = []
+
+            for _ in 0..<maximumRepairPasses {
+                let repairResult = runDownloaderAutoRepair(for: report, mode: repairMode)
+                repairSummaries.append(repairResult.summary)
+                guard repairResult.didAttemptRepair else { break }
+
+                report = runDownloaderSelfCheckOnce(startedAt: Date())
+                if repairMode == .always || report.status == .succeeded {
+                    break
+                }
             }
 
-            repairedReport.message = "自动修复后仍失败：\(repairedReport.message)\n修复记录：\(repairResult.summary)"
-            return await reportByAddingExternalServiceChecks(to: repairedReport)
+            let repairSummary = repairSummaries.joined(separator: "；")
+            guard !repairSummary.isEmpty else {
+                return await reportByAddingExternalServiceChecks(to: report)
+            }
+
+            report.repairSummary = repairSummary
+            if report.status == .succeeded {
+                report.message = "\(report.message)\n\(repairLabel)：\(repairSummary)"
+            } else {
+                report.message = "\(repairLabel)后仍失败：\(report.message)\n修复记录：\(repairSummary)"
+            }
+            return await reportByAddingExternalServiceChecks(to: report)
         }.value
     }
 
@@ -138,7 +163,8 @@ extension LibraryStore {
             return DownloaderSelfCheckReport(
                 status: .failed,
                 checkedAt: startedAt,
-                message: "未找到 yt-dlp"
+                message: "未找到 yt-dlp",
+                problemLocation: downloaderProblemYTDLP
             )
         }
 
@@ -154,7 +180,8 @@ extension LibraryStore {
                 checkedAt: startedAt,
                 message: "yt-dlp 无法启动：\(selfCheckFailureMessage(from: versionResult, fallback: "请检查 yt-dlp 安装"))",
                 ytdlpPath: ytdlp.path,
-                ytdlpVersion: version
+                ytdlpVersion: version,
+                problemLocation: downloaderProblemYTDLPLaunch
             )
         }
 
@@ -164,7 +191,8 @@ extension LibraryStore {
                 checkedAt: startedAt,
                 message: "未找到 ffmpeg",
                 ytdlpPath: ytdlp.path,
-                ytdlpVersion: version
+                ytdlpVersion: version,
+                problemLocation: downloaderProblemFFmpeg
             )
         }
 
@@ -201,7 +229,8 @@ extension LibraryStore {
             message: failures.suffix(2).joined(separator: "\n"),
             ytdlpPath: ytdlp.path,
             ytdlpVersion: version,
-            ffmpegPath: ffmpegURL.path
+            ffmpegPath: ffmpegURL.path,
+            problemLocation: downloaderProblemYouTube
         )
     }
 
@@ -261,11 +290,17 @@ extension LibraryStore {
                 .prefix(3)
                 .map { "\($0.title)：\($0.message)" }
                 .joined(separator: "；")
+            enriched.problemLocation = failures
+                .prefix(4)
+                .map(\.title)
+                .joined(separator: "、")
             enriched.message = "外部服务自检发现 \(failures.count) 项异常：\(summary)"
         } else if warnings.isEmpty {
             enriched.status = .succeeded
+            enriched.problemLocation = nil
             enriched.message = "外部服务自检通过"
         } else if enriched.status == .succeeded {
+            enriched.problemLocation = nil
             enriched.message = "核心下载自检通过，\(warnings.count) 项可选服务未就绪"
         }
 
@@ -438,8 +473,44 @@ extension LibraryStore {
         )
     }
 
-    nonisolated static func runDownloaderAutoRepair() -> DownloaderAutoRepairResult {
+    nonisolated static func runDownloaderAutoRepair(
+        for report: DownloaderSelfCheckReport,
+        mode: DownloaderSelfCheckRepairMode
+    ) -> DownloaderAutoRepairResult {
         var result = DownloaderAutoRepairResult()
+        let location = report.problemLocation ?? ""
+        let shouldRepairYTDLP = mode == .always
+            || location.contains("yt-dlp")
+            || location.contains("YouTube")
+            || report.ytdlpPath == nil
+        let shouldRepairFFmpeg = mode == .always
+            || location.contains("ffmpeg")
+
+        if shouldRepairYTDLP {
+            repairYTDLPTooling(mode: mode, to: &result)
+        }
+        if shouldRepairFFmpeg {
+            repairFFmpegTooling(mode: mode, to: &result)
+        }
+
+        if !shouldRepairYTDLP && !shouldRepairFFmpeg {
+            result.steps.append("问题位置 \(location.isEmpty ? "未知" : location) 暂无可自动修复动作")
+        }
+
+        return result
+    }
+
+    nonisolated static func repairYTDLPTooling(
+        mode: DownloaderSelfCheckRepairMode,
+        to result: inout DownloaderAutoRepairResult
+    ) {
+        if let cleanupResult = removeUnresponsiveAppManagedYTDLP() {
+            appendDownloaderRepairStep(
+                name: "清理失效的应用内 yt-dlp",
+                commandResult: cleanupResult,
+                to: &result
+            )
+        }
 
         if let ytdlp = localYTDLPURL() {
             appendDownloaderRepairStep(
@@ -492,6 +563,8 @@ extension LibraryStore {
                     to: &result
                 )
             }
+        } else if mode == .always {
+            result.steps.append("Homebrew yt-dlp 修复未完成：未找到 Homebrew")
         }
 
         if let curl = localCurlURL() {
@@ -519,8 +592,60 @@ extension LibraryStore {
                 to: &result
             )
         }
+    }
 
-        return result
+    nonisolated static func repairFFmpegTooling(
+        mode: DownloaderSelfCheckRepairMode,
+        to result: inout DownloaderAutoRepairResult
+    ) {
+        guard let brew = localBrewURL() else {
+            result.steps.append("ffmpeg 修复未完成：未找到 Homebrew")
+            return
+        }
+
+        if localFFmpegURL() == nil {
+            appendDownloaderRepairStep(
+                name: "安装 Homebrew ffmpeg",
+                commandResult: runDownloaderSelfCheckProcess(
+                    executableURL: brew,
+                    arguments: ["install", "ffmpeg"],
+                    timeout: 360
+                ),
+                to: &result
+            )
+        } else if mode == .always {
+            appendDownloaderRepairStep(
+                name: "升级 Homebrew ffmpeg",
+                commandResult: runDownloaderSelfCheckProcess(
+                    executableURL: brew,
+                    arguments: ["upgrade", "ffmpeg"],
+                    timeout: 360
+                ),
+                to: &result
+            )
+        }
+    }
+
+    nonisolated static func removeUnresponsiveAppManagedYTDLP() -> DownloaderSelfCheckProcessResult? {
+        guard let targetURL = appManagedYTDLPURL(),
+              FileManager.default.isExecutableFile(atPath: targetURL.path),
+              !isResponsiveYTDLP(at: targetURL, timeout: 2)
+        else { return nil }
+
+        do {
+            try FileManager.default.removeItem(at: targetURL)
+            return DownloaderSelfCheckProcessResult(
+                terminationStatus: 0,
+                output: "已移除 \(targetURL.path)",
+                errorOutput: ""
+            )
+        } catch {
+            return DownloaderSelfCheckProcessResult(
+                terminationStatus: 1,
+                output: "",
+                errorOutput: error.localizedDescription
+            )
+        }
     }
 
     nonisolated static func appendDownloaderRepairStep(
@@ -621,6 +746,15 @@ extension LibraryStore {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temporaryURL.path)
             try? FileManager.default.removeItem(at: targetURL)
             try FileManager.default.moveItem(at: temporaryURL, to: targetURL)
+            guard isResponsiveYTDLP(at: targetURL, timeout: 8) else {
+                try? FileManager.default.removeItem(at: targetURL)
+                return DownloaderSelfCheckProcessResult(
+                    terminationStatus: 1,
+                    didTimeOut: false,
+                    output: "",
+                    errorOutput: "应用内 yt-dlp 安装后无法启动，已移除失效文件"
+                )
+            }
             return DownloaderSelfCheckProcessResult(
                 terminationStatus: 0,
                 didTimeOut: false,

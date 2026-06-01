@@ -33,6 +33,13 @@ struct ContentView: View {
     @State var isXiaohongshuSavedSyncing = false
     @State var xiaohongshuSavedSyncMessage: String?
     @State var xiaohongshuSavedSyncIsError = false
+    @State var savedImportCandidates: [PendingImportVideo] = []
+    @State var isSavedImportRefreshing = false
+    @State var savedImportRefreshMessage: String?
+    @State var savedImportRefreshIsError = false
+    @State var savedImportRefreshTask: Task<Void, Never>?
+    @State var savedImportSerialTask: Task<Void, Never>?
+    @State var isSavedImportSerialRunning = false
     @State var expandedImportBatchIDs: Set<UUID> = []
     @State var observedPasteboardChangeCount = NSPasteboard.general.changeCount
     @State var isImportDropTargeted = false
@@ -321,7 +328,10 @@ struct ContentView: View {
     var workspaceView: some View {
         switch presentedAppWorkspace {
         case .home:
-            PreviewPanelView(openWorkspace: { appWorkspace = $0 })
+            PreviewPanelView(
+                openWorkspace: { appWorkspace = $0 },
+                openStoryboardBoard: openFrameStoryboard
+            )
         case .frames:
             FramesWorkspaceView(
                 selectedVideoPath: $frameFilterVideoPath,
@@ -347,6 +357,13 @@ struct ContentView: View {
             object: nil,
             userInfo: ["path": path, "time": time]
         )
+    }
+
+    func openFrameStoryboard(for video: VideoItem) {
+        libraryStore.selectVideo(path: video.url.path)
+        frameFilterVideoPath = video.url.path
+        frameSelectedFrameID = nil
+        appWorkspace = .frames
     }
 
     var windowControls: some View {

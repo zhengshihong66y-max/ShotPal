@@ -317,10 +317,12 @@ extension LibraryStore {
                 let oldRelativePath = libraryRelativePath(for: originalURL, base: folder)
                 let newRelativePath = libraryRelativePath(for: finalURL, base: folder)
                 let oldTags = assetTagsByPath.removeValue(forKey: oldRelativePath) ?? []
-                let baseTags = oldTags.filter { ![videoFolderName, musicExportFolderName, soundEffectExportFolderName].contains($0) }
+                let baseTags = oldTags.filter {
+                    ![videoFolderName, musicExportFolderName, soundEffectExportFolderName, "音效", "音频"].contains($0)
+                }
                 let kindTags = audioFolderName == musicExportFolderName
-                    ? [musicExportFolderName, inferredMusicRole(from: finalURL).label]
-                    : [soundEffectExportFolderName, "音效"]
+                    ? [inferredMusicRole(from: finalURL).label]
+                    : []
                 assetTagsByPath[newRelativePath] = cleanedResourceTags(kindTags + baseTags + folderTags)
                 didUpdateAssetTags = true
                 continue
@@ -653,7 +655,6 @@ extension LibraryStore {
         let audio: [LocalAudioAsset] = audioFiles.map { entry in
             let relativePath = libraryRelativePath(for: entry.url, base: libraryURL)
             let tags = cleanedResourceTags(
-                [soundEffectExportFolderName, "音效"] +
                 (persistedAssetTags[relativePath] ?? []) +
                 entry.tags
             )
@@ -736,7 +737,6 @@ extension LibraryStore {
             let audio: [LocalAudioAsset] = audioFiles.map { entry -> LocalAudioAsset in
                 let relativePath = libraryRelativePath(for: entry.url, base: libraryURL)
                 let tags = cleanedResourceTags(
-                    [soundEffectExportFolderName, "音效"] +
                     (persistedAssetTags[relativePath] ?? []) +
                     entry.tags
                 )
@@ -1066,22 +1066,99 @@ extension LibraryStore {
 
     func removeVideo(_ video: VideoItem) {
         let path = video.url.path
+        guard Self.trashVideoFileIfPresent(at: video.url) else { return }
+
         videos.removeAll { $0.url.path == path }
         if selectedVideo?.url.path == path {
             selectedVideo = nil
             shouldAutoplaySelectedVideo = false
             selectedVideoSelectionID = UUID()
         }
+        removeQueuedMetadataLoad(for: path)
+        thumbnailLoadingPaths.remove(path)
+        thumbnailGenerationFailedPaths.remove(path)
+        metadataByVideoPath.removeValue(forKey: path)
+        thumbnailDataByVideoPath.removeValue(forKey: path)
+        thumbnailImageByVideoPath.removeValue(forKey: path)
+        durationByVideoPath.removeValue(forKey: path)
+        playbackSupportByVideoPath.removeValue(forKey: path)
+        waveformTasks[path]?.cancel()
+        waveformTasks[path] = nil
+        waveformSamplesByVideoPath.removeValue(forKey: path)
+        frameStripTasks[path]?.cancel()
+        frameStripTasks[path] = nil
+        frameStripByVideoPath.removeValue(forKey: path)
+        frameStripImagesByVideoPath.removeValue(forKey: path)
         tagsByVideoPath.removeValue(forKey: path)
         sourceInfoByVideoPath.removeValue(forKey: path)
+        pendingVideoFolderTagsByPath.removeValue(forKey: path)
+        pendingVideoPathRemap.removeValue(forKey: path)
+        pendingVideoPathRemap = pendingVideoPathRemap.filter { $0.value != path }
+        transcriptSegmentsByVideoPath.removeValue(forKey: path)
+        transcriptStatusByVideoPath.removeValue(forKey: path)
+        transcriptExportJobs.removeValue(forKey: path)
+        transcriptExports.removeAll { $0.videoPath == path }
+        let removedAudioClipIDs = Set(audioClips.filter { $0.videoPath == path }.map(\.id))
+        for clipID in removedAudioClipIDs {
+            audioClipWaveformTasks[clipID]?.cancel()
+            audioClipWaveformTasks[clipID] = nil
+        }
+        pendingAudioClipWaveformIDSet.subtract(removedAudioClipIDs)
+        pendingAudioClipWaveformIDs.removeAll { removedAudioClipIDs.contains($0) }
+        sampledFrames.removeAll { $0.videoPath == path }
+        annotations.removeAll { $0.videoPath == path }
+        audioClips.removeAll { $0.videoPath == path }
+        musicDetectionTasks[path]?.cancel()
+        musicDetectionTasks[path] = nil
+        for song in musicsByVideoPath[path, default: []] {
+            let enrichmentKey = musicTagEnrichmentKey(for: song, in: path)
+            musicTagEnrichmentTasks[enrichmentKey]?.cancel()
+            musicTagEnrichmentTasks[enrichmentKey] = nil
+        }
+        musicsByVideoPath.removeValue(forKey: path)
+        musicDetectionStatusByVideoPath.removeValue(forKey: path)
         sceneCutsByVideoPath.removeValue(forKey: path)
         sceneStripImagesByVideoPath.removeValue(forKey: path)
+        sceneCutProgressesByVideoPath.removeValue(forKey: path)
         sceneThumbnailVersionsByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress.removeValue(forKey: path)
+        sceneDetectionTasks[path]?.cancel()
+        sceneDetectionTasks[path] = nil
+        sceneThumbnailHydrationTasks[path]?.cancel()
+        sceneThumbnailHydrationTasks[path] = nil
+        sceneThumbnailHydrationNeeded.remove(path)
+        sceneCutCache.removeValue(forKey: relativeVideoPath(for: video.url))
         saveTagsJSON()
         saveSourceInfoJSON()
         saveSceneCutCache()
+        writeFrameIndex()
+        saveProjectData()
+        removeEmptyMediaDirectoriesAfterVideoDeletion()
         scheduleCurrentVideoLibrarySnapshotSave(after: 0.5)
+    }
+
+    private static func trashVideoFileIfPresent(at url: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return true }
+
+        do {
+            try fileManager.trashItem(at: url, resultingItemURL: nil)
+            return true
+        } catch {
+            NSLog("LapianBao failed to move video to Trash: %@ %@", url.path, String(describing: error))
+            return false
+        }
+    }
+
+    private func removeEmptyMediaDirectoriesAfterVideoDeletion() {
+        guard let libraryURL else { return }
+
+        let videoRoot = Self.mediaFolder(in: libraryURL, named: Self.videoFolderName)
+        Self.removeEmptyDirectories(under: videoRoot, preserving: [videoRoot])
+
+        let importsRoot = libraryURL.appendingPathComponent("Imports", isDirectory: true)
+        Self.removeEmptyDirectories(under: importsRoot, preserving: [])
+        Self.removeDirectoryIfEmpty(importsRoot)
     }
 
     func addTag(to video: VideoItem) {

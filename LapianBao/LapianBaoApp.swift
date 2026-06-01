@@ -6,7 +6,12 @@
 //
 
 import AppKit
+import Darwin
 import SwiftUI
+
+nonisolated final class CommandLineSelfCheckExitBox: @unchecked Sendable {
+    var code: Int32 = 1
+}
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -30,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     )
 
     static func main() {
+        runCommandLineSelfCheckIfRequested()
         StartupDiagnostics.mark(.mainEntered)
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -37,6 +43,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         app.setActivationPolicy(.regular)
         app.delegate = delegate
         app.run()
+    }
+
+    nonisolated private static func runCommandLineSelfCheckIfRequested() {
+        let arguments = CommandLine.arguments
+        let repairMode: LibraryStore.DownloaderSelfCheckRepairMode
+        if arguments.contains("--lapianbao-self-repair") {
+            repairMode = .always
+        } else if arguments.contains("--lapianbao-self-check") {
+            repairMode = .afterFailure
+        } else {
+            return
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        let exitBox = CommandLineSelfCheckExitBox()
+        Task.detached(priority: .utility) {
+            let report = await LibraryStore.runDownloaderSelfCheck(startedAt: Date(), repairMode: repairMode)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(report) {
+                FileHandle.standardOutput.write(data)
+                FileHandle.standardOutput.write(Data("\n".utf8))
+            }
+            exitBox.code = report.status == .succeeded ? 0 : 1
+            semaphore.signal()
+        }
+        semaphore.wait()
+        Darwin.exit(exitBox.code)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -109,12 +144,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func processPreviewKeyboardEvent(_ event: NSEvent) -> NSEvent? {
         let isPlainShortcut = PreviewKeyboardEventRouter.isPlainShortcutEvent(event)
+        let hasActiveHandler = PreviewKeyboardEventRouter.hasActiveHandler
 
         if event.type == .keyUp {
+            let wasTrackingKey = pressedPreviewKeyCodes.contains(event.keyCode)
             pressedPreviewKeyCodes.remove(event.keyCode)
+
+            guard hasActiveHandler || wasTrackingKey else { return event }
+
             if PreviewKeyboardEventRouter.isShuttleKeyCode(event.keyCode) {
                 PreviewKeyboardEventRouter.post(.stopShuttle)
-                if isPlainShortcut {
+                if isPlainShortcut || wasTrackingKey {
                     return nil
                 }
             }
@@ -125,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         guard event.type == .keyDown else { return event }
+        guard hasActiveHandler else { return event }
         guard !PreviewKeyboardEventRouter.isEditableTextResponder(NSApp.keyWindow?.firstResponder) else {
             return event
         }

@@ -91,6 +91,52 @@ nonisolated private final class ChromeCookieFileCache: @unchecked Sendable {
     }
 }
 
+private actor RemoteImportDownloadGate {
+    private var activeID: UUID?
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func acquire(_ id: UUID) async {
+        if activeID == nil {
+            activeID = id
+            return
+        }
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiters.append((id, continuation))
+            }
+        } onCancel: {
+            Task {
+                await remoteImportDownloadGate.cancel(id)
+            }
+        }
+    }
+
+    func release(_ id: UUID) {
+        guard activeID == id else {
+            cancel(id)
+            return
+        }
+
+        if waiters.isEmpty {
+            activeID = nil
+            return
+        }
+
+        let next = waiters.removeFirst()
+        activeID = next.id
+        next.continuation.resume()
+    }
+
+    func cancel(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume()
+    }
+}
+
+nonisolated private let remoteImportDownloadGate = RemoteImportDownloadGate()
+
 extension LibraryStore {
     nonisolated private static let chromeCookieFileCache = ChromeCookieFileCache(timeToLive: 10 * 60)
 
@@ -340,7 +386,34 @@ extension LibraryStore {
         }
     }
 
-    func importLatestInstagramSavedFromChrome(limit: Int = 50) async throws -> InstagramSavedImportResult {
+    func importRemoteVideosSerially(from rawText: String) async {
+        let inputs = Self.remoteImportURLs(from: rawText)
+        guard !inputs.isEmpty else {
+            remoteImportJobs.append(RemoteImportJob(
+                sourceURL: Self.placeholderRemoteImportURL,
+                platform: "未知平台",
+                status: .failed("请输入至少一个有效链接")
+            ))
+            return
+        }
+
+        let batchID = inputs.count > 1 ? UUID() : nil
+        let batchTitle = batchID.map { _ in "逐个导入" }
+        for (index, rawURL) in inputs.enumerated() {
+            guard !Task.isCancelled else { return }
+            guard let jobID = enqueueRemoteImport(
+                from: rawURL,
+                selectOnCompletion: false,
+                batchID: batchID,
+                batchTitle: batchTitle,
+                batchTotalCount: inputs.count,
+                batchIndex: index + 1
+            ) else { continue }
+            await remoteImportTasks[jobID]?.value
+        }
+    }
+
+    func latestInstagramSavedImportCandidatesFromChrome(limit: Int = 50) async throws -> InstagramSavedImportResult {
         guard libraryURL != nil else {
             throw InstagramSavedImportError.noLibrary
         }
@@ -368,6 +441,20 @@ extension LibraryStore {
             stoppedAtKnownBaseline: scan.stoppedAtKnownBaseline
         )
 
+        return InstagramSavedImportResult(
+            foundCount: discoveredLinks.count,
+            skippedCount: discoveredLinks.count - linksToImport.count,
+            queuedCount: linksToImport.count,
+            queuedLinks: linksToImport,
+            scannedPageCount: scan.pageCount,
+            stoppedAtKnownBaseline: scan.stoppedAtKnownBaseline
+        )
+    }
+
+    func importLatestInstagramSavedFromChrome(limit: Int = 50) async throws -> InstagramSavedImportResult {
+        startExternalServiceSelfCheckPreflightIfNeeded()
+        let result = try await latestInstagramSavedImportCandidatesFromChrome(limit: limit)
+        let linksToImport = result.queuedLinks
         let batchID = linksToImport.count > 1 ? UUID() : nil
         for (index, link) in linksToImport.enumerated() {
             enqueueRemoteImport(
@@ -379,18 +466,10 @@ extension LibraryStore {
                 batchIndex: index + 1
             )
         }
-
-        return InstagramSavedImportResult(
-            foundCount: discoveredLinks.count,
-            skippedCount: discoveredLinks.count - linksToImport.count,
-            queuedCount: linksToImport.count,
-            queuedLinks: linksToImport,
-            scannedPageCount: scan.pageCount,
-            stoppedAtKnownBaseline: scan.stoppedAtKnownBaseline
-        )
+        return result
     }
 
-    func importLatestXiaohongshuSavedVideosFromChrome(limit: Int = 10) async throws -> InstagramSavedImportResult {
+    func latestXiaohongshuSavedVideoImportCandidatesFromChrome(limit: Int = 10) async throws -> InstagramSavedImportResult {
         guard libraryURL != nil else {
             throw InstagramSavedImportError.noLibrary
         }
@@ -398,8 +477,35 @@ extension LibraryStore {
 
         let discoveredLinks = try await Self.fetchLatestXiaohongshuSavedVideoLinksFromChrome(limit: limit)
         let alreadyQueuedOrImported = queuedOrImportedXiaohongshuSourceURLs()
-        let linksToImport = discoveredLinks.filter { !alreadyQueuedOrImported.contains($0) }
+        let knownNoteIDs = queuedOrImportedXiaohongshuNoteIDs()
+            .union(xiaohongshuSavedBaselineKnownNoteIDs())
+        let linksToImport = discoveredLinks.filter { link in
+            guard !alreadyQueuedOrImported.contains(link) else { return false }
+            guard
+                let url = URL(string: link),
+                let noteID = Self.xiaohongshuNoteID(from: url)
+            else { return true }
+            return !knownNoteIDs.contains(noteID)
+        }
+        let skippedLinks = discoveredLinks.filter { !linksToImport.contains($0) }
+        recordXiaohongshuSavedSyncSnapshot(
+            discoveredLinks: discoveredLinks,
+            skippedLinks: skippedLinks,
+            queuedLinks: linksToImport
+        )
 
+        return InstagramSavedImportResult(
+            foundCount: discoveredLinks.count,
+            skippedCount: discoveredLinks.count - linksToImport.count,
+            queuedCount: linksToImport.count,
+            queuedLinks: linksToImport
+        )
+    }
+
+    func importLatestXiaohongshuSavedVideosFromChrome(limit: Int = 10) async throws -> InstagramSavedImportResult {
+        startExternalServiceSelfCheckPreflightIfNeeded()
+        let result = try await latestXiaohongshuSavedVideoImportCandidatesFromChrome(limit: limit)
+        let linksToImport = result.queuedLinks
         let batchID = linksToImport.count > 1 ? UUID() : nil
         for (index, link) in linksToImport.enumerated() {
             enqueueRemoteImport(
@@ -411,13 +517,7 @@ extension LibraryStore {
                 batchIndex: index + 1
             )
         }
-
-        return InstagramSavedImportResult(
-            foundCount: discoveredLinks.count,
-            skippedCount: discoveredLinks.count - linksToImport.count,
-            queuedCount: linksToImport.count,
-            queuedLinks: linksToImport
-        )
+        return result
     }
 
     func queuedOrImportedInstagramSourceURLs() -> Set<String> {
@@ -462,6 +562,10 @@ extension LibraryStore {
         libraryURL?.appendingPathComponent(".lapianbao_ig_saved_baseline.json")
     }
 
+    func xiaohongshuSavedBaselineURL() -> URL? {
+        libraryURL?.appendingPathComponent(".lapianbao_xhs_saved_baseline.json")
+    }
+
     func instagramSavedBaselineKnownSourceKeys() -> Set<String> {
         guard
             let url = instagramSavedBaselineURL(),
@@ -487,6 +591,31 @@ extension LibraryStore {
         return keys
     }
 
+    func xiaohongshuSavedBaselineKnownNoteIDs() -> Set<String> {
+        guard
+            let url = xiaohongshuSavedBaselineURL(),
+            let data = try? Data(contentsOf: url),
+            let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let results = root["results"] as? [String: Any]
+        else { return [] }
+
+        let knownStatuses = Set(["already_recorded", "downloaded", "duplicate"])
+        var noteIDs = Set<String>()
+        for (rawKey, rawValue) in results {
+            guard let entry = rawValue as? [String: Any] else { continue }
+            let status = entry["status"] as? String
+            guard status.map(knownStatuses.contains) == true else { continue }
+            if let noteID = Self.xiaohongshuNoteID(fromRawURLString: rawKey) {
+                noteIDs.insert(noteID)
+            }
+            if let sourceURL = entry["sourceURL"] as? String,
+               let noteID = Self.xiaohongshuNoteID(fromRawURLString: sourceURL) {
+                noteIDs.insert(noteID)
+            }
+        }
+        return noteIDs
+    }
+
     func recordInstagramSavedSyncSnapshot(
         discoveredLinks: [String],
         skippedLinks: [String],
@@ -507,7 +636,7 @@ extension LibraryStore {
             entry["sourceURL"] = link
             entry["updatedAt"] = now
             if queuedSet.contains(link) {
-                entry["status"] = "queued"
+                entry["status"] = "pending"
             } else if skippedSet.contains(link) {
                 let status = entry["status"] as? String
                 if status != "downloaded" && status != "duplicate" {
@@ -525,6 +654,69 @@ extension LibraryStore {
         root["stoppedAtKnownBaseline"] = stoppedAtKnownBaseline
         root["results"] = results
         Self.writeJSONObject(root, to: url)
+    }
+
+    func recordXiaohongshuSavedSyncSnapshot(
+        discoveredLinks: [String],
+        skippedLinks: [String],
+        queuedLinks: [String]
+    ) {
+        guard let url = xiaohongshuSavedBaselineURL() else { return }
+
+        var root = Self.readJSONObject(at: url)
+        var results = root["results"] as? [String: Any] ?? [:]
+        let now = Self.iso8601String(Date())
+        let queuedSet = Set(queuedLinks)
+        let skippedSet = Set(skippedLinks)
+
+        for link in discoveredLinks {
+            let key = Self.normalizedXiaohongshuNoteURL(link) ?? link
+            var entry = results[key] as? [String: Any] ?? [:]
+            entry["sourceURL"] = key
+            entry["updatedAt"] = now
+            if let noteID = Self.xiaohongshuNoteID(fromRawURLString: key) {
+                entry["noteID"] = noteID
+            }
+            if queuedSet.contains(link) {
+                entry["status"] = "pending"
+            } else if skippedSet.contains(link) {
+                let status = entry["status"] as? String
+                if status != "downloaded" && status != "duplicate" {
+                    entry["status"] = "already_recorded"
+                }
+            }
+            results[key] = entry
+        }
+
+        root["version"] = 1
+        root["updatedAt"] = now
+        root["lastSeenLinks"] = discoveredLinks
+        root["lastSeenCount"] = discoveredLinks.count
+        root["results"] = results
+        Self.writeJSONObject(root, to: url)
+    }
+
+    func recordSavedImportStatus(
+        sourceURL: URL,
+        status: String,
+        outputURL: URL? = nil,
+        errorMessage: String? = nil
+    ) {
+        if Self.isInstagramURL(sourceURL) {
+            recordInstagramSavedImportStatus(
+                sourceURL: sourceURL,
+                status: status,
+                outputURL: outputURL,
+                errorMessage: errorMessage
+            )
+        } else if Self.platformName(for: sourceURL) == "小红书" {
+            recordXiaohongshuSavedImportStatus(
+                sourceURL: sourceURL,
+                status: status,
+                outputURL: outputURL,
+                errorMessage: errorMessage
+            )
+        }
     }
 
     func recordInstagramSavedImportStatus(
@@ -560,6 +752,40 @@ extension LibraryStore {
         Self.writeJSONObject(root, to: url)
     }
 
+    func recordXiaohongshuSavedImportStatus(
+        sourceURL: URL,
+        status: String,
+        outputURL: URL? = nil,
+        errorMessage: String? = nil
+    ) {
+        guard let url = xiaohongshuSavedBaselineURL() else { return }
+
+        var root = Self.readJSONObject(at: url)
+        var results = root["results"] as? [String: Any] ?? [:]
+        let key = Self.normalizedXiaohongshuNoteURL(sourceURL.absoluteString) ?? sourceURL.absoluteString
+        let now = Self.iso8601String(Date())
+        var entry = results[key] as? [String: Any] ?? [:]
+        entry["sourceURL"] = key
+        entry["status"] = status
+        entry["updatedAt"] = now
+        if let noteID = Self.xiaohongshuNoteID(fromRawURLString: key) {
+            entry["noteID"] = noteID
+        }
+        if let outputURL, let libraryURL {
+            entry["file"] = Self.libraryRelativePath(for: outputURL, base: libraryURL)
+        }
+        if let errorMessage {
+            entry["error"] = errorMessage
+        } else {
+            entry.removeValue(forKey: "error")
+        }
+        results[key] = entry
+        root["version"] = 1
+        root["updatedAt"] = now
+        root["results"] = results
+        Self.writeJSONObject(root, to: url)
+    }
+
     func queuedOrImportedXiaohongshuSourceURLs() -> Set<String> {
         var urls = Set<String>()
 
@@ -579,6 +805,26 @@ extension LibraryStore {
         return urls
     }
 
+    func queuedOrImportedXiaohongshuNoteIDs() -> Set<String> {
+        var noteIDs = Set<String>()
+
+        for info in sourceInfoByVideoPath.values {
+            if let sourceURL = info.sourceURL,
+               let noteID = Self.xiaohongshuNoteID(fromRawURLString: sourceURL) {
+                noteIDs.insert(noteID)
+            }
+        }
+
+        for job in remoteImportJobs where Self.remoteImportJobCountsAsQueuedOrImported(job.status) {
+            if let noteID = Self.xiaohongshuNoteID(fromRawURLString: job.sourceURL.absoluteString) {
+                noteIDs.insert(noteID)
+            }
+        }
+
+        return noteIDs
+    }
+
+    @discardableResult
     func enqueueRemoteImport(
         from rawURL: String,
         initialThumbnailData: Data? = nil,
@@ -587,7 +833,7 @@ extension LibraryStore {
         batchTitle: String? = nil,
         batchTotalCount: Int? = nil,
         batchIndex: Int? = nil
-    ) {
+    ) -> UUID? {
         let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sourceURL = URL(string: trimmed) else {
             remoteImportJobs.append(RemoteImportJob(
@@ -599,7 +845,7 @@ extension LibraryStore {
                 batchIndex: batchIndex,
                 status: .failed("请输入有效链接")
             ))
-            return
+            return nil
         }
 
         guard let platform = Self.platformName(for: sourceURL) else {
@@ -612,12 +858,13 @@ extension LibraryStore {
                 batchIndex: batchIndex,
                 status: .failed("暂不支持该平台，目前支持 Instagram、YouTube、小红书、Bilibili 和抖音")
             ))
-            return
+            return nil
         }
+        let importSourceURL = Self.instagramBundledImportURL(for: sourceURL) ?? sourceURL
 
         guard let libraryURL else {
             remoteImportJobs.append(RemoteImportJob(
-                sourceURL: sourceURL,
+                sourceURL: importSourceURL,
                 platform: platform,
                 batchID: batchID,
                 batchTitle: batchTitle,
@@ -625,26 +872,26 @@ extension LibraryStore {
                 batchIndex: batchIndex,
                 status: .failed("请先打开一个素材库文件夹")
             ))
-            return
+            return nil
         }
 
         let endpoint = instagramImportEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let job = RemoteImportJob(
-            sourceURL: sourceURL,
+            sourceURL: importSourceURL,
             platform: platform,
             batchID: batchID,
             batchTitle: batchTitle,
             batchTotalCount: batchTotalCount,
             batchIndex: batchIndex,
-            status: .importing,
+            status: .idle,
             thumbnailData: initialThumbnailData
         )
         remoteImportJobs.append(job)
-        recordInstagramSavedImportStatus(sourceURL: sourceURL, status: "queued")
+        recordSavedImportStatus(sourceURL: importSourceURL, status: "queued")
         let jobID = job.id
 
         if initialThumbnailData == nil {
-            loadRemoteImportThumbnail(for: jobID, sourceURL: sourceURL)
+            loadRemoteImportThumbnail(for: jobID, sourceURL: importSourceURL)
         }
 
         // 进度回调：yt-dlp 每行输出一次，跳回主线程更新 UI
@@ -689,18 +936,31 @@ extension LibraryStore {
         }
 
         let task = Task { [weak self] in
+            var didAcquireDownloadSlot = false
             defer {
+                if didAcquireDownloadSlot {
+                    Task {
+                        await remoteImportDownloadGate.release(jobID)
+                    }
+                }
                 Task { @MainActor [weak self] in
                     self?.remoteImportTasks[jobID] = nil
                     self?.remoteImportProcesses[jobID] = nil
                 }
             }
             do {
+                await remoteImportDownloadGate.acquire(jobID)
+                didAcquireDownloadSlot = true
+                guard !Task.isCancelled else { return }
+                self?.updateRemoteImportJob(id: jobID) { job in
+                    guard case .idle = job.status else { return }
+                    job.status = .importing
+                }
                 await MainActor.run { [weak self] in
                     self?.startExternalServiceSelfCheckPreflightIfNeeded()
                 }
                 let downloadedVideo = try await Self.downloadVideo(
-                    from: sourceURL,
+                    from: importSourceURL,
                     into: libraryURL,
                     platform: platform,
                     endpoint: endpoint,
@@ -721,13 +981,13 @@ extension LibraryStore {
                 if let importedVideo = self?.integrateDownloadedVideo(outputURL, into: libraryURL) {
                     self?.recordImportedVideoSource(
                         videoURL: outputURL,
-                        sourceURL: sourceURL,
+                        sourceURL: importSourceURL,
                         platform: platform,
                         authorName: downloadedVideo.authorName,
                         sourceTitle: downloadedVideo.sourceTitle
                     )
-                    self?.recordInstagramSavedImportStatus(
-                        sourceURL: sourceURL,
+                    self?.recordSavedImportStatus(
+                        sourceURL: importSourceURL,
                         status: "downloaded",
                         outputURL: outputURL
                     )
@@ -745,14 +1005,15 @@ extension LibraryStore {
                     job.downloadProgress = nil
                     job.downloadSpeed = nil
                 }
-                self?.recordInstagramSavedImportStatus(
-                    sourceURL: sourceURL,
+                self?.recordSavedImportStatus(
+                    sourceURL: importSourceURL,
                     status: "failed",
                     errorMessage: error.localizedDescription
                 )
             }
         }
         remoteImportTasks[jobID] = task
+        return jobID
     }
 
     func updateRemoteImportJob(id: UUID, mutate: (inout RemoteImportJob) -> Void) {
@@ -889,13 +1150,7 @@ extension LibraryStore {
               let content = instagramContentParts(from: url)
         else { return nil }
 
-        let baseURLString = "https://www.instagram.com/\(content.type)/\(content.shortcode)/"
-        if content.type == "p",
-           let itemIndex = instagramCarouselItemIndex(from: url),
-           itemIndex > 1 {
-            return "\(baseURLString)?img_index=\(itemIndex)"
-        }
-        return baseURLString
+        return "https://www.instagram.com/\(content.type)/\(content.shortcode)/"
     }
 
     nonisolated static func instagramContentKey(_ rawValue: String) -> String? {
@@ -904,8 +1159,7 @@ extension LibraryStore {
               let content = instagramContentParts(from: url)
         else { return nil }
 
-        let itemIndex = instagramCarouselItemIndex(from: url) ?? 1
-        return "\(content.shortcode)#\(max(1, itemIndex))"
+        return "\(content.type):\(content.shortcode)"
     }
 
     nonisolated static func instagramContentParts(from url: URL) -> (type: String, shortcode: String)? {
@@ -931,6 +1185,13 @@ extension LibraryStore {
     nonisolated static func instagramBaseContentURL(from url: URL) -> URL? {
         guard let content = instagramContentParts(from: url) else { return nil }
         return URL(string: "https://www.instagram.com/\(content.type)/\(content.shortcode)/")
+    }
+
+    nonisolated static func instagramBundledImportURL(for url: URL) -> URL? {
+        guard let content = instagramContentParts(from: url),
+              content.type == "p"
+        else { return nil }
+        return instagramBaseContentURL(from: url)
     }
 
     nonisolated static func instagramCarouselItemURLString(baseURL: URL, itemIndex: Int) -> String {
@@ -993,9 +1254,7 @@ extension LibraryStore {
         components.scheme = "https"
         components.host = "www.xiaohongshu.com"
         components.path = "/explore/\(noteID)"
-        let allowedQueryNames = Set(["xsec_token", "xsec_source"])
-        components.queryItems = components.queryItems?
-            .filter { allowedQueryNames.contains($0.name) }
+        components.queryItems = nil
         return components.url?.absoluteString ?? "https://www.xiaohongshu.com/explore/\(noteID)"
     }
 
@@ -1018,6 +1277,13 @@ extension LibraryStore {
               noteID != "null"
         else { return nil }
         return noteID
+    }
+
+    nonisolated static func xiaohongshuNoteID(fromRawURLString rawValue: String) -> String? {
+        guard let normalized = normalizedXiaohongshuNoteURL(rawValue),
+              let url = URL(string: normalized)
+        else { return nil }
+        return xiaohongshuNoteID(from: url)
     }
 
     nonisolated static func remoteImportJobCountsAsQueuedOrImported(_ status: RemoteImportJob.Status) -> Bool {
@@ -1282,12 +1548,9 @@ extension LibraryStore {
         var links: [String] = []
 
         if let carouselMedia = media.carouselMedia, !carouselMedia.isEmpty {
-            for (offset, item) in carouselMedia.enumerated() where item.isLikelyVideo {
-                guard let parentCode = media.code ?? item.code else { continue }
-                let baseURL = URL(string: "https://www.instagram.com/p/\(parentCode)/")
-                if let baseURL {
-                    links.append(instagramCarouselItemURLString(baseURL: baseURL, itemIndex: offset + 1))
-                }
+            if carouselMedia.contains(where: \.isLikelyVideo),
+               let parentCode = media.code ?? carouselMedia.first(where: \.isLikelyVideo)?.code {
+                links.append("https://www.instagram.com/p/\(parentCode)/")
             }
         }
 
@@ -1489,7 +1752,7 @@ extension LibraryStore {
                let content = instagramContentParts(from: url),
                content.type == "p",
                let videoLinks = instagramPostVideoItemLinks(executableURL: ytdlp, sourceURL: url) {
-                replacementLinks = videoLinks
+                replacementLinks = videoLinks.isEmpty ? [] : [instagramBaseContentURL(from: url)?.absoluteString ?? normalizedLink]
             } else {
                 replacementLinks = [normalizedLink]
             }
@@ -1520,7 +1783,10 @@ extension LibraryStore {
         }
 
         guard let info else { return nil }
+        return instagramPostVideoItemLinks(from: info, baseURL: baseURL)
+    }
 
+    nonisolated static func instagramPostVideoItemLinks(from info: YTDLPVideoInfo, baseURL: URL) -> [String] {
         if let entries = info.entries,
            !entries.isEmpty {
             return entries.enumerated().compactMap { offset, entry -> String? in

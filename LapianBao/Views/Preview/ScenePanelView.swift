@@ -38,6 +38,7 @@ struct ScenePanelView: View, Equatable {
     let isHydratingSceneThumbnails: Bool
     let sampledFrames: [SampledFrame]
     var activeItemID: String?
+    let openStoryboardBoard: () -> Void
     @EnvironmentObject private var libraryStore: LibraryStore
     @AppStorage("sceneGridSize") private var sceneGridSize = 1
     @State private var selectedItemID: String?
@@ -96,7 +97,7 @@ struct ScenePanelView: View, Equatable {
                         .scrollIndicators(.hidden)
                         .background(HiddenScrollIndicators())
 
-                        sceneGridSizeControl
+                        sceneGridOverlayControls
                             .padding(.trailing, 8)
                             .padding(.bottom, 8)
                     }
@@ -116,6 +117,39 @@ struct ScenePanelView: View, Equatable {
         .onChange(of: video.url.path) { _, _ in
             startSceneRecognitionIfNeeded()
         }
+    }
+
+    private var sceneGridOverlayControls: some View {
+        HStack(spacing: 8) {
+            storyboardBoardButton
+            sceneGridSizeControl
+        }
+    }
+
+    private var storyboardBoardButton: some View {
+        Button(action: openStoryboardBoard) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.stack")
+                    .font(.system(size: 11, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+
+                Text("分镜模式")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.white.opacity(0.86))
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(.black.opacity(0.56))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(.white.opacity(0.16), lineWidth: 0.7)
+            }
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .help("在画面页查看此视频分镜")
     }
 
     private var sceneGridSizeControl: some View {

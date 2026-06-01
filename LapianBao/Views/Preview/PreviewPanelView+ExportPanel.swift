@@ -30,7 +30,7 @@ extension PreviewPanelView {
             videoTagStrip(for: video)
         }
         .padding(.top, Design.previewHeaderTopInset)
-        .padding(.bottom, Design.previewHeaderTitleTagGap)
+        .padding(.bottom, Design.previewHeaderBottomInset)
         .frame(maxWidth: .infinity, minHeight: Design.previewHeaderHeight, maxHeight: Design.previewHeaderHeight, alignment: .topLeading)
         .clipped()
     }
@@ -503,7 +503,7 @@ extension PreviewPanelView {
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: isPlaying ? Color.orange.opacity(0.24) : .white.opacity(0.07)), lineWidth: 0.8 + 0.4 * highlight)
+                .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: isPlaying ? .white.opacity(0.20) : .white.opacity(0.07)), lineWidth: 0.8 + 0.4 * highlight)
         }
         .onAppear {
             libraryStore.loadAudioClipWaveformIfNeeded(clip)
@@ -515,7 +515,7 @@ extension PreviewPanelView {
         let highlight = min(1, max(0, highlightIntensity))
         let progress = normalizedProgressFraction(job.progress)
         let isFailed = job.isFailed
-        let tint = isFailed ? Design.currentFrameAccent : Design.annotationAccent
+        let tint = isFailed ? Color.red.opacity(0.86) : Design.annotationAccent
 
         return HStack(alignment: .center, spacing: 10) {
             Image(systemName: isFailed ? "exclamationmark.triangle.fill" : "doc.text")

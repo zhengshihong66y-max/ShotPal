@@ -456,6 +456,17 @@ extension LibraryStore {
     }
 
     func startExternalServiceSelfCheck(force: Bool = true) {
+        startExternalServiceSelfCheck(force: force, repairMode: .afterFailure)
+    }
+
+    func startExternalServiceRepair() {
+        startExternalServiceSelfCheck(force: true, repairMode: .always)
+    }
+
+    private func startExternalServiceSelfCheck(
+        force: Bool,
+        repairMode: LibraryStore.DownloaderSelfCheckRepairMode
+    ) {
         guard downloaderSelfCheckTask == nil else { return }
         guard force || !Self.isDownloaderSelfCheckFresh(downloaderSelfCheckReport) else { return }
 
@@ -463,11 +474,11 @@ extension LibraryStore {
         updateDownloaderSelfCheckReport(DownloaderSelfCheckReport(
             status: .running,
             checkedAt: startedAt,
-            message: "正在自检外部服务"
+            message: repairMode == .always ? "正在更新并修复外部服务" : "正在自检外部服务"
         ))
 
         downloaderSelfCheckTask = Task { [weak self] in
-            let report = await Self.runDownloaderSelfCheck(startedAt: startedAt)
+            let report = await Self.runDownloaderSelfCheck(startedAt: startedAt, repairMode: repairMode)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.updateDownloaderSelfCheckReport(report)

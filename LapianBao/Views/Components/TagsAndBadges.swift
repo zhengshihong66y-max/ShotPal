@@ -74,6 +74,142 @@ struct VideoTagOverflowChip: View {
     }
 }
 
+struct QuickFilterChoiceChip: View {
+    let title: String
+    var systemImage: String? = nil
+    var tagColorKey: String? = nil
+    var isSelected: Bool
+    var tint: Color = Design.annotationAccent
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 12)
+                } else if let tagColorKey {
+                    VideoTagColorDot(tag: tagColorKey)
+                }
+
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 164, alignment: .leading)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .heavy))
+                }
+            }
+            .foregroundStyle(isSelected ? .white.opacity(0.94) : .secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(isSelected ? tint.opacity(0.22) : .white.opacity(0.055))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(isSelected ? tint.opacity(0.52) : .white.opacity(0.10), lineWidth: 0.8)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct WrappingFilterChipGroup<Content: View>: View {
+    var spacing: CGFloat = 6
+    var rowSpacing: CGFloat = 7
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        WrappingFilterChipLayout(spacing: spacing, rowSpacing: rowSpacing) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct WrappingFilterChipLayout: Layout {
+    let spacing: CGFloat
+    let rowSpacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        layout(for: subviews, maxWidth: maxWidth(for: proposal, subviews: subviews)).size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let result = layout(for: subviews, maxWidth: bounds.width)
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + result.positions[index].x,
+                    y: bounds.minY + result.positions[index].y
+                ),
+                proposal: ProposedViewSize(result.sizes[index])
+            )
+        }
+    }
+
+    private func maxWidth(for proposal: ProposedViewSize, subviews: Subviews) -> CGFloat {
+        if let width = proposal.width {
+            return max(0, width)
+        }
+
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return sizes.map(\.width).reduce(0, +) + CGFloat(max(0, sizes.count - 1)) * spacing
+    }
+
+    private func layout(
+        for subviews: Subviews,
+        maxWidth: CGFloat
+    ) -> (positions: [CGPoint], sizes: [CGSize], size: CGSize) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        var positions: [CGPoint] = []
+        positions.reserveCapacity(sizes.count)
+
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for size in sizes {
+            if x > 0, x + spacing + size.width > maxWidth {
+                y += rowHeight + rowSpacing
+                x = 0
+                rowHeight = 0
+            }
+
+            if x > 0 {
+                x += spacing
+            }
+
+            positions.append(CGPoint(x: x, y: y))
+            usedWidth = max(usedWidth, x + size.width)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width
+        }
+
+        return (
+            positions: positions,
+            sizes: sizes,
+            size: CGSize(width: usedWidth, height: y + rowHeight)
+        )
+    }
+}
+
 struct TagSuggestionGrid: View {
     let currentTags: [String]
     let suggestedTags: [String]
@@ -126,7 +262,7 @@ struct InlineTagEditorButton: View {
         } label: {
             Image(systemName: tags.isEmpty ? "tag" : "tag.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tags.isEmpty ? .secondary : Design.captureFrameAccent)
+                .foregroundStyle(tags.isEmpty ? .secondary : Design.neutralStrongAccent)
                 .frame(width: buttonSize, height: buttonSize)
                 .overlay(alignment: .topTrailing) {
                     if !tags.isEmpty {
@@ -135,7 +271,7 @@ struct InlineTagEditorButton: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 3)
                             .padding(.vertical, 1)
-                            .background(Color.orange)
+                            .background(Design.neutralBadgeFill)
                             .clipShape(Capsule())
                             .offset(x: 4, y: -4)
                     }

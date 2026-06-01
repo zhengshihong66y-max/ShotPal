@@ -33,6 +33,22 @@ extension LibraryStore {
 
         var ytdlpFailure: Error?
 
+        // Instagram 图文轮播里可能有多段视频：先按轮播顺序打包成一个视频再入库。
+        if rawURL == nil, platform == "Instagram",
+           let ytdlp = localYTDLPURL(),
+           !Task.isCancelled,
+           let result = try await downloadInstagramCarouselBundleIfNeeded(
+               executableURL: ytdlp,
+               sourceURL: sourceURL,
+               destinationDirectory: destinationDirectory,
+               progressCallback: progressCallback,
+               processCallback: processCallback
+           ) {
+            rawURL = result.url
+            authorName = result.authorName
+            sourceTitle = result.sourceTitle
+        }
+
         // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
         if rawURL == nil, let ytdlp = localYTDLPURL(),
            !Task.isCancelled {

@@ -19,6 +19,7 @@ struct PreviewPanelView: View {
     @EnvironmentObject var libraryStore: LibraryStore
     @StateObject var controller = PreviewController()
     let openWorkspace: (AppWorkspace) -> Void
+    let openStoryboardBoard: (VideoItem) -> Void
     @Namespace var tabNamespace
     static let contentTimelineDetailBlockGap: CGFloat = 8
     static let contentTimelineDetailBlockPadding: CGFloat = 8
@@ -46,6 +47,8 @@ struct PreviewPanelView: View {
     @State var visibleTimelineDetailTab: PreviewTab?
     @State var timelineZoom: Double = 1
     @State var timelineOffset: Double = 0
+    @State var timelineAutoScrollLastUpdate = Date.distantPast
+    @State var timelineManualScrollProtectionUntil = Date.distantPast
     @State var sceneTimelineAutoFocusedKey: String?
     @State var isVideoTagPopoverPresented = false
     @State var isVideoTagAddHovered = false

@@ -112,8 +112,12 @@ extension PreviewPanelView {
                 Button {
                     exportCurrentAudioSelection(for: video)
                 } label: {
-                    Label("导出声音", systemImage: "square.and.arrow.up")
+                    floatingExportButtonIcon(
+                        size: Design.timelineLaneButtonSize,
+                        iconSize: 11
+                    )
                 }
+                .buttonStyle(.plain)
                 .disabled(audioInPoint == nil || audioOutPoint == nil || libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
                 .help("导出选区音频")
 
@@ -155,7 +159,8 @@ extension PreviewPanelView {
                 sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
                 isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
                 sampledFrames: libraryStore.sampledFrames(for: video),
-                activeItemID: activeSceneItemID(for: video)
+                activeItemID: activeSceneItemID(for: video),
+                openStoryboardBoard: { openStoryboardBoard(video) }
             )
             .equatable()
         case .audio:
@@ -203,7 +208,7 @@ extension PreviewPanelView {
                 GenerationProgressRow(
                     message: "正在导出声音并生成波形",
                     progress: progress,
-                    tint: .orange,
+                    tint: Design.annotationAccent,
                     systemImage: "waveform.badge.plus",
                     compact: true
                 )
@@ -262,9 +267,7 @@ extension PreviewPanelView {
             Button {
                 exportCurrentAudioSelection(for: video)
             } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 26, height: 26)
+                floatingExportButtonIcon(size: 26, iconSize: 12)
             }
             .buttonStyle(.plain)
             .disabled(!canExport || isExporting)
@@ -344,7 +347,7 @@ extension PreviewPanelView {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isPlaying ? Color.orange.opacity(0.24) : .white.opacity(0.07), lineWidth: 0.7)
+                .stroke(isPlaying ? .white.opacity(0.20) : .white.opacity(0.07), lineWidth: 0.7)
         }
         .onAppear {
             libraryStore.loadAudioClipWaveformIfNeeded(clip)
@@ -492,7 +495,7 @@ extension PreviewPanelView {
                                 HStack(alignment: .top, spacing: 8) {
                                     Text(formatDuration(segment.start))
                                         .font(.caption2.monospacedDigit().weight(.semibold))
-                                        .foregroundStyle(isActive ? .orange : .orange.opacity(0.55))
+                                        .foregroundStyle(isActive ? .primary : .secondary)
                                         .frame(width: 52, alignment: .leading)
                                     Text(segment.text)
                                         .font(.caption)

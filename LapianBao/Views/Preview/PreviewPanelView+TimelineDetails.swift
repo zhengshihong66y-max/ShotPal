@@ -27,7 +27,8 @@ extension PreviewPanelView {
                 sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
                 isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
                 sampledFrames: libraryStore.sampledFrames(for: video),
-                activeItemID: activeSceneItemID(for: video)
+                activeItemID: activeSceneItemID(for: video),
+                openStoryboardBoard: { openStoryboardBoard(video) }
             )
             .equatable()
         case .audio, .content:
@@ -72,7 +73,7 @@ extension PreviewPanelView {
         } else if case let .failed(message) = status {
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(.caption)
-                .foregroundStyle(.yellow.opacity(0.82))
+                .foregroundStyle(Color.red.opacity(0.86))
                 .multilineTextAlignment(.center)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -101,7 +102,7 @@ extension PreviewPanelView {
                     if case let .failed(message) = status {
                         Label(message, systemImage: "exclamationmark.triangle")
                             .font(.caption)
-                            .foregroundStyle(.yellow.opacity(0.82))
+                            .foregroundStyle(Color.red.opacity(0.86))
                             .multilineTextAlignment(.center)
                     } else {
                         AppEmptyState(
@@ -141,7 +142,7 @@ extension PreviewPanelView {
                 VStack(spacing: 10) {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.yellow.opacity(0.82))
+                        .foregroundStyle(Color.red.opacity(0.86))
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -475,7 +476,7 @@ extension PreviewPanelView {
             duration: controller.duration,
             annotationItems: normalizedAnnotations(for: video),
             onAnnotationSelect: { openAnnotation($0, sourceTab: .content) },
-            playheadTint: .white.opacity(0.92),
+            playheadTint: Design.timelinePlayheadAccent,
             stepBack: { controller.stepFrame(by: -1) },
             stepForward: { controller.stepFrame(by: 1) },
             onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
