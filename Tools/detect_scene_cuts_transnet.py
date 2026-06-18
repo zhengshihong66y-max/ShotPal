@@ -3,129 +3,186 @@ import argparse
 import json
 import sys
 
-import ffmpeg
 import numpy as np
+import torch
 from transnetv2_pytorch import TransNetV2
 
 
-def iter_lowres_frame_chunks(video_path: str, width: int = 48, height: int = 27, chunk_size: int = 512):
-    frame_size = width * height * 3
+PROGRESS_PREFIX = "LAPIANBAO_PROGRESS\t"
+FRAME_WIDTH = 48
+FRAME_HEIGHT = 27
+FRAME_CHANNELS = 3
+FRAME_SIZE = FRAME_WIDTH * FRAME_HEIGHT * FRAME_CHANNELS
+
+
+def emit_progress(progress: float) -> None:
+    progress = min(1.0, max(0.0, float(progress)))
+    print(f"{PROGRESS_PREFIX}{progress:.6f}", file=sys.stderr, flush=True)
+
+
+def parse_frame_rate(raw_value: str | None) -> float:
+    if not raw_value:
+        return 0.0
+    try:
+        if "/" in raw_value:
+            numerator, denominator = raw_value.split("/", 1)
+            denominator_value = float(denominator)
+            if denominator_value == 0:
+                return 0.0
+            return float(numerator) / denominator_value
+        return float(raw_value)
+    except ValueError:
+        return 0.0
+
+
+def probe_video(video_path: str) -> tuple[float, int]:
+    import ffmpeg
+
+    probe = ffmpeg.probe(video_path)
+    video_stream = next(
+        (stream for stream in probe.get("streams", []) if stream.get("codec_type") == "video"),
+        None,
+    )
+    if video_stream is None:
+        return 25.0, 0
+
+    fps = parse_frame_rate(video_stream.get("avg_frame_rate")) or parse_frame_rate(video_stream.get("r_frame_rate")) or 25.0
+    duration = 0.0
+    for value in [video_stream.get("duration"), probe.get("format", {}).get("duration")]:
+        try:
+            duration = float(value)
+            if duration > 0:
+                break
+        except (TypeError, ValueError):
+            continue
+
+    total_frames = 0
+    try:
+        total_frames = int(video_stream.get("nb_frames") or 0)
+    except (TypeError, ValueError):
+        total_frames = 0
+    if total_frames <= 0 and fps > 0 and duration > 0:
+        total_frames = int(round(fps * duration))
+
+    return fps, max(0, total_frames)
+
+
+def load_video_frames_with_progress(video_path: str, total_frames: int) -> np.ndarray:
+    import ffmpeg
+
     process = (
         ffmpeg
         .input(video_path)
-        .output("pipe:", format="rawvideo", pix_fmt="rgb24", s=f"{width}x{height}", threads=2)
-        .global_args("-nostdin", "-loglevel", "error")
+        .output("pipe:", format="rawvideo", pix_fmt="rgb24", s=f"{FRAME_WIDTH}x{FRAME_HEIGHT}")
+        .global_args("-v", "error")
         .run_async(pipe_stdout=True, pipe_stderr=True)
     )
 
-    try:
-        pending = b""
-        read_size = frame_size * max(1, chunk_size)
-        while True:
-            chunk = process.stdout.read(read_size)
-            if not chunk:
-                break
+    frames: list[np.ndarray] = []
+    buffer = bytearray()
+    read_frames = 0
+    chunk_size = FRAME_SIZE * 32
 
-            pending += chunk
-            frame_count = len(pending) // frame_size
-            if frame_count == 0:
-                continue
+    while True:
+        chunk = process.stdout.read(chunk_size)
+        if not chunk:
+            break
 
-            usable = frame_count * frame_size
-            yield np.frombuffer(pending[:usable], np.uint8).reshape((frame_count, height, width, 3))
-            pending = pending[usable:]
-    finally:
-        if process.stdout:
-            process.stdout.close()
-        stderr = process.stderr.read() if process.stderr else b""
-        returncode = process.wait()
-        if returncode != 0:
-            raise RuntimeError(stderr.decode("utf-8", errors="ignore"))
-
-
-def frame_fingerprints(frames: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    rgb = frames.astype(np.float32) / 255.0
-    luma = rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722
-
-    quantized = np.minimum((rgb * 4).astype(np.int16), 3)
-    bins = quantized[..., 0] * 16 + quantized[..., 1] * 4 + quantized[..., 2]
-    histograms = np.zeros((frames.shape[0], 64), dtype=np.float32)
-    for index, frame_bins in enumerate(bins):
-        histograms[index] = np.bincount(frame_bins.reshape(-1), minlength=64)
-    histograms /= max(1, frames.shape[1] * frames.shape[2])
-
-    edges = np.zeros_like(luma, dtype=np.float32)
-    edges[:, 1:-1, 1:-1] = np.minimum(
-        1.0,
-        np.abs(luma[:, 1:-1, 2:] - luma[:, 1:-1, :-2])
-        + np.abs(luma[:, 2:, 1:-1] - luma[:, :-2, 1:-1]),
-    )
-    contrast = np.mean(np.abs(luma - np.mean(luma, axis=(1, 2), keepdims=True)), axis=(1, 2))
-    return luma, histograms, edges, contrast
-
-
-def frame_change_scores(
-    luma: np.ndarray,
-    histograms: np.ndarray,
-    edges: np.ndarray,
-    contrast: np.ndarray,
-) -> np.ndarray:
-    if len(luma) < 2:
-        return np.empty(0, dtype=np.float32)
-
-    luma_diff = np.mean(np.abs(luma[1:] - luma[:-1]), axis=(1, 2))
-    histogram_diff = np.sum(np.abs(histograms[1:] - histograms[:-1]), axis=1) * 0.5
-    edge_diff = np.mean(np.abs(edges[1:] - edges[:-1]), axis=(1, 2))
-    contrast_diff = np.abs(contrast[1:] - contrast[:-1])
-    return luma_diff * 0.38 + histogram_diff * 0.32 + edge_diff * 0.22 + contrast_diff * 0.08
-
-
-def rescue_hard_cut_times(video_path: str, fps: float) -> list[dict]:
-    if fps <= 0:
-        return []
-
-    previous = None
-    scores = []
-    try:
-        for frames in iter_lowres_frame_chunks(video_path):
-            luma, histograms, edges, contrast = frame_fingerprints(frames)
-            if previous is not None:
-                previous_luma, previous_histogram, previous_edges, previous_contrast = previous
-                luma = np.concatenate([previous_luma[np.newaxis, ...], luma], axis=0)
-                histograms = np.concatenate([previous_histogram[np.newaxis, ...], histograms], axis=0)
-                edges = np.concatenate([previous_edges[np.newaxis, ...], edges], axis=0)
-                contrast = np.concatenate([np.asarray([previous_contrast], dtype=np.float32), contrast], axis=0)
-
-            scores.extend(frame_change_scores(luma, histograms, edges, contrast).tolist())
-            previous = (luma[-1].copy(), histograms[-1].copy(), edges[-1].copy(), float(contrast[-1]))
-    except Exception:
-        return []
-
-    if len(scores) < 2:
-        return []
-
-    scores = np.asarray(scores, dtype=np.float32)
-
-    median = float(np.median(scores))
-    mad = float(np.median(np.abs(scores - median)))
-    threshold = max(0.12, median + max(0.02, mad * 5.0))
-
-    peak_window = 2
-    candidates = []
-    for index, score in enumerate(scores):
-        lower = max(0, index - peak_window)
-        upper = min(len(scores) - 1, index + peak_window)
-        if score < threshold or score < np.max(scores[lower : upper + 1]):
+        buffer.extend(chunk)
+        usable_byte_count = (len(buffer) // FRAME_SIZE) * FRAME_SIZE
+        if usable_byte_count <= 0:
             continue
-        frame_number = index + 1
-        candidates.append({
-            "time": round(frame_number / fps, 3),
-            "frame": int(frame_number),
-            "score": float(score),
-            "source": "hard_cut_rescue",
-        })
 
-    return candidates
+        frame_bytes = bytes(buffer[:usable_byte_count])
+        del buffer[:usable_byte_count]
+
+        frame_chunk = np.frombuffer(frame_bytes, np.uint8).reshape([-1, FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS])
+        frames.append(np.array(frame_chunk, copy=True))
+        read_frames += frame_chunk.shape[0]
+
+        if total_frames > 0:
+            emit_progress(0.05 + min(1.0, read_frames / total_frames) * 0.40)
+
+    stderr = process.stderr.read() if process.stderr else b""
+    status = process.wait()
+    if status != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(message or f"ffmpeg exited with status {status}")
+
+    if not frames:
+        raise RuntimeError("No video frames extracted")
+
+    emit_progress(0.45)
+    return np.concatenate(frames, axis=0)
+
+
+def predict_frames_with_progress(model: TransNetV2, frames: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    assert len(frames.shape) == 4 and frames.shape[1:] == model._input_size, \
+        "Input shape must be [frames, height, width, 3]."
+
+    def input_iterator():
+        window_size = 100
+        step_size = 50
+        remainder = len(frames) % step_size
+        no_padded_frames_start = 25
+        no_padded_frames_end = 25 + step_size - (remainder if remainder != 0 else step_size)
+
+        start_frame = torch.unsqueeze(frames[0], 0)
+        end_frame = torch.unsqueeze(frames[-1], 0)
+        padded_inputs = torch.cat(
+            [start_frame] * no_padded_frames_start + [frames] + [end_frame] * no_padded_frames_end,
+            0,
+        )
+
+        ptr = 0
+        while ptr + window_size <= len(padded_inputs):
+            batch = padded_inputs[ptr:ptr + window_size]
+            ptr += step_size
+            yield batch[np.newaxis]
+
+    predictions = []
+
+    for batch_input in input_iterator():
+        with torch.no_grad():
+            single_frame_pred, all_frames_pred = model.predict_raw(batch_input)
+            start_idx = 25
+            end_idx = 75
+            predictions.append((
+                single_frame_pred[0, start_idx:end_idx, 0].cpu().clone(),
+                all_frames_pred[0, start_idx:end_idx, 0].cpu().clone(),
+            ))
+
+            processed_frames = min(len(predictions) * 50, len(frames))
+            emit_progress(0.45 + (processed_frames / max(1, len(frames))) * 0.37)
+
+    single_frame_pred = torch.cat([single_ for single_, _ in predictions], 0)
+    all_frames_pred = torch.cat([all_ for _, all_ in predictions], 0)
+
+    emit_progress(0.82)
+    return single_frame_pred[:len(frames)], all_frames_pred[:len(frames)]
+
+
+def analyze_video_with_progress(model: TransNetV2, video_path: str, threshold: float) -> dict:
+    fps, total_frames = probe_video(video_path)
+    emit_progress(0.04)
+
+    video_np = load_video_frames_with_progress(video_path, total_frames)
+    video_frames = torch.from_numpy(np.ascontiguousarray(video_np)).to(model.device)
+    single_frame_predictions, all_frame_predictions = predict_frames_with_progress(model, video_frames)
+
+    emit_progress(0.84)
+    single_frame_np = single_frame_predictions.cpu().detach().numpy()
+    scenes = model.predictions_to_scenes_with_data(single_frame_np, fps=fps, threshold=threshold)
+    emit_progress(0.86)
+
+    return {
+        "video_frames": video_frames,
+        "single_frame_predictions": single_frame_predictions,
+        "all_frame_predictions": all_frame_predictions,
+        "fps": fps,
+        "scenes": scenes,
+        "total_scenes": len(scenes),
+    }
 
 
 def filter_short_scenes(candidates: list[dict], fps: float) -> list[dict]:
@@ -179,8 +236,10 @@ def main() -> int:
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="cpu")
     args = parser.parse_args()
 
+    emit_progress(0.01)
     model = TransNetV2(device=args.device)
-    results = model.analyze_video(args.video_path, threshold=args.threshold, quiet=True)
+    emit_progress(0.03)
+    results = analyze_video_with_progress(model, args.video_path, args.threshold)
 
     scenes = results.get("scenes", [])
     candidates = []
@@ -196,20 +255,16 @@ def main() -> int:
         })
 
     fps = float(results.get("fps", 0.0))
-    rescue_candidates = []
-    if len(candidates) < 2:
-        rescue_candidates = rescue_hard_cut_times(args.video_path, fps)
-    merged_candidates = merge_cut_candidates(candidates + rescue_candidates, fps)
+    merged_candidates = merge_cut_candidates(candidates, fps)
     merged_candidates = filter_short_scenes(merged_candidates, fps)
 
     payload = {
-        "engine": "transnetv2+hard_cut_rescue",
+        "engine": "transnetv2",
         "threshold": args.threshold,
         "fps": fps,
         "scene_count": len(scenes),
         "cut_times": [round(candidate["time"], 3) for candidate in merged_candidates],
         "candidates": merged_candidates,
-        "rescue_count": len(rescue_candidates),
         "scenes": scenes,
     }
     json.dump(payload, sys.stdout, ensure_ascii=False)

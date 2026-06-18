@@ -43,6 +43,8 @@ enum PreviewShortcutAction: String, Identifiable {
         .shuttleForward,
         .stepBackward,
         .stepForward,
+        .previousSceneCut,
+        .nextSceneCut,
         .setAudioIn,
         .setAudioOut,
         .clearAudioSelection,
@@ -86,16 +88,16 @@ enum PreviewShortcutAction: String, Identifiable {
         }
     }
 
-    private var defaultsKey: String {
-        "previewShortcut.\(rawValue).keyCode"
-    }
-
     var keyCode: UInt16 {
-        defaultKeyCode
+        AppSettings.previewShortcutKeyCode(actionRawValue: rawValue) ?? defaultKeyCode
     }
 
     func setKeyCode(_ keyCode: UInt16) {
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        if keyCode == defaultKeyCode {
+            AppSettings.resetPreviewShortcutKeyCode(actionRawValue: rawValue)
+        } else {
+            AppSettings.setPreviewShortcutKeyCode(keyCode, actionRawValue: rawValue)
+        }
     }
 
     func command(isShuttling: Bool) -> PreviewKeyboardCommand {

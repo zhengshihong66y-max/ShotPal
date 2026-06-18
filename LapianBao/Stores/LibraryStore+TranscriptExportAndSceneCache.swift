@@ -108,6 +108,20 @@ extension LibraryStore {
         }
     }
 
+    @discardableResult
+    func deleteTranscriptExport(_ export: TranscriptExportItem) -> Bool {
+        guard trashLibraryFileIfPresent(URL(fileURLWithPath: export.filePath), context: "transcript export") else {
+            return false
+        }
+
+        transcriptExportJobs.removeValue(forKey: export.videoPath)
+        let originalCount = transcriptExports.count
+        transcriptExports.removeAll { $0.id == export.id || $0.filePath == export.filePath }
+        guard transcriptExports.count != originalCount else { return true }
+        saveProjectData()
+        return true
+    }
+
     nonisolated static func transcriptExportMarkdown(
         videoName: String,
         videoFileName: String,
@@ -221,14 +235,13 @@ extension LibraryStore {
     }
 
     func sceneCutCacheURL() -> URL? {
-        libraryURL?.appendingPathComponent(".lapianbao_scene_cuts.json")
+        libraryURL.map(ProjectRepository.sceneCutsURL)
     }
 
     func loadSceneCutCache() {
         guard
             let url = sceneCutCacheURL(),
-            let data = try? Data(contentsOf: url),
-            let cache = try? JSONDecoder().decode(SceneCutCacheFile.self, from: data)
+            let cache = ProjectRepository.readJSON(SceneCutCacheFile.self, from: url)
         else {
             sceneCutCache = [:]
             return
@@ -244,12 +257,9 @@ extension LibraryStore {
             detectorVersion: Self.sceneDetectorVersion,
             entries: sceneCutCache
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         do {
-            let data = try encoder.encode(cache)
-            try data.write(to: url, options: .atomic)
+            try ProjectRepository.writeJSON(cache, to: url, encoder: ProjectRepository.prettySortedEncoder)
         } catch {
             return
         }

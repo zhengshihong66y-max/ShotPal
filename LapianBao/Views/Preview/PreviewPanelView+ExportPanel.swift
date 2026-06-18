@@ -114,13 +114,7 @@ extension PreviewPanelView {
                     }
                     startMusicDetectionIfNeeded(for: libraryStore.selectedVideo, filter: filter)
                 } label: {
-                    Text(filter.rawValue)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(exportPanelFilter == filter ? .primary : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 24)
-                        .background(exportPanelFilter == filter ? Color.white.opacity(0.14) : Color.clear)
-                        .clipShape(Capsule())
+                    exportFilterButtonLabel(for: filter)
                 }
                 .buttonStyle(.plain)
             }
@@ -128,6 +122,40 @@ extension PreviewPanelView {
         .padding(3)
         .background(.white.opacity(0.055))
         .clipShape(Capsule())
+    }
+
+    func exportFilterButtonLabel(for filter: ExportPanelFilter) -> some View {
+        let isSelected = exportPanelFilter == filter
+        let runningProgress = exportFilterRunningProgress(for: filter)
+        let title: String = {
+            guard let runningProgress else { return filter.rawValue }
+            return runningProgress.percentText ?? "0%"
+        }()
+
+        return Text(title)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(isSelected ? .primary : .secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.76)
+            .frame(maxWidth: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity)
+        .frame(height: 24)
+        .background(isSelected ? Color.white.opacity(0.14) : Color.clear)
+        .clipShape(Capsule())
+        .contentShape(Capsule())
+    }
+
+    func exportFilterRunningProgress(for filter: ExportPanelFilter) -> (progress: Double, percentText: String?)? {
+        guard
+            filter == .music,
+            let video = libraryStore.selectedVideo,
+            case let .running(message) = libraryStore.musicDetectionStatusByVideoPath[video.url.path]
+        else { return nil }
+
+        guard let progress = activityProgressValue(from: message) else {
+            return (0.04, nil)
+        }
+        return (progress, progressPercentText(progress))
     }
 
     func startMusicDetectionIfNeeded(for video: VideoItem?, filter: ExportPanelFilter) {
@@ -172,7 +200,7 @@ extension PreviewPanelView {
                             ForEach(recentItems) { item in
                                 switch item {
                                 case .frame(let frame):
-                                    exportFrameRow(frame, showsSource: true, showsMetadata: !isOverlay, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
+                                    exportFrameRow(frame, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
                                         .transition(.move(edge: .bottom).combined(with: .opacity))
                                 case .audio(let clip):
@@ -196,7 +224,7 @@ extension PreviewPanelView {
                         } else {
                             ForEach(sortedFrames) { frame in
                                 let itemID = ExportPanelItem.frame(frame).id
-                                exportFrameRow(frame, showsMetadata: !isOverlay, highlightIntensity: exportPanelHighlightedItemID == itemID ? exportPanelHighlightIntensity : 0)
+                                exportFrameRow(frame, highlightIntensity: exportPanelHighlightedItemID == itemID ? exportPanelHighlightIntensity : 0)
                                     .id(itemID)
                                     .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
@@ -219,7 +247,7 @@ extension PreviewPanelView {
                 .padding(.trailing, 2)
                 .animation(.spring(response: 0.32, dampingFraction: 0.82), value: visibleItemIDs)
             }
-            .scrollIndicators(.hidden)
+            .fadingVerticalScrollIndicators()
             .onAppear {
                 syncExportPanelTracking(ids: visibleItemIDs, proxy: proxy, shouldTrackNewItems: false)
             }
@@ -301,8 +329,8 @@ extension PreviewPanelView {
             .padding(.horizontal, 2)
     }
 
-    func exportFrameRow(_ frame: SampledFrame, showsSource: Bool = false, showsMetadata: Bool = true, highlightIntensity: Double = 0) -> some View {
-        let kindText = exportFrameTitle(for: frame)
+    func exportFrameRow(_ frame: SampledFrame, showsMetadata: Bool = true, highlightIntensity: Double = 0) -> some View {
+        let title = exportFrameDisplayTitle(for: frame)
         let highlight = min(1, max(0, highlightIntensity))
 
         return HStack(spacing: 9) {
@@ -316,17 +344,21 @@ extension PreviewPanelView {
                     )
 
                     if showsMetadata {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(kindText)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(title)
                                 .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Text(showsSource ? "\(frame.videoName) · \(formatDuration(frame.time))" : formatDuration(frame.time))
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                                .foregroundStyle(.white.opacity(0.86))
+                                .lineLimit(2)
+                                .truncationMode(.tail)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+
+                            Spacer(minLength: 4)
+
+                            exportFrameTagPreview(for: frame)
                         }
-                        .frame(height: Self.exportRowContentHeight, alignment: .center)
+                        .frame(height: Self.exportRowContentHeight, alignment: .top)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .frame(height: Self.exportRowContentHeight, alignment: .center)
@@ -337,6 +369,7 @@ extension PreviewPanelView {
             .help("跳到这张画面")
 
             exportItemActionColumn(
+                showInFinderURL: libraryStore.imageExportURL(for: frame),
                 jumpHelp: "跳到这张画面",
                 deleteHelp: "删除这张画面",
                 onJump: {
@@ -345,16 +378,9 @@ extension PreviewPanelView {
                 onDelete: {
                     libraryStore.deleteSampledFrame(frame)
                 }
-            ) {
-                InlineTagEditorButton(
-                    title: "图片标签",
-                    tags: frame.tags,
-                    suggestedTags: libraryStore.allFrameTags,
-                    buttonSize: 22,
-                    onAdd: { libraryStore.addFrameTag($0, to: frame) },
-                    onRemove: { libraryStore.removeFrameTag($0, from: frame) }
-                )
-            }
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, Self.exportRowVerticalPadding)
@@ -382,7 +408,9 @@ extension PreviewPanelView {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.medium)
-                    .scaledToFit()
+                    .scaledToFill()
+                    .frame(width: previewWidth, height: Self.exportRowContentHeight)
+                    .clipped()
             } else {
                 Image(systemName: "photo")
                     .font(.caption)
@@ -416,16 +444,93 @@ extension PreviewPanelView {
         return size.width / size.height
     }
 
-    func exportFrameTitle(for frame: SampledFrame) -> String {
-        let frames = libraryStore.sampledFrames(for: VideoItem(url: URL(fileURLWithPath: frame.videoPath)))
-            .filter { $0.kind == frame.kind }
-            .sorted {
-                if abs($0.time - $1.time) > 0.001 { return $0.time < $1.time }
-                return $0.createdAt < $1.createdAt
+    func exportDocumentPreview(systemImage: String, tint: Color) -> some View {
+        let previewShape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+
+        return ZStack {
+            previewShape
+                .fill(.white.opacity(0.075))
+
+            Image(systemName: systemImage)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .frame(width: Self.exportTranscriptIconWidth, height: Self.exportRowContentHeight)
+        .clipShape(previewShape)
+        .overlay {
+            previewShape
+                .stroke(.white.opacity(0.08), lineWidth: 0.7)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    func exportFrameDisplayTitle(for frame: SampledFrame) -> String {
+        guard let video = libraryStore.selectedVideo(for: frame.videoPath) else {
+            return frame.videoName
+        }
+        return videoDisplayName(for: video)
+    }
+
+    func exportFrameTagPreview(for frame: SampledFrame) -> some View {
+        let visibleLimit = 5
+        let hasOverflow = frame.tags.count > visibleLimit
+        let visibleTagCount = hasOverflow ? visibleLimit - 1 : visibleLimit
+        let visibleTags = Array(frame.tags.prefix(visibleTagCount))
+        let overflowCount = max(0, frame.tags.count - visibleTagCount)
+
+        return HStack(alignment: .center, spacing: 4) {
+            WrappingFilterChipGroup(spacing: 4, rowSpacing: 4) {
+                ForEach(visibleTags, id: \.self) { tag in
+                    VideoTagChip(tag: tag, size: .mini)
+                }
+
+                if overflowCount > 0 {
+                    VideoTagOverflowChip(count: overflowCount)
+                }
             }
-        let index = (frames.firstIndex { $0.id == frame.id } ?? 0) + 1
-        let prefix = frame.kind == .screenshot ? "截图画面" : "场景画面"
-        return "\(prefix) \(String(format: "%02d", index))"
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .frame(maxHeight: 40, alignment: .topLeading)
+            .clipped()
+
+            InlineTagAddButton(
+                title: "图片标签",
+                domain: .frame,
+                tags: frame.tags,
+                suggestedTags: libraryStore.allFrameTags,
+                buttonSize: 15,
+                onAdd: { libraryStore.addFrameTag($0, to: frame) },
+                onRemove: { libraryStore.removeFrameTagOrDeleteIfEmpty($0, from: frame) }
+            )
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+    }
+
+    func exportAudioTagPreview(for clip: AudioClipItem) -> some View {
+        HStack(spacing: 4) {
+            if !clip.tags.isEmpty {
+                ForEach(Array(clip.tags.prefix(2)), id: \.self) { tag in
+                    VideoTagChip(tag: tag, size: .mini)
+                }
+                if clip.tags.count > 2 {
+                    VideoTagOverflowChip(count: clip.tags.count - 2)
+                }
+            }
+
+            InlineTagAddButton(
+                title: "声音标签",
+                domain: .audio,
+                tags: clip.tags,
+                suggestedTags: libraryStore.allAudioTags,
+                buttonSize: 15,
+                onAdd: { libraryStore.addAudioTag($0, to: clip) },
+                onRemove: { libraryStore.removeAudioTag($0, from: clip) }
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
     }
 
     func exportAudioClipRow(_ clip: AudioClipItem, index: Int?, showsSource: Bool = false, highlightIntensity: Double = 0) -> some View {
@@ -434,38 +539,35 @@ extension PreviewPanelView {
         let progress = isPlaying ? activeExportAudioProgress : 0
         let duration = max(0, clip.outTime - clip.inTime)
         let title = showsSource ? clip.videoName : audioClipTitle(index: index)
-        let subtitle = "\(audioClipTitle(index: index)) · \(formatDuration(clip.inTime)) - \(formatDuration(clip.outTime))"
-        let waveformHeight: CGFloat = showsSource ? 44 : 58
+        let waveformHeight: CGFloat = showsSource ? 40 : 58
 
         return HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: showsSource ? 3 : 4) {
-                HStack(spacing: 8) {
+                if showsSource {
                     Text(title)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.86))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: 16, alignment: .center)
+                }
+
+                HStack(spacing: 8) {
+                    exportAudioTagPreview(for: clip)
+                        .layoutPriority(1)
+
                     Spacer(minLength: 0)
-                    Text(audioClipTimecode(duration: duration, progress: progress, isPlaying: isPlaying))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.white.opacity(isPlaying ? 0.78 : 0.48))
                 }
                 .frame(height: 16, alignment: .center)
 
-                if showsSource {
-                    Text(subtitle)
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.48))
-                        .lineLimit(1)
-                        .frame(height: 12, alignment: .leading)
-                }
-
-                AudioClipWaveformStrip(
+                exportAudioWaveformWithTimecode(
                     samples: clip.waveformSamples,
-                    isActive: isPlaying,
-                    progress: progress
+                    isPlaying: isPlaying,
+                    progress: progress,
+                    duration: duration,
+                    height: waveformHeight
                 )
-                .frame(height: waveformHeight)
             }
             .frame(height: Self.exportRowContentHeight, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -477,6 +579,7 @@ extension PreviewPanelView {
             .itemProviderDrag(audioClipDragProvider(for: clip))
 
             exportItemActionColumn(
+                showInFinderURL: libraryStore.audioClipFileURL(for: clip),
                 jumpHelp: "回到原视频位置",
                 deleteHelp: "删除声音片段",
                 onJump: {
@@ -485,16 +588,7 @@ extension PreviewPanelView {
                 onDelete: {
                     deleteExportAudioClip(clip)
                 }
-            ) {
-                InlineTagEditorButton(
-                    title: "声音标签",
-                    tags: clip.tags,
-                    suggestedTags: libraryStore.allAudioTags,
-                    buttonSize: 22,
-                    onAdd: { libraryStore.addAudioTag($0, to: clip) },
-                    onRemove: { libraryStore.removeAudioTag($0, from: clip) }
-                )
-            }
+            )
         }
         .padding(.horizontal, 9)
         .padding(.vertical, Self.exportRowVerticalPadding)
@@ -518,12 +612,7 @@ extension PreviewPanelView {
         let tint = isFailed ? Color.red.opacity(0.86) : Design.annotationAccent
 
         return HStack(alignment: .center, spacing: 10) {
-            Image(systemName: isFailed ? "exclamationmark.triangle.fill" : "doc.text")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: Self.exportTranscriptIconWidth, height: Self.exportRowContentHeight)
-                .background(.white.opacity(0.075))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            exportDocumentPreview(systemImage: isFailed ? "exclamationmark.triangle.fill" : "doc.text", tint: tint)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
@@ -536,7 +625,7 @@ extension PreviewPanelView {
                     Spacer(minLength: 0)
 
                     Text(isFailed ? "失败" : progressPercentText(progress))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .font(Design.numericCaption2(weight: .semibold))
                         .foregroundStyle(isFailed ? tint.opacity(0.86) : .white.opacity(0.58))
                 }
 
@@ -565,62 +654,100 @@ extension PreviewPanelView {
         .help(isFailed ? "字幕导出失败" : "字幕导出中")
     }
 
+    func transcriptExportFileURL(for export: TranscriptExportItem) -> URL? {
+        FileManager.default.fileExists(atPath: export.filePath) ? URL(fileURLWithPath: export.filePath) : nil
+    }
+
+    func transcriptExportDragProvider(for export: TranscriptExportItem) -> (() -> NSItemProvider)? {
+        guard let fileURL = transcriptExportFileURL(for: export) else { return nil }
+        let suggestedName = fileURL.lastPathComponent.isEmpty ? "\(export.videoName).md" : fileURL.lastPathComponent
+
+        return {
+            existingFileItemProvider(
+                for: fileURL,
+                suggestedName: suggestedName,
+                fallbackTypeIdentifier: UTType.plainText.identifier,
+                errorDomain: "LapianBao.TranscriptDragExport",
+                missingFileMessage: "字幕文件不存在"
+            )
+        }
+    }
+
+    func transcriptCharacterCount(for export: TranscriptExportItem) -> Int {
+        let segments = libraryStore.transcriptSegmentsByVideoPath[export.videoPath, default: []]
+        let segmentText = segments
+            .map(\.text)
+            .joined()
+        if !segmentText.isEmpty {
+            return visibleCharacterCount(in: segmentText)
+        }
+
+        guard let markdown = try? String(contentsOfFile: export.filePath, encoding: .utf8) else { return 0 }
+        let transcriptText = markdown
+            .components(separatedBy: "## 原脚本")
+            .last?
+            .components(separatedBy: .newlines)
+            .map { line -> String in
+                guard let range = line.range(of: "] ") else { return line }
+                return String(line[range.upperBound...])
+            }
+            .joined() ?? markdown
+        return visibleCharacterCount(in: transcriptText)
+    }
+
+    func visibleCharacterCount(in text: String) -> Int {
+        text.filter { !$0.isWhitespace && !$0.isNewline }.count
+    }
+
     func exportTranscriptRow(_ export: TranscriptExportItem, highlightIntensity: Double = 0) -> some View {
         let highlight = min(1, max(0, highlightIntensity))
-        let rangeText = "\(formatDuration(export.startTime)) - \(formatDuration(export.endTime))"
-        let actionSpacing = max(0, Self.exportRowContentHeight - Self.exportActionButtonSize * 2)
+        let characterCount = transcriptCharacterCount(for: export)
+        let dragProvider = transcriptExportDragProvider(for: export)
 
         return HStack(alignment: .center, spacing: 10) {
             Button {
                 jumpToExportLocation(path: export.videoPath, time: export.startTime)
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Design.annotationAccent)
-                        .frame(width: Self.exportTranscriptIconWidth, height: Self.exportRowContentHeight)
-                        .background(.white.opacity(0.075))
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    exportDocumentPreview(systemImage: "doc.text", tint: Design.annotationAccent)
 
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 0) {
                         Text(export.videoName)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.white.opacity(0.86))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text("字幕 · \(export.segmentCount) 段 · \(rangeText)")
-                            .font(.caption2.monospacedDigit())
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+
+                        Spacer(minLength: 4)
+
+                        Text("\(characterCount) 字")
+                            .font(Design.numericCaption2())
                             .foregroundStyle(.white.opacity(0.48))
                             .lineLimit(1)
                     }
-                    .frame(height: Self.exportRowContentHeight, alignment: .center)
+                    .frame(height: Self.exportRowContentHeight, alignment: .top)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: Self.exportRowContentHeight, alignment: .center)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("跳到字幕起点")
 
-            VStack(spacing: actionSpacing) {
-                Button {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: export.filePath))
-                } label: {
-                    exportItemActionIcon("doc.text", tint: .white.opacity(0.70), size: Self.exportActionButtonSize)
-                }
-                .buttonStyle(.plain)
-                .disabled(!FileManager.default.fileExists(atPath: export.filePath))
-                .help("打开字幕文件")
-
-                Button {
+            exportItemActionColumn(
+                showInFinderURL: transcriptExportFileURL(for: export),
+                jumpHelp: "跳到字幕起点",
+                deleteHelp: "删除字幕条目",
+                onJump: {
                     jumpToExportLocation(path: export.videoPath, time: export.startTime)
-                } label: {
-                    exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70), size: Self.exportActionButtonSize)
+                },
+                onDelete: {
+                    libraryStore.deleteTranscriptExport(export)
                 }
-                .buttonStyle(.plain)
-                .help("跳到字幕起点")
-            }
-            .frame(width: Self.exportActionButtonSize, height: Self.exportRowContentHeight)
+            )
         }
         .padding(.horizontal, 9)
         .padding(.vertical, Self.exportRowVerticalPadding)
@@ -631,6 +758,7 @@ extension PreviewPanelView {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: .white.opacity(0.07)), lineWidth: 0.8 + 0.4 * highlight)
         }
+        .itemProviderDrag(dragProvider)
     }
 
     func exportAudioPlayButton(clip: AudioClipItem, isPlaying: Bool, progress: Double) -> some View {
@@ -676,27 +804,35 @@ extension PreviewPanelView {
         guard libraryStore.selectedVideo(for: path) != nil else { return }
         libraryStore.selectVideo(path: path)
         DispatchQueue.main.async {
-            NotificationCenter.default.post(
-                name: .lapianBaoSeekRequest,
-                object: nil,
-                userInfo: ["path": path, "time": time]
-            )
+            AppEventBus.postSeekRequest(path: path, time: time)
         }
     }
 
-    func exportItemActionColumn<Accessory: View>(
+    func exportItemActionColumn(
+        showInFinderURL: URL?,
+        showInFinderHelp: String = "在访达显示",
         jumpHelp: String,
         deleteHelp: String,
         onJump: @escaping () -> Void,
-        onDelete: @escaping () -> Void,
-        @ViewBuilder accessory: () -> Accessory
+        onDelete: @escaping () -> Void
     ) -> some View {
         let buttonSize = Self.exportActionButtonSize
         let spacing = max(0, (Self.exportRowContentHeight - buttonSize * 3) / 2)
 
         return VStack(spacing: spacing) {
-            accessory()
-                .frame(width: buttonSize, height: buttonSize)
+            Button {
+                guard let showInFinderURL else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([showInFinderURL])
+            } label: {
+                exportItemActionIcon(
+                    "folder",
+                    tint: .white.opacity(showInFinderURL == nil ? 0.28 : 0.70),
+                    size: buttonSize
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(showInFinderURL == nil)
+            .help(showInFinderURL == nil ? "文件不存在" : showInFinderHelp)
 
             Button(action: onJump) {
                 exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70), size: buttonSize)
@@ -720,6 +856,57 @@ extension PreviewPanelView {
             .foregroundStyle(tint)
             .frame(width: size, height: size)
             .contentShape(Rectangle())
+    }
+
+    func exportAudioWaveformWithTimecode(
+        samples: [Double]?,
+        isPlaying: Bool,
+        progress: Double,
+        duration: Double,
+        height: CGFloat
+    ) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            AudioClipWaveformStrip(
+                samples: samples,
+                isActive: isPlaying,
+                progress: progress,
+                playbackDuration: duration,
+                smoothsPlaybackProgress: true
+            )
+
+            if isPlaying, duration > 0 {
+                SmoothTimelineProgressReader(
+                    progress: progress,
+                    duration: duration,
+                    isPlaying: true
+                ) { displayedProgress in
+                    exportAudioWaveformTimecodeLabel(
+                        formatDuration(duration * min(1, max(0, displayedProgress))),
+                        isPlaying: true
+                    )
+                }
+            } else {
+                exportAudioWaveformTimecodeLabel(
+                    audioClipTimecode(duration: duration, progress: progress, isPlaying: false),
+                    isPlaying: false
+                )
+            }
+        }
+        .frame(height: height)
+    }
+
+    func exportAudioWaveformTimecodeLabel(_ text: String, isPlaying: Bool) -> some View {
+        Text(text)
+            .font(Design.numericCaption2(weight: .semibold))
+            .foregroundStyle(.white.opacity(isPlaying ? 0.84 : 0.62))
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(.black.opacity(0.44))
+            .clipShape(Capsule())
+            .padding(.trailing, 4)
+            .padding(.bottom, 3)
+            .allowsHitTesting(false)
     }
 
     func audioClipTimecode(duration: Double, progress: Double, isPlaying: Bool) -> String {
@@ -827,27 +1014,7 @@ extension PreviewPanelView {
         let status = libraryStore.musicDetectionStatusByVideoPath[path]
         let songs = libraryStore.musicsByVideoPath[path, default: []]
 
-        if case let .running(message) = status {
-            HStack(spacing: 8) {
-                RecognitionProgressRow(
-                    message: message,
-                    progress: activityProgressValue(from: message),
-                    showPercent: false,
-                    showStepCount: false
-                )
-                Spacer(minLength: 0)
-
-                Button {
-                    libraryStore.cancelMusicDetection(for: video)
-                } label: {
-                    Image(systemName: "stop.circle")
-                        .accessibilityLabel("停止")
-                }
-                .buttonStyle(.borderless)
-                .help("停止音乐识别")
-            }
-            .recognitionProgressCard()
-
+        if case .running = status {
             ForEach(songs) { song in
                 ExportMusicRecognitionRow(song: song, videoPath: path) {
                     controller.pause()
@@ -857,7 +1024,6 @@ extension PreviewPanelView {
         } else if case .failed = status {
             AppEmptyState(
                 title: "暂无音乐识别结果",
-                systemImage: "music.note",
                 style: .compact,
                 minHeight: 82,
                 showsBackground: true
@@ -865,7 +1031,6 @@ extension PreviewPanelView {
         } else if status == .completed, songs.isEmpty {
             AppEmptyState(
                 title: "暂无音乐识别结果",
-                systemImage: "music.note",
                 style: .compact,
                 minHeight: 82,
                 showsBackground: true

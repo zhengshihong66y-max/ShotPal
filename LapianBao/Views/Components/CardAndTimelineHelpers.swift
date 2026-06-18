@@ -12,65 +12,27 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-struct ViewSizePreferenceKey: PreferenceKey {
-    static var defaultValue: CGSize = .zero
-
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        let next = nextValue()
-        value = CGSize(width: max(value.width, next.width), height: max(value.height, next.height))
-    }
-}
-
 struct CardInlineTagChip: View {
     let tag: String
 
     var body: some View {
-        let tint = VideoTagPalette.color(for: tag)
-
         Text(tag)
             .font(.system(size: 11, weight: .semibold))
             .lineLimit(1)
             .truncationMode(.tail)
             .frame(maxWidth: VideoTagChipSize.mini.maxTextWidth, minHeight: 18, maxHeight: 18, alignment: .center)
-            .foregroundStyle(.primary)
+            .foregroundStyle(Design.tagChipForeground)
             .padding(.horizontal, 7)
-            .background(tint.opacity(0.18))
+            .background(Design.tagChipFill)
             .clipShape(Capsule())
             .overlay {
                 Capsule()
-                    .stroke(tint.opacity(0.34), lineWidth: 0.8)
+                    .stroke(Design.tagChipStroke, lineWidth: 0.8)
             }
     }
 }
 
-struct ScaledCardTagCloud: View {
-    let tags: [String]
-
-    private var visibleTags: [String] {
-        Array(tags.prefix(2))
-    }
-
-    private var overflowCount: Int {
-        max(0, tags.count - visibleTags.count)
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(visibleTags, id: \.self) { tag in
-                CardInlineTagChip(tag: tag)
-            }
-
-            if overflowCount > 0 {
-                VideoTagOverflowChip(count: overflowCount)
-                    .frame(height: 18, alignment: .center)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .clipped()
-    }
-}
-
-struct HiddenScrollIndicators: NSViewRepresentable {
+struct FadingVerticalScrollIndicators: NSViewRepresentable {
     final class Coordinator {
         weak var configuredScrollView: NSScrollView?
         var isLookupScheduled = false
@@ -130,8 +92,8 @@ struct HiddenScrollIndicators: NSViewRepresentable {
     }
 
     private static func configure(_ scrollView: NSScrollView) {
-        if scrollView.hasVerticalScroller {
-            scrollView.hasVerticalScroller = false
+        if !scrollView.hasVerticalScroller {
+            scrollView.hasVerticalScroller = true
         }
         if scrollView.hasHorizontalScroller {
             scrollView.hasHorizontalScroller = false
@@ -145,12 +107,17 @@ struct HiddenScrollIndicators: NSViewRepresentable {
         if scrollView.drawsBackground {
             scrollView.drawsBackground = false
         }
-        if scrollView.verticalScroller?.isHidden == false {
-            scrollView.verticalScroller?.isHidden = true
+        if scrollView.verticalScroller?.controlSize != .small {
+            scrollView.verticalScroller?.controlSize = .small
         }
-        if scrollView.horizontalScroller?.isHidden == false {
-            scrollView.horizontalScroller?.isHidden = true
-        }
+    }
+}
+
+extension View {
+    func fadingVerticalScrollIndicators() -> some View {
+        self
+            .scrollIndicators(.automatic)
+            .background(FadingVerticalScrollIndicators())
     }
 }
 
@@ -372,19 +339,20 @@ private final class TimelineImageLayerStripView: NSView {
     ) -> (x: CGFloat, width: CGFloat)? {
         guard viewportSpan > 0, index >= 0, index < imageCount else { return nil }
 
-        let viewportEnd = min(1, max(viewportStart, viewportStart + viewportSpan))
+        let span = max(0.0001, min(1, viewportSpan))
+        let viewportEnd = min(1, max(viewportStart, viewportStart + span))
         let start = sceneStart(for: index, sceneCuts: sceneCuts)
         let end = sceneEnd(for: index, sceneCuts: sceneCuts)
         let visibleStart = max(start, viewportStart)
         let visibleEnd = min(end, viewportEnd)
         guard visibleEnd > visibleStart else { return nil }
 
-        var x0 = CGFloat((visibleStart - viewportStart) / viewportSpan) * width
-        var x1 = CGFloat((visibleEnd - viewportStart) / viewportSpan) * width
+        var x0 = CGFloat((start - viewportStart) / span) * width
+        var x1 = CGFloat((end - viewportStart) / span) * width
         let rawWidth = max(0, x1 - x0)
 
-        var leadingInset: CGFloat = index > 0 && start >= viewportStart ? TimelineStripMetrics.segmentGap / 2 : 0
-        var trailingInset: CGFloat = index < imageCount - 1 && end <= viewportEnd ? TimelineStripMetrics.segmentGap / 2 : 0
+        var leadingInset: CGFloat = index > 0 ? TimelineStripMetrics.segmentGap / 2 : 0
+        var trailingInset: CGFloat = index < imageCount - 1 ? TimelineStripMetrics.segmentGap / 2 : 0
         let totalInset = leadingInset + trailingInset
         if totalInset > 0 {
             let scale = min(1, max(0, (rawWidth - 2) / totalInset))
@@ -510,43 +478,57 @@ struct SceneStoryboardProgressOverlay: View {
     let viewportStart: Double
     let viewportSpan: Double
     let activeProgress: Double
+    let isPlaying: Bool
+    let duration: Double
+    var playbackRate: Double = 1
 
     var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let height = proxy.size.height
+        SmoothTimelineProgressReader(
+            progress: activeProgress,
+            duration: duration,
+            playbackRate: playbackRate,
+            isPlaying: isPlaying
+        ) { displayedProgress in
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                let height = proxy.size.height
 
-            ZStack(alignment: .leading) {
-                if let activeFrame = activeVisibleFrame(width: width) {
-                    Rectangle()
-                        .fill(.white.opacity(0.16))
-                        .frame(width: activeFrame.playedWidth, height: height)
-                        .clipShape(RoundedRectangle(cornerRadius: TimelineStripMetrics.segmentRadius, style: .continuous))
-                        .offset(x: activeFrame.x)
+                ZStack(alignment: .leading) {
+                    if let activeFrame = activeVisibleFrame(width: width, progress: displayedProgress) {
+                        Rectangle()
+                            .fill(.white.opacity(0.16))
+                            .frame(width: activeFrame.playedWidth, height: height)
+                            .clipShape(RoundedRectangle(cornerRadius: TimelineStripMetrics.segmentRadius, style: .continuous))
+                            .offset(x: activeFrame.x)
 
-                    CurrentFrameFocusOverlay(cornerRadius: TimelineStripMetrics.segmentRadius)
-                        .frame(width: activeFrame.width, height: height)
-                        .offset(x: activeFrame.x)
+                        CurrentFrameFocusOverlay(cornerRadius: TimelineStripMetrics.segmentRadius)
+                            .frame(width: activeFrame.width, height: height)
+                            .offset(x: activeFrame.x)
+                    }
                 }
+                .frame(width: width, height: height, alignment: .leading)
+                .clipped()
             }
-            .frame(width: width, height: height, alignment: .leading)
-            .clipped()
         }
         .allowsHitTesting(false)
     }
 
-    private func activeVisibleFrame(width: CGFloat) -> (x: CGFloat, width: CGFloat, playedWidth: CGFloat)? {
+    private func activeVisibleFrame(width: CGFloat, progress: Double) -> (x: CGFloat, width: CGFloat, playedWidth: CGFloat)? {
         guard viewportSpan > 0 else { return nil }
-        let index = activeSceneIndex()
+        let index = activeSceneIndex(progress: progress)
         guard let frame = visibleFrame(for: index, width: width) else { return nil }
-        return (x: frame.x, width: frame.width, playedWidth: playbackWidth(for: index, visibleFrameWidth: frame.width))
+        return (
+            x: frame.x,
+            width: frame.width,
+            playedWidth: playbackWidth(for: index, visibleFrameWidth: frame.width, progress: progress)
+        )
     }
 
-    private func activeSceneIndex() -> Int {
+    private func activeSceneIndex(progress: Double) -> Int {
         let sceneCount = sceneCuts.count + 1
         guard sceneCount > 1 else { return 0 }
 
-        let progress = min(1, max(0, activeProgress))
+        let progress = min(1, max(0, progress))
         var lower = 0
         var upper = sceneCuts.count
         while lower < upper {
@@ -563,20 +545,21 @@ struct SceneStoryboardProgressOverlay: View {
     private func visibleFrame(for index: Int, width: CGFloat) -> (x: CGFloat, width: CGFloat)? {
         guard viewportSpan > 0, index >= 0, index <= sceneCuts.count else { return nil }
 
+        let span = max(0.0001, min(1, viewportSpan))
         let viewportStart = min(1, max(0, self.viewportStart))
-        let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
+        let viewportEnd = min(1, max(viewportStart, viewportStart + span))
         let start = sceneStart(for: index)
         let end = sceneEnd(for: index)
         let visibleStart = max(start, viewportStart)
         let visibleEnd = min(end, viewportEnd)
         guard visibleEnd > visibleStart else { return nil }
 
-        var x0 = CGFloat((visibleStart - viewportStart) / viewportSpan) * width
-        var x1 = CGFloat((visibleEnd - viewportStart) / viewportSpan) * width
+        var x0 = CGFloat((start - viewportStart) / span) * width
+        var x1 = CGFloat((end - viewportStart) / span) * width
         let rawWidth = max(0, x1 - x0)
 
-        var leadingInset: CGFloat = index > 0 && start >= viewportStart ? TimelineStripMetrics.segmentGap / 2 : 0
-        var trailingInset: CGFloat = index < sceneCuts.count && end <= viewportEnd ? TimelineStripMetrics.segmentGap / 2 : 0
+        var leadingInset: CGFloat = index > 0 ? TimelineStripMetrics.segmentGap / 2 : 0
+        var trailingInset: CGFloat = index < sceneCuts.count ? TimelineStripMetrics.segmentGap / 2 : 0
         let totalInset = leadingInset + trailingInset
         if totalInset > 0 {
             let scale = min(1, max(0, (rawWidth - 2) / totalInset))
@@ -590,18 +573,14 @@ struct SceneStoryboardProgressOverlay: View {
         return (x: x0, width: x1 - x0)
     }
 
-    private func playbackWidth(for index: Int, visibleFrameWidth: CGFloat) -> CGFloat {
+    private func playbackWidth(for index: Int, visibleFrameWidth: CGFloat, progress: Double) -> CGFloat {
         guard index >= 0, index <= sceneCuts.count else { return 0 }
         let start = sceneStart(for: index)
         let end = sceneEnd(for: index)
 
-        let viewportStart = min(1, max(0, self.viewportStart))
-        let viewportEnd = min(1, max(viewportStart, self.viewportStart + viewportSpan))
-        let visibleStart = max(start, viewportStart)
-        let visibleEnd = min(end, viewportEnd)
-        guard visibleEnd > visibleStart, activeProgress > visibleStart else { return 0 }
-        let played = min(visibleEnd, activeProgress)
-        return visibleFrameWidth * CGFloat((played - visibleStart) / (visibleEnd - visibleStart))
+        guard end > start, progress > start else { return 0 }
+        let played = min(end, max(start, progress))
+        return visibleFrameWidth * CGFloat((played - start) / (end - start))
     }
 
     private func sceneStart(for index: Int) -> Double {
@@ -640,12 +619,63 @@ struct FrameStripTimelineStrip: View, Equatable {
     }
 }
 
+struct FrameScrubberPlaceholderStrip: View {
+    let progress: Double
+    let viewportStart: Double
+    let viewportSpan: Double
+
+    private let frameCount = 16
+
+    var body: some View {
+        Canvas { context, size in
+            guard frameCount > 0, size.width > 0, size.height > 0 else { return }
+
+            let span = max(0.0001, min(1, viewportSpan))
+            let start = min(1, max(0, viewportStart))
+            let end = min(1, max(start, start + span))
+            let frameWidth = size.width / (CGFloat(span) * CGFloat(frameCount))
+            let originX = -CGFloat(start / span) * size.width
+            let first = max(0, Int(floor(start * Double(frameCount))) - 1)
+            let last = min(frameCount - 1, Int(ceil(end * Double(frameCount))) + 1)
+
+            if first <= last {
+                for index in first...last {
+                    let x = CGFloat(index) * frameWidth + originX
+                    let rect = CGRect(
+                        x: x + 2,
+                        y: 0,
+                        width: max(1, frameWidth - 4),
+                        height: size.height
+                    )
+                    guard rect.maxX >= 0, rect.minX <= size.width else { continue }
+
+                    var tile = Path()
+                    tile.addRoundedRect(
+                        in: rect,
+                        cornerSize: CGSize(width: TimelineStripMetrics.segmentRadius, height: TimelineStripMetrics.segmentRadius)
+                    )
+                    let opacity = index.isMultiple(of: 2) ? 0.10 : 0.075
+                    context.fill(tile, with: .color(.white.opacity(opacity)))
+                    context.stroke(tile, with: .color(.white.opacity(0.07)), lineWidth: 0.7)
+                }
+            }
+
+            let playedWidth = size.width * CGFloat(min(1, max(0, progress)))
+            guard playedWidth > 0 else { return }
+            let playedRect = CGRect(x: 0, y: 0, width: playedWidth, height: size.height)
+            context.fill(Path(playedRect), with: .color(.white.opacity(0.10)))
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 struct FrameScrubberView: View {
     let frames: [NSImage]?
     let progress: Double
     let timecodeText: String
     let sceneCuts: [Double]
     let isPlaying: Bool
+    var playbackRate: Double = 1
     let togglePlayback: () -> Void
     let seek: (Double) -> Void
     var screenshotMarkers: [Double] = []
@@ -703,7 +733,10 @@ struct FrameScrubberView: View {
                                 sceneCuts: sceneCuts,
                                 viewportStart: viewportStart,
                                 viewportSpan: viewportSpan,
-                                activeProgress: draftProgress ?? progress
+                                activeProgress: draftProgress ?? progress,
+                                isPlaying: isPlaying && draftProgress == nil,
+                                duration: duration,
+                                playbackRate: playbackRate
                             )
                         }
                     } else if let frames, !frames.isEmpty {
@@ -721,14 +754,10 @@ struct FrameScrubberView: View {
                                 .frame(width: width * CGFloat(dp))
                         }
                     } else {
-                        LinearGradient(
-                            stops: [
-                                .init(color: .white.opacity(0.06), location: 0),
-                                .init(color: .white.opacity(0.10), location: 0.5),
-                                .init(color: .white.opacity(0.06), location: 1)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
+                        FrameScrubberPlaceholderStrip(
+                            progress: dp,
+                            viewportStart: viewportStart,
+                            viewportSpan: viewportSpan
                         )
                     }
 
@@ -815,6 +844,10 @@ struct FrameScrubberView: View {
                         }
                         .onEnded { _ in lastMagnification = 1 }
                 )
+                .transaction { transaction in
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
             }
             .frame(maxWidth: .infinity)
             .frame(height: timelineHeight)
@@ -861,7 +894,7 @@ struct FrameScrubberView: View {
                 Spacer()
 
                 Text(timecodeText)
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .font(Design.numericCaption(weight: .semibold))
                     .foregroundStyle(.white.opacity(0.74))
                     .frame(minWidth: 60, alignment: .center)
 
@@ -910,10 +943,6 @@ struct FrameScrubberView: View {
         return min(1, max(0, (global - viewportStart) / viewportSpan))
     }
 
-    private func localizedMarkers(_ markers: [Double]) -> [Double] {
-        markers.filter(isVisible).map(localProgress)
-    }
-
     private func isVisible(_ global: Double) -> Bool {
         global >= viewportStart && global <= viewportStart + viewportSpan
     }
@@ -941,8 +970,6 @@ struct SimpleProgressBar: View {
     let isPlaying: Bool
     let togglePlayback: () -> Void
     let seek: (Double) -> Void
-    var chapters: [TranscriptTimelineChapter] = []
-    var duration: Double = 0
     var annotationItems: [TimelineAnnotationMarker] = []
     var onAnnotationSelect: ((UUID) -> Void)? = nil
     var playheadTint: Color = Design.timelinePlayheadAccent
@@ -961,47 +988,14 @@ struct SimpleProgressBar: View {
             let width = geo.size.width
             let height = geo.size.height
             let cornerRadius = min(Design.innerRadius, height / 2)
-            let chapterSegments = normalizedChapterSegments(duration: duration)
 
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(.thinMaterial)
 
-                if chapterSegments.isEmpty {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.16))
-                        .frame(width: max(0, width * CGFloat(dp)))
-                } else {
-                    let segmentGap: CGFloat = 4
-
-                    ForEach(Array(chapterSegments.enumerated()), id: \.element.id) { index, segment in
-                        let isFirst = index == chapterSegments.startIndex
-                        let isLast = index == chapterSegments.index(before: chapterSegments.endIndex)
-                        let leadingInset: CGFloat = isFirst ? 0 : segmentGap / 2
-                        let trailingInset: CGFloat = isLast ? 0 : segmentGap / 2
-                        let x = width * CGFloat(segment.start) + leadingInset
-                        let segmentWidth = max(0, width * CGFloat(segment.end - segment.start) - leadingInset - trailingInset)
-
-                        RoundedRectangle(cornerRadius: min(Design.innerRadius, height / 2), style: .continuous)
-                            .fill(chapterFill(for: segment, progress: dp))
-                            .overlay(alignment: .leading) {
-                                if segmentWidth > 42 {
-                                    Text(segment.title)
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.white.opacity(segmentTextOpacity(for: segment, progress: dp)))
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.72)
-                                        .padding(.horizontal, 7)
-                                }
-                            }
-                            .overlay {
-                                RoundedRectangle(cornerRadius: min(Design.innerRadius, height / 2), style: .continuous)
-                                    .stroke(.white.opacity(segmentStrokeOpacity(for: segment, progress: dp)), lineWidth: 0.7)
-                            }
-                            .frame(width: segmentWidth, height: height)
-                            .offset(x: x)
-                    }
-                }
+                Rectangle()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(width: max(0, width * CGFloat(dp)))
 
                 Rectangle()
                     .fill(playheadTint)
@@ -1051,54 +1045,12 @@ struct SimpleProgressBar: View {
                         seek(final)
                     }
             )
+            .transaction { transaction in
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private struct ChapterSegment: Identifiable {
-        let id: UUID
-        let title: String
-        let start: Double
-        let end: Double
-    }
-
-    private func normalizedChapterSegments(duration: Double) -> [ChapterSegment] {
-        let sorted = chapters.sorted { $0.start < $1.start }
-        let fallbackDuration = max(duration, sorted.last?.end ?? sorted.last?.start ?? 0)
-        guard fallbackDuration > 0 else { return [] }
-
-        return sorted.enumerated().compactMap { index, chapter in
-            let startTime = index == sorted.startIndex ? 0 : chapter.start
-            let rawStart = min(max(0, startTime / fallbackDuration), 1)
-            let nextStart = sorted.indices.contains(index + 1) ? sorted[index + 1].start : fallbackDuration
-            let rawEndTime = nextStart
-            let rawEnd = min(max(rawStart, rawEndTime / fallbackDuration), 1)
-            guard rawEnd > rawStart else { return nil }
-
-            return ChapterSegment(
-                id: chapter.id,
-                title: chapter.title,
-                start: rawStart,
-                end: rawEnd
-            )
-        }
-    }
-
-    private func chapterFill(for segment: ChapterSegment, progress: Double) -> Color {
-        if progress >= segment.start, progress <= segment.end {
-            return Design.annotationAccent.opacity(0.32)
-        }
-        return progress > segment.end ? .white.opacity(0.20) : .white.opacity(0.10)
-    }
-
-    private func segmentTextOpacity(for segment: ChapterSegment, progress: Double) -> Double {
-        if progress >= segment.start, progress <= segment.end { return 0.92 }
-        return progress > segment.end ? 0.72 : 0.54
-    }
-
-    private func segmentStrokeOpacity(for segment: ChapterSegment, progress: Double) -> Double {
-        if progress >= segment.start, progress <= segment.end { return 0.24 }
-        return 0.08
     }
 
     private func annotationYOffset(for kind: AnnotationItem.Kind, height: CGFloat) -> CGFloat {

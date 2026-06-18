@@ -22,42 +22,6 @@ struct FrameStoryboardItem: Identifiable {
     let sample: SampledFrame?
     let thumbnailImage: NSImage?
     let sceneIndex: Int?
-
-    var isScreenshot: Bool {
-        sample?.kind == .screenshot
-    }
-
-    var isExportedScene: Bool {
-        sample?.kind == .sceneRepresentative && sample?.isExported == true
-    }
-}
-
-struct StoryboardVideoTimeline: View {
-    let cuts: [Double]
-
-    var body: some View {
-        Canvas { context, size in
-            guard size.width > 0, size.height > 0 else { return }
-
-            var base = Path()
-            base.addRoundedRect(
-                in: CGRect(x: 0, y: size.height / 2 - 1, width: size.width, height: 2),
-                cornerSize: CGSize(width: 1, height: 1)
-            )
-            context.fill(base, with: .color(.white.opacity(0.14)))
-
-            for progress in cuts {
-                let clamped = min(1, max(0, progress))
-                let x = size.width * CGFloat(clamped)
-                var line = Path()
-                line.addRoundedRect(
-                    in: CGRect(x: x - 0.5, y: 1, width: 1, height: size.height - 2),
-                    cornerSize: CGSize(width: 0.5, height: 0.5)
-                )
-                context.fill(line, with: .color(.white.opacity(0.62)))
-            }
-        }
-    }
 }
 
 struct FullResolutionFramePreview: View {
@@ -123,9 +87,6 @@ struct FullResolutionFramePreview: View {
 private struct FrameBoardImageTile<OverlayControl: View>: View {
     let image: NSImage?
     let numberText: String
-    var isSelected = false
-    var selectedStrokeColor: Color = .white.opacity(0.36)
-    var selectedStrokeWidth: CGFloat = 1.1
     let onTap: () -> Void
     let dragItemProvider: (() -> NSItemProvider)?
     @ViewBuilder let overlayControl: (_ isHovered: Bool) -> OverlayControl
@@ -135,32 +96,32 @@ private struct FrameBoardImageTile<OverlayControl: View>: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: onTap) {
-                imageContent
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .clipShape(tileShape)
-                    .overlay(alignment: .bottom) {
+                GeometryReader { proxy in
+                    ZStack(alignment: .bottomLeading) {
+                        imageContent
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .clipped()
+
                         LinearGradient(
                             colors: [.clear, .black.opacity(0.56)],
                             startPoint: .top,
                             endPoint: .bottom
                         )
                         .frame(height: 48)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
                         .allowsHitTesting(false)
-                    }
-                    .overlay(alignment: .bottomLeading) {
+
                         Text(numberText)
-                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .font(Design.numericFont(size: 13, weight: .bold))
                             .foregroundStyle(.white.opacity(0.96))
                             .shadow(color: .black.opacity(0.72), radius: 2, y: 1)
                             .padding(.leading, 9)
                             .padding(.bottom, 7)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     }
-                    .overlay {
-                        if isSelected {
-                            tileShape
-                                .strokeBorder(selectedStrokeColor, lineWidth: selectedStrokeWidth)
-                        }
-                    }
+                }
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(tileShape)
             }
             .buttonStyle(.plain)
             .fullResolutionImageDrag(dragItemProvider)
@@ -196,28 +157,256 @@ private struct FrameBoardImageTile<OverlayControl: View>: View {
     }
 }
 
+private struct FrameCardTagMenuButton: View {
+    let tags: [String]
+    let suggestedTags: [String]
+    let onAdd: (String) -> Void
+    let onRemove: (String) -> Void
+    let onJumpToVideo: (() -> Void)?
+    let onShowInFinder: (() -> Void)?
+    let onDelete: (() -> Void)?
+    var showsUnavailableFileActions = false
+
+    @State private var isMorePresented = false
+
+    var body: some View {
+        Button {
+            isMorePresented.toggle()
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 26, height: 26)
+        .help("更多")
+        .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
+            morePopover
+                .transaction { $0.animation = nil }
+        }
+    }
+
+    private var morePopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TagEditorSection(
+                domain: .frame,
+                tags: tags,
+                suggestedTags: suggestedTags,
+                onAdd: onAdd,
+                onRemove: onRemove
+            )
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+
+            if onJumpToVideo != nil || onShowInFinder != nil || onDelete != nil || showsUnavailableFileActions {
+                Divider()
+
+                actionSection
+            }
+        }
+        .frame(minWidth: 220)
+    }
+
+    private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let onJumpToVideo {
+                Button {
+                    isMorePresented = false
+                    onJumpToVideo()
+                } label: {
+                    Label("回到原视频位置", systemImage: "arrowshape.turn.up.left.fill")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if onShowInFinder != nil || showsUnavailableFileActions {
+                let isEnabled = onShowInFinder != nil
+
+                Button {
+                    guard let onShowInFinder else { return }
+                    isMorePresented = false
+                    onShowInFinder()
+                } label: {
+                    Label("在访达中显示", systemImage: "folder")
+                        .foregroundStyle(frameMenuActionForeground(isEnabled: isEnabled))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+
+            if onDelete != nil || showsUnavailableFileActions {
+                let isEnabled = onDelete != nil
+
+                Button {
+                    guard let onDelete else { return }
+                    isMorePresented = false
+                    onDelete()
+                } label: {
+                    Label("删除图片", systemImage: "trash")
+                        .foregroundStyle(frameMenuActionForeground(isEnabled: isEnabled, destructive: true))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+}
+
+private struct FrameDetailMoreButton: View {
+    let tags: [String]
+    let suggestedTags: [String]
+    let onAdd: ((String) -> Void)?
+    let onRemove: ((String) -> Void)?
+    let onJumpToVideo: () -> Void
+    let onShowInFinder: (() -> Void)?
+    let onDelete: (() -> Void)?
+    var showsUnavailableFileActions = false
+
+    @State private var isMorePresented = false
+
+    var body: some View {
+        Button {
+            isMorePresented.toggle()
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 26, height: 26)
+        .help("更多")
+        .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
+            detailPopover
+                .transaction { $0.animation = nil }
+        }
+    }
+
+    private var detailPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let onAdd {
+                TagEditorSection(
+                    domain: .frame,
+                    tags: tags,
+                    suggestedTags: suggestedTags,
+                    emptyTitle: "暂无图片标签",
+                    onAdd: onAdd,
+                    onRemove: onRemove
+                )
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+
+                Divider()
+            }
+
+            detailActionSection
+        }
+        .frame(minWidth: 220)
+    }
+
+    private var detailActionSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Button {
+                isMorePresented = false
+                onJumpToVideo()
+            } label: {
+                Label("回到原视频位置", systemImage: "arrowshape.turn.up.left.fill")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if onShowInFinder != nil || showsUnavailableFileActions {
+                let isEnabled = onShowInFinder != nil
+
+                Button {
+                    guard let onShowInFinder else { return }
+                    isMorePresented = false
+                    onShowInFinder()
+                } label: {
+                    Label("在访达中显示", systemImage: "folder")
+                        .foregroundStyle(frameMenuActionForeground(isEnabled: isEnabled))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+
+            if onDelete != nil || showsUnavailableFileActions {
+                let isEnabled = onDelete != nil
+
+                Button {
+                    guard let onDelete else { return }
+                    isMorePresented = false
+                    onDelete()
+                } label: {
+                    Label("删除图片", systemImage: "trash")
+                        .foregroundStyle(frameMenuActionForeground(isEnabled: isEnabled, destructive: true))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private func frameMenuActionForeground(isEnabled: Bool, destructive: Bool = false) -> Color {
+    guard isEnabled else { return .white.opacity(0.34) }
+    return destructive ? .red : .white.opacity(0.88)
+}
+
 struct FramesWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @Binding var selectedVideoPath: String?
     @Binding var selectedFrameID: UUID?
     let goHome: (String, Double) -> Void
-    @AppStorage("frameBoardGridSize") private var frameBoardGridSize = 1
-    @AppStorage("storyboardVideoPickerGridSize") private var storyboardVideoPickerGridSize = 2
+    @AppStorage(AppSettings.Key.frameBoardGridSize) private var frameBoardGridSize = 1
+    @AppStorage(AppSettings.Key.storyboardVideoPickerGridSize) private var storyboardVideoPickerGridSize = 2
     @State private var boardMode: FramesBoardMode = .storyboard
     @State private var frameSearchText = ""
     @State private var selectedFrameTags: Set<String> = []
-    @State private var isFrameTagFilterPresented = false
+    @State private var isFrameTagFilterPresented = true
     @State private var isStoryboardVideoPickerPresented = false
     @State private var detailFrame: SampledFrame?
     @State private var detailStoryboardItem: FrameStoryboardItem?
-    @State private var frameAnalysisState: FrameAnalysisState = .idle
-    @State private var analyzedFrameID: UUID?
-    @State private var frameAnalysisTask: Task<Void, Never>?
+    @State private var storyboardThumbnailPrewarmKey = ""
+    @State private var pendingStoryboardRecognitionPath: String?
 
     private var storyboardVideos: [VideoItem] {
         let query = normalizedSearch(frameSearchText)
         let videos = query.isEmpty ? libraryStore.videos : libraryStore.videos.filter { video in
-            let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
+            let tags = libraryStore.videoTags(for: video)
             return normalizedSearch(video.name).contains(query)
                 || tags.contains { normalizedSearch($0).contains(query) }
                 || libraryStore.sampledFrames(for: video).contains { self.frameMatchesSearch($0, query: query) }
@@ -252,19 +441,6 @@ struct FramesWorkspaceView: View {
             return matchesTags && matchesSearch
         }
         return sourceTimeSorted(frames)
-    }
-
-    private var tagFilteredFrames: [SampledFrame] {
-        visibleExportedFrames
-    }
-
-    private var tagSections: [(key: String, title: String, frames: [SampledFrame])] {
-        guard !selectedFrameTags.isEmpty else { return [] }
-        return selectedFrameTags.sorted().compactMap { tag -> (key: String, title: String, frames: [SampledFrame])? in
-            let frames = tagFilteredFrames.filter { $0.tags.contains(tag) }
-            guard !frames.isEmpty else { return nil }
-            return (key: tag, title: tag, frames: frames)
-        }
     }
 
     private var gridColumns: [GridItem] {
@@ -328,9 +504,15 @@ struct FramesWorkspaceView: View {
         }
         .onChange(of: storyboardVideoPaths) { _, _ in
             syncStoryboardSelectionIfNeeded()
+            completePendingStoryboardRecognitionIfReady()
         }
-        .onDisappear {
-            frameAnalysisTask?.cancel()
+        .onChange(of: libraryStore.sceneDetectionProgress) { _, _ in
+            completePendingStoryboardRecognitionIfReady()
+        }
+        .onChange(of: libraryStore.sceneDetectionErrorByVideoPath) { _, errors in
+            if let path = pendingStoryboardRecognitionPath, errors[path] != nil {
+                pendingStoryboardRecognitionPath = nil
+            }
         }
     }
 
@@ -338,16 +520,18 @@ struct FramesWorkspaceView: View {
         VStack(alignment: .leading, spacing: 12) {
             frameBoardToolbar
 
-            if boardMode == .collection && isFrameTagFilterPresented {
-                frameTagQuickFilterBar
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            TopChromeBoundedContent {
+                if boardMode == .collection && isFrameTagFilterPresented {
+                    frameTagQuickFilterBar
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
-            switch boardMode {
-            case .storyboard:
-                storyboardFrameBoard
-            case .collection:
-                allExportedFrameBoard
+                switch boardMode {
+                case .storyboard:
+                    storyboardFrameBoard
+                case .collection:
+                    allExportedFrameBoard
+                }
             }
         }
         .padding(.top, Design.libraryToolbarTop)
@@ -358,19 +542,28 @@ struct FramesWorkspaceView: View {
     private var storyboardFrameBoard: some View {
         if let video = selectedStoryboardVideo {
             let items = storyboardItems(for: video)
+            let path = video.url.path
 
             if items.isEmpty {
-                VStack(spacing: 12) {
-                    storyboardProgressView(for: video)
-                    AppEmptyState(
-                        title: storyboardEmptyTitle(for: video),
-                        systemImage: "rectangle.stack",
-                        description: storyboardEmptyDescription(for: video),
-                        style: .large
-                    )
+                if let progress = libraryStore.sceneDetectionProgress[path] {
+                    storyboardRecognitionCenter(progress: progress)
+                        .padding(.horizontal, Design.libraryContentInset)
+                } else if let message = libraryStore.sceneDetectionErrorByVideoPath[path] {
+                    storyboardRecognitionFailureCenter(message: message, video: video)
+                        .padding(.horizontal, Design.libraryContentInset)
+                } else {
+                    VStack(spacing: 12) {
+                        storyboardProgressView(for: video)
+                        AppEmptyState(
+                            title: storyboardEmptyTitle(for: video),
+                            systemImage: "rectangle.stack",
+                            description: storyboardEmptyDescription(for: video),
+                            style: .large
+                        )
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, Design.libraryContentInset)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 14)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
@@ -385,8 +578,7 @@ struct FramesWorkspaceView: View {
                     .padding(.vertical, 2)
                     .padding(.horizontal, 14)
                 }
-                .scrollIndicators(.hidden)
-                .background(HiddenScrollIndicators())
+                .fadingVerticalScrollIndicators()
             }
         } else if libraryStore.videos.isEmpty {
             AppEmptyState(
@@ -436,56 +628,12 @@ struct FramesWorkspaceView: View {
                 .padding(.vertical, 2)
                 .padding(.horizontal, 14)
             }
-            .scrollIndicators(.hidden)
-            .background(HiddenScrollIndicators())
-        }
-    }
-
-    @ViewBuilder
-    private var tagFilteredFrameBoard: some View {
-        if selectedFrameTags.isEmpty {
-            AppEmptyState(
-                title: "请选择图片标签",
-                systemImage: "tag",
-                description: libraryStore.allFrameTags.isEmpty ? "给导出的图片添加标签后，这里会显示标签筛选。" : "点右上角标签按钮选择要查看的标签。",
-                style: .large
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 14)
-        } else if tagFilteredFrames.isEmpty {
-            AppEmptyState(
-                title: "没有匹配标签的画面",
-                systemImage: "tag",
-                style: .large
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 14)
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(tagSections, id: \.key) { section in
-                        VStack(alignment: .leading, spacing: 8) {
-                            frameSectionDivider(section.title)
-                            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
-                                ForEach(Array(section.frames.enumerated()), id: \.element.id) { index, frame in
-                                    frameBoardCard(frame, title: frameCardTitle(for: frame, index: index))
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 2)
-                .padding(.horizontal, 14)
-            }
-            .scrollIndicators(.hidden)
-            .background(HiddenScrollIndicators())
+            .fadingVerticalScrollIndicators()
         }
     }
 
     private var frameBoardToolbar: some View {
-        HStack(spacing: Design.libraryToolbarButtonGap) {
-            LibraryToolbarSearchField(placeholder: "搜索图片、标签", text: $frameSearchText)
-
+        LibraryToolbar(placeholder: "", text: $frameSearchText, searchExpands: false) {
             frameModeButton(.collection)
             frameModeButton(.storyboard)
             if boardMode == .collection {
@@ -494,8 +642,6 @@ struct FramesWorkspaceView: View {
 
             frameGridSizeControl
         }
-        .frame(minHeight: Design.libraryToolbarHeight)
-        .padding(.horizontal, 14)
     }
 
     private var frameTagFilterButton: some View {
@@ -511,17 +657,9 @@ struct FramesWorkspaceView: View {
                     ? Design.neutralStrongAccent
                     : Design.libraryToolbarIconTint
             )
-                .background(isFrameTagFilterPresented ? Color.white.opacity(0.10) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(alignment: .topTrailing) {
                     if !selectedFrameTags.isEmpty {
-                        Text("\(selectedFrameTags.count)")
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Design.neutralBadgeFill)
-                            .clipShape(Capsule())
-                            .offset(x: 4, y: -3)
+                        libraryToolbarBadge(selectedFrameTags.count)
                     }
                 }
         }
@@ -533,64 +671,22 @@ struct FramesWorkspaceView: View {
 
     private var frameTagQuickFilterBar: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label("图片标签", systemImage: "tag")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                if !selectedFrameTags.isEmpty {
-                    Text("\(selectedFrameTags.count)")
-                        .font(.caption2.monospacedDigit().weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.08))
-                        .clipShape(Capsule())
-                }
-
-                Spacer(minLength: 0)
-
-                Button {
-                    selectedFrameTags.removeAll()
-                } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .disabled(selectedFrameTags.isEmpty)
-                .help("显示全部图片")
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isFrameTagFilterPresented = false
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .help("收起标签筛选")
-            }
-
             if libraryStore.allFrameTags.isEmpty {
-                Text("暂无图片标签")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(minHeight: 28, alignment: .leading)
+                HStack(spacing: 8) {
+                    Text("暂无图片标签")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 28, alignment: .leading)
             } else {
-                WrappingFilterChipGroup {
-                    QuickFilterChoiceChip(
-                        title: "全部",
-                        systemImage: "photo.on.rectangle",
-                        isSelected: selectedFrameTags.isEmpty
-                    ) {
-                        selectedFrameTags.removeAll()
-                    }
+                let tagCounts = frameTagCountsByName(for: libraryStore.allFrameTags)
 
+                WrappingFilterChipGroup {
                     ForEach(libraryStore.allFrameTags, id: \.self) { tag in
                         QuickFilterChoiceChip(
                             title: tag,
-                            tagColorKey: tag,
+                            count: tagCounts[tag],
                             isSelected: selectedFrameTags.contains(tag)
                         ) {
                             toggleFrameTag(tag)
@@ -600,7 +696,7 @@ struct FramesWorkspaceView: View {
                 .padding(.vertical, 1)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Design.libraryContentInset)
         .padding(.vertical, 10)
     }
 
@@ -643,17 +739,11 @@ struct FramesWorkspaceView: View {
     }
 
     private func frameModeButtonLabel(for mode: FramesBoardMode, isSelected: Bool) -> some View {
-        Image(systemName: mode.icon)
-            .font(.system(size: 12, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(isSelected ? Color.white.opacity(0.92) : Design.libraryToolbarIconTint)
-            .frame(
-                width: frameModeButtonWidth(for: mode),
-                height: Design.libraryToolbarButtonSlotHeight,
-                alignment: .center
-            )
-            .background(isSelected ? Color.white.opacity(0.12) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        libraryToolbarIcon(
+            systemName: mode.icon,
+            size: 12,
+            tint: isSelected ? Color.white.opacity(0.92) : Design.libraryToolbarIconTint
+        )
     }
 
     private func frameModeButtonWidth(for _: FramesBoardMode) -> CGFloat {
@@ -681,30 +771,32 @@ struct FramesWorkspaceView: View {
                 .padding(10)
                 .padding(.bottom, 42)
             }
-            .scrollIndicators(.hidden)
-            .background(HiddenScrollIndicators())
+            .fadingVerticalScrollIndicators()
 
             storyboardVideoPickerSizeControl
                 .padding(12)
         }
         .frame(width: storyboardVideoPickerWidth, height: storyboardVideoPickerHeight)
+        .onAppear {
+            prewarmStoryboardVideoPickerThumbnailsIfNeeded()
+        }
+        .onChange(of: storyboardVideoPaths) { _, _ in
+            prewarmStoryboardVideoPickerThumbnailsIfNeeded()
+        }
     }
 
     private func storyboardVideoPickerItem(_ video: VideoItem) -> some View {
         let path = video.url.path
         let isSelected = selectedStoryboardVideo?.url.path == path
-        let cuts = libraryStore.sceneCutProgressesByVideoPath[path] ?? normalizedSceneCutProgresses(for: video)
         let columnCount = storyboardVideoPickerColumnCount
 
         return Button {
-            selectedVideoPath = path
-            prepareStoryboard(for: video)
-            isStoryboardVideoPickerPresented = false
+            handleStoryboardVideoPickerSelection(video)
         } label: {
             if columnCount == 1 {
-                storyboardVideoPickerListLabel(video: video, path: path, cuts: cuts, isSelected: isSelected)
+                storyboardVideoPickerListLabel(video: video, path: path)
             } else {
-                storyboardVideoPickerGridLabel(video: video, path: path, cuts: cuts, isSelected: isSelected)
+                storyboardVideoPickerGridLabel(video: video, path: path)
             }
         }
         .buttonStyle(.plain)
@@ -718,76 +810,113 @@ struct FramesWorkspaceView: View {
 
     private func storyboardVideoPickerListLabel(
         video: VideoItem,
-        path: String,
-        cuts: [Double],
-        isSelected: Bool
+        path: String
     ) -> some View {
         HStack(spacing: 10) {
-            storyboardVideoPickerThumbnail(path: path)
+            storyboardVideoPickerCover(video: video, path: path)
                 .frame(width: 74, height: 46)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(video.name)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                    if let duration = libraryStore.durationByVideoPath[path] {
-                        Text(formatDuration(duration))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                StoryboardVideoTimeline(cuts: cuts)
-                    .frame(height: 14)
-            }
-
-            storyboardVideoPickerSelectionIcon(isSelected: isSelected, size: 13)
+            Text(video.name)
+                .font(.caption.weight(.semibold))
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(8)
+        .frame(height: storyboardVideoPickerItemHeight(for: 1), alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
 
     private func storyboardVideoPickerGridLabel(
         video: VideoItem,
-        path: String,
-        cuts: [Double],
-        isSelected: Bool
+        path: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ZStack(alignment: .topTrailing) {
-                storyboardVideoPickerThumbnail(path: path)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: storyboardVideoPickerThumbnailHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        let columnCount = storyboardVideoPickerColumnCount
+        let metrics = storyboardVideoPickerGridMetrics(for: columnCount)
 
-                storyboardVideoPickerSelectionIcon(isSelected: isSelected, size: 12)
-                    .padding(5)
-                    .background(.black.opacity(0.34))
-                    .clipShape(Circle())
-                    .padding(5)
-            }
+        return VStack(alignment: .leading, spacing: metrics.contentSpacing) {
+            storyboardVideoPickerCover(video: video, path: path)
+                .frame(maxWidth: .infinity)
+                .frame(height: metrics.thumbnailHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
             Text(video.name)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(2)
                 .truncationMode(.middle)
-
-            if let duration = libraryStore.durationByVideoPath[path] {
-                Text(formatDuration(duration))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
-
-            StoryboardVideoTimeline(cuts: cuts)
-                .frame(height: 12)
+                .lineSpacing(1)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: metrics.titleHeight,
+                    maxHeight: metrics.titleHeight,
+                    alignment: .topLeading
+                )
+                .clipped()
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, minHeight: storyboardVideoPickerItemHeight(for: storyboardVideoPickerColumnCount), alignment: .topLeading)
+        .padding(metrics.padding)
+        .frame(height: storyboardVideoPickerItemHeight(for: columnCount), alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .contentShape(Rectangle())
+    }
+
+    private func handleStoryboardVideoPickerSelection(_ video: VideoItem) {
+        let path = video.url.path
+        libraryStore.loadCachedSceneCuts(for: video)
+
+        if libraryStore.hasSceneRecognitionResult(for: video) {
+            pendingStoryboardRecognitionPath = nil
+            selectedVideoPath = path
+            prepareStoryboard(for: video)
+            isStoryboardVideoPickerPresented = false
+            return
+        }
+
+        pendingStoryboardRecognitionPath = path
+        libraryStore.detectSceneCuts(for: video)
+    }
+
+    private func completePendingStoryboardRecognitionIfReady() {
+        guard let path = pendingStoryboardRecognitionPath,
+              libraryStore.sceneDetectionProgress[path] == nil,
+              let video = storyboardVideos.first(where: { $0.url.path == path }),
+              libraryStore.hasSceneRecognitionResult(for: video)
+        else { return }
+
+        pendingStoryboardRecognitionPath = nil
+        selectedVideoPath = path
+        prepareStoryboard(for: video)
+        isStoryboardVideoPickerPresented = false
+    }
+
+    private func prewarmStoryboardVideoPickerThumbnailsIfNeeded() {
+        let key = storyboardVideoPaths.joined(separator: "\n")
+        guard storyboardThumbnailPrewarmKey != key else { return }
+        storyboardThumbnailPrewarmKey = key
+        libraryStore.prewarmCachedThumbnailImages(for: storyboardVideos)
+    }
+
+    private func storyboardVideoPickerCover(video: VideoItem, path: String) -> some View {
+        ZStack {
+            storyboardVideoPickerThumbnail(path: path)
+
+            VStack(alignment: .leading) {
+                HStack(alignment: .top) {
+                    storyboardVideoPickerRecognitionBadge(for: video)
+                    Spacer(minLength: 0)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack {
+                    Spacer(minLength: 0)
+                    storyboardVideoPickerTimeBadge(path: path)
+                }
+            }
+            .padding(6)
+        }
+        .clipped()
     }
 
     private func storyboardVideoPickerThumbnail(path: String) -> some View {
@@ -806,18 +935,89 @@ struct FramesWorkspaceView: View {
         .clipped()
     }
 
-    private func storyboardVideoPickerSelectionIcon(isSelected: Bool, size: CGFloat) -> some View {
-        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-            .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(isSelected ? Design.neutralStrongAccent : .secondary)
+    @ViewBuilder
+    private func storyboardVideoPickerRecognitionBadge(for video: VideoItem) -> some View {
+        let path = video.url.path
+        if let progress = libraryStore.sceneDetectionProgress[path] {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(progressPercentText(progress))
+                    .font(Design.numericCaption2().weight(.bold))
+                    .foregroundStyle(.white.opacity(0.92))
+
+                ProgressView(value: normalizedProgressFraction(progress))
+                    .progressViewStyle(.linear)
+                    .controlSize(.mini)
+                    .frame(width: storyboardVideoPickerColumnCount == 1 ? 46 : 72)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(.black.opacity(0.40))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        } else if libraryStore.sceneRecognitionCutCount(for: video) != nil {
+            HStack(spacing: 5) {
+                Text("已识别")
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Color.white.opacity(0.88))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.white.opacity(0.14))
+            .clipShape(Capsule())
+        }
     }
 
-    private var storyboardVideoPickerThumbnailHeight: CGFloat {
-        storyboardVideoPickerColumnCount == 2 ? 96 : 68
+    @ViewBuilder
+    private func storyboardVideoPickerTimeBadge(path: String) -> some View {
+        if let duration = libraryStore.durationByVideoPath[path] {
+            Text(formatDuration(duration))
+                .font(Design.numericFont(size: 12, weight: .bold))
+                .foregroundStyle(.white.opacity(0.92))
+                .shadow(color: .black.opacity(0.72), radius: 2.4, x: 0, y: 1)
+                .shadow(color: .black.opacity(0.38), radius: 7, x: 0, y: 2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.84)
+                .allowsTightening(true)
+        }
+    }
+
+    private struct StoryboardVideoPickerGridMetrics {
+        let padding: CGFloat
+        let thumbnailHeight: CGFloat
+        let contentSpacing: CGFloat
+        let titleHeight: CGFloat
+    }
+
+    private func storyboardVideoPickerGridMetrics(for columnCount: Int) -> StoryboardVideoPickerGridMetrics {
+        switch columnCount {
+        case 2:
+            return StoryboardVideoPickerGridMetrics(
+                padding: 8,
+                thumbnailHeight: 104,
+                contentSpacing: 8,
+                titleHeight: 38
+            )
+        case 3:
+            return StoryboardVideoPickerGridMetrics(
+                padding: 8,
+                thumbnailHeight: 88,
+                contentSpacing: 8,
+                titleHeight: 38
+            )
+        default:
+            return StoryboardVideoPickerGridMetrics(
+                padding: 8,
+                thumbnailHeight: 46,
+                contentSpacing: 0,
+                titleHeight: 0
+            )
+        }
     }
 
     private func storyboardVideoPickerItemHeight(for columnCount: Int) -> CGFloat {
-        columnCount == 1 ? 62 : (columnCount == 2 ? 154 : 126)
+        guard columnCount > 1 else { return 62 }
+        let metrics = storyboardVideoPickerGridMetrics(for: columnCount)
+        return metrics.padding * 2 + metrics.thumbnailHeight + metrics.contentSpacing + metrics.titleHeight
     }
 
     private var storyboardVideoPickerSizeControl: some View {
@@ -858,10 +1058,10 @@ struct FramesWorkspaceView: View {
     }
 
     private var frameGridSizeControl: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Image(systemName: "square.grid.3x3")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Design.libraryToolbarIconTint)
 
             Slider(
                 value: Binding(
@@ -875,67 +1075,16 @@ struct FramesWorkspaceView: View {
                 ),
                 in: 0...2
             )
-            .frame(width: 56)
+            .frame(width: 64)
             .controlSize(.small)
-            .help("图片看板密度")
 
             Image(systemName: "rectangle")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Design.libraryToolbarIconTint)
         }
-    }
-
-    private var frameTagFilterPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("图片标签筛选")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("全部") {
-                    selectedFrameTags.removeAll()
-                }
-                .font(.caption)
-                .buttonStyle(.borderless)
-                .disabled(selectedFrameTags.isEmpty)
-            }
-
-            if libraryStore.allFrameTags.isEmpty {
-                AppEmptyState(title: "暂无图片标签", style: .inline, alignment: .leading)
-                    .frame(minHeight: 36)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(libraryStore.allFrameTags, id: \.self) { tag in
-                            Button {
-                                toggleFrameTag(tag)
-                            } label: {
-                                HStack(spacing: 7) {
-                                    Image(systemName: selectedFrameTags.contains(tag) ? "checkmark.square.fill" : "square")
-                                        .foregroundStyle(selectedFrameTags.contains(tag) ? Design.neutralStrongAccent : .secondary)
-                                        .frame(width: 15)
-                                    VideoTagColorDot(tag: tag)
-                                    Text(tag)
-                                        .font(.caption)
-                                        .lineLimit(1)
-                                    Spacer(minLength: 0)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 5)
-                            .background(selectedFrameTags.contains(tag) ? Color.white.opacity(0.08) : Color.clear)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                    }
-                }
-                .frame(maxHeight: 260)
-                .scrollIndicators(.hidden)
-            }
-        }
-        .padding(12)
-        .frame(width: 280)
+        .padding(.horizontal, 9)
+        .frame(height: Design.libraryToolbarButtonSlotHeight)
+        .help("图片看板密度")
     }
 
     private func syncStoryboardSelectionIfNeeded() {
@@ -958,7 +1107,8 @@ struct FramesWorkspaceView: View {
         libraryStore.loadCachedSceneCuts(for: video)
         if libraryStore.sceneCutsByVideoPath[path] != nil {
             libraryStore.hydrateSceneThumbnailsIfNeeded(for: video)
-        } else if libraryStore.sceneDetectionProgress[path] == nil {
+        } else if libraryStore.sceneDetectionProgress[path] == nil,
+                  libraryStore.sceneDetectionErrorByVideoPath[path] == nil {
             libraryStore.detectSceneCuts(for: video)
         }
     }
@@ -1046,23 +1196,89 @@ struct FramesWorkspaceView: View {
         Int((time * 50).rounded())
     }
 
-    private func normalizedSceneCutProgresses(for video: VideoItem) -> [Double] {
-        let path = video.url.path
-        guard let duration = libraryStore.durationByVideoPath[path], duration > 0 else { return [] }
-        return libraryStore.sceneCutsByVideoPath[path, default: []]
-            .map { min(1, max(0, $0.time / duration)) }
-    }
-
     @ViewBuilder
     private func storyboardProgressView(for video: VideoItem) -> some View {
         let path = video.url.path
         if let progress = libraryStore.sceneDetectionProgress[path] {
-            RecognitionProgressRow(message: "正在识别分镜...", progress: progress)
-                .recognitionProgressCard()
+            storyboardRecognitionStatus(progress: progress)
+                .padding(.vertical, 10)
+        } else if let message = libraryStore.sceneDetectionErrorByVideoPath[path] {
+            storyboardRecognitionFailureStatus(message: message, video: video)
+                .padding(.vertical, 10)
         } else if libraryStore.isHydratingSceneThumbnails(for: video) {
             RecognitionProgressRow(message: "正在补齐分镜缩略图...", progress: nil, showPercent: false)
                 .recognitionProgressCard()
         }
+    }
+
+    private func storyboardRecognitionCenter(progress: Double) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: 42, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            storyboardRecognitionStatus(progress: progress, showsIcon: false)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func storyboardRecognitionFailureCenter(message: String, video: VideoItem) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 42, weight: .semibold))
+                .foregroundStyle(.red.opacity(0.88))
+
+            storyboardRecognitionFailureStatus(message: message, video: video)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func storyboardRecognitionStatus(progress: Double, showsIcon: Bool = true) -> some View {
+        HStack(spacing: 9) {
+            if showsIcon {
+                Image(systemName: "rectangle.stack")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("正在识别分镜")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(progressPercentText(progress))
+                .font(Design.numericFont(size: 20, weight: .bold))
+                .foregroundStyle(.primary.opacity(0.78))
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func storyboardRecognitionFailureStatus(message: String, video: VideoItem) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.red.opacity(0.9))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("场景识别失败")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+
+            Button {
+                libraryStore.detectSceneCuts(for: video, force: true)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .help("重新识别场景")
+        }
+        .recognitionProgressCard()
     }
 
     private func storyboardEmptyTitle(for video: VideoItem) -> String {
@@ -1087,77 +1303,36 @@ struct FramesWorkspaceView: View {
         }
     }
 
+    private func frameTagCountsByName(for tags: [String]) -> [String: Int] {
+        let query = normalizedSearch(frameSearchText)
+        let requestedTags = Set(tags)
+        var counts: [String: Int] = [:]
+
+        for frame in libraryStore.collectedFrames {
+            guard query.isEmpty || frameMatchesSearch(frame, query: query) else { continue }
+            let frameTags = Set(frame.tags)
+            guard selectedFrameTags.isSubset(of: frameTags) else { continue }
+
+            for tag in frameTags where requestedTags.contains(tag) {
+                counts[tag, default: 0] += 1
+            }
+        }
+
+        return Dictionary(uniqueKeysWithValues: tags.map { ($0, counts[$0, default: 0]) })
+    }
+
     private func frameToolbarIcon(
         systemName: String,
         size: CGFloat,
         tint: Color = Design.libraryToolbarIconTint
     ) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: size, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(tint)
-            .frame(
-                width: Design.libraryToolbarButtonSlotWidth,
-                height: Design.libraryToolbarButtonSlotHeight,
-                alignment: .center
-            )
-    }
-
-    private func toolbarMenuLabel(title: String, systemImage: String, maxWidth: CGFloat) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Design.libraryToolbarIconTint)
-                .frame(width: 14)
-
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 9)
-        .frame(maxWidth: maxWidth, minHeight: Design.libraryToolbarButtonSlotHeight, maxHeight: Design.libraryToolbarButtonSlotHeight)
-        .background(.white.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 0.7)
-        }
-    }
-
-    private func frameSectionDivider(_ title: String) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            Rectangle()
-                .fill(.white.opacity(0.10))
-                .frame(height: 1)
-
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .layoutPriority(1)
-
-            Rectangle()
-                .fill(.white.opacity(0.10))
-                .frame(height: 1)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 10)
+        libraryToolbarIcon(systemName: systemName, size: size, tint: tint)
     }
 
     private func storyboardBoardCard(_ item: FrameStoryboardItem, title: String) -> some View {
         FrameBoardImageTile(
             image: item.thumbnailImage,
             numberText: title,
-            isSelected: item.sample?.id == selectedFrameID,
-            selectedStrokeColor: item.isScreenshot ? Design.screenshotFrameAccent.opacity(0.98) : .white.opacity(0.36),
-            selectedStrokeWidth: item.isScreenshot ? 1.4 : 1.1,
             onTap: {
                 activateStoryboardItem(item)
             },
@@ -1165,23 +1340,25 @@ struct FramesWorkspaceView: View {
                 storyboardDragProvider(for: item)
             }
         ) { _ in
-            if let sample = item.sample {
-                InlineTagEditorButton(
-                    title: "图片标签",
-                    tags: sample.tags,
-                    suggestedTags: libraryStore.allFrameTags,
-                    onAdd: { libraryStore.addFrameTag($0, to: sample) },
-                    onRemove: { libraryStore.removeFrameTag($0, from: sample) }
-                )
-            } else if let cut = item.cut {
-                Button {
-                    libraryStore.markSceneFrameExported(video: item.video, cut: cut, sceneIndex: item.sceneIndex)
-                } label: {
-                    cardOverlayExportButtonIcon()
-                }
-                .buttonStyle(.plain)
-                .help("导出这张分镜")
-            }
+            let sample = latestStoryboardSample(for: item)
+            FrameCardTagMenuButton(
+                tags: sample?.tags ?? [],
+                suggestedTags: libraryStore.allFrameTags,
+                onAdd: { addStoryboardFrameTag($0, to: item) },
+                onRemove: { tag in
+                    if let sample = latestStoryboardSample(for: item) {
+                        libraryStore.removeFrameTagOrDeleteIfEmpty(tag, from: sample)
+                    }
+                },
+                onJumpToVideo: { goHome(item.video.url.path, item.time) },
+                onShowInFinder: sample.map { sample in
+                    { showFrameInFinder(sample) }
+                },
+                onDelete: sample.map { sample in
+                    { deleteFrame(sample) }
+                },
+                showsUnavailableFileActions: item.cut != nil && sample == nil
+            )
         }
         .help(item.sample == nil ? "回到原视频这个分镜" : "\(item.video.name) · \(clockText(item.time))")
     }
@@ -1208,11 +1385,15 @@ struct FramesWorkspaceView: View {
         )
     }
 
+    private func video(for path: String) -> VideoItem {
+        libraryStore.videos.first { $0.url.path == path }
+            ?? VideoItem(url: URL(fileURLWithPath: path))
+    }
+
     private func frameBoardCard(_ frame: SampledFrame, title: String) -> some View {
         FrameBoardImageTile(
             image: libraryStore.thumbnailImage(for: frame),
             numberText: title,
-            isSelected: selectedFrameID == frame.id,
             onTap: {
                 selectedFrameID = frame.id
                 detailFrame = latestFrame(frame)
@@ -1221,13 +1402,32 @@ struct FramesWorkspaceView: View {
                 libraryStore.fullResolutionFrameProvider(for: frame)
             }
         ) { _ in
-            InlineTagEditorButton(
-                title: "图片标签",
+            FrameCardTagMenuButton(
                 tags: frame.tags,
                 suggestedTags: libraryStore.allFrameTags,
                 onAdd: { libraryStore.addFrameTag($0, to: frame) },
-                onRemove: { libraryStore.removeFrameTag($0, from: frame) }
+                onRemove: { libraryStore.removeFrameTagOrDeleteIfEmpty($0, from: frame) },
+                onJumpToVideo: { goHome(frame.videoPath, frame.time) },
+                onShowInFinder: { showFrameInFinder(frame) },
+                onDelete: { deleteFrame(frame) }
             )
+        }
+    }
+
+    private func showFrameInFinder(_ frame: SampledFrame) {
+        if let imageURL = libraryStore.imageExportURL(for: frame) {
+            NSWorkspace.shared.activateFileViewerSelecting([imageURL])
+        } else {
+            let video = video(for: frame.videoPath)
+            NSWorkspace.shared.open(libraryStore.imageExportDestination(for: video))
+        }
+    }
+
+    private func deleteFrame(_ frame: SampledFrame) {
+        libraryStore.deleteSampledFrame(frame)
+        if selectedFrameID == frame.id {
+            selectedFrameID = nil
+            detailFrame = nil
         }
     }
 
@@ -1268,53 +1468,36 @@ struct FramesWorkspaceView: View {
     private func frameDetailOverlay(_ frame: SampledFrame) -> some View {
         detailOverlayContainer(dismiss: { detailFrame = nil }) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(frame.videoName)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text("\(clockText(frame.time)) · \(frame.kind == .screenshot ? "手动截图帧" : "场景代表帧")")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button {
-                        detailFrame = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                }
+                ZStack(alignment: .topTrailing) {
+                    selectedFrameDetailPreview(frame)
 
-                selectedFramePreview(frame)
-                    .frame(maxWidth: .infinity, maxHeight: 430)
-                    .background(Color.black.opacity(0.24))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    FrameDetailMoreButton(
+                        tags: latestFrame(frame).tags,
+                        suggestedTags: libraryStore.allFrameTags,
+                        onAdd: {
+                            libraryStore.addFrameTag($0, to: frame)
+                            detailFrame = latestFrame(frame)
+                        },
+                        onRemove: {
+                            let deleted = libraryStore.removeFrameTagOrDeleteIfEmpty($0, from: frame)
+                            detailFrame = deleted ? nil : latestFrame(frame)
+                        },
+                        onJumpToVideo: {
+                            detailFrame = nil
+                            goHome(frame.videoPath, frame.time)
+                        },
+                        onShowInFinder: { showFrameInFinder(frame) },
+                        onDelete: {
+                            deleteFrame(frame)
+                            detailFrame = nil
+                        }
+                    )
+                    .padding(10)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
 
                 ColorSwatches(imageData: frame.thumbnailData, orientation: .horizontal)
                     .frame(maxWidth: .infinity)
-
-                HStack(spacing: 10) {
-                    InlineTagEditorButton(
-                        title: "图片标签",
-                        tags: latestFrame(frame).tags,
-                        suggestedTags: libraryStore.allFrameTags,
-                        onAdd: { libraryStore.addFrameTag($0, to: frame); detailFrame = latestFrame(frame) },
-                        onRemove: { libraryStore.removeFrameTag($0, from: frame); detailFrame = latestFrame(frame) }
-                    )
-
-                    Spacer()
-
-                    Button {
-                        detailFrame = nil
-                        goHome(frame.videoPath, frame.time)
-                    } label: {
-                        Label("回到原视频", systemImage: "arrowshape.turn.up.left.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
             }
             .padding(16)
             .frame(width: 720)
@@ -1325,62 +1508,47 @@ struct FramesWorkspaceView: View {
                     .stroke(.white.opacity(0.14), lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.40), radius: 26, y: 16)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .onTapGesture { }
         }
     }
 
     private func storyboardDetailOverlay(_ item: FrameStoryboardItem) -> some View {
         detailOverlayContainer(dismiss: { detailStoryboardItem = nil }) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(storyboardCardTitle(for: item, index: item.sceneIndex ?? 0))
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text("\(item.video.name) · \(clockText(item.time))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer()
-                    Button {
-                        detailStoryboardItem = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(.plain)
-                }
+                ZStack(alignment: .topTrailing) {
+                    storyboardItemDetailPreview(item)
 
-                storyboardItemPreview(item)
-                    .frame(maxWidth: .infinity, maxHeight: 430)
-                    .background(Color.black.opacity(0.24))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    let sample = latestStoryboardSample(for: item)
+
+                    FrameDetailMoreButton(
+                        tags: sample?.tags ?? [],
+                        suggestedTags: libraryStore.allFrameTags,
+                        onAdd: storyboardTagAddAction(for: item),
+                        onRemove: sample.map { sample in
+                            { libraryStore.removeFrameTagOrDeleteIfEmpty($0, from: sample) }
+                        },
+                        onJumpToVideo: {
+                            detailStoryboardItem = nil
+                            goHome(item.video.url.path, item.time)
+                        },
+                        onShowInFinder: sample.map { sample in
+                            { showFrameInFinder(sample) }
+                        },
+                        onDelete: sample.map { sample in
+                            {
+                                deleteFrame(sample)
+                                detailStoryboardItem = nil
+                            }
+                        },
+                        showsUnavailableFileActions: item.cut != nil && sample == nil
+                    )
+                    .padding(10)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
 
                 ColorSwatches(imageData: storyboardColorData(for: item), orientation: .horizontal)
                     .frame(maxWidth: .infinity)
-
-                HStack(spacing: 10) {
-                    if let sample = item.sample {
-                        InlineTagEditorButton(
-                            title: "图片标签",
-                            tags: sample.tags,
-                            suggestedTags: libraryStore.allFrameTags,
-                            onAdd: { libraryStore.addFrameTag($0, to: sample) },
-                            onRemove: { libraryStore.removeFrameTag($0, from: sample) }
-                        )
-                    }
-
-                    Spacer()
-
-                    Button {
-                        detailStoryboardItem = nil
-                        goHome(item.video.url.path, item.time)
-                    } label: {
-                        Label("回到原视频", systemImage: "arrowshape.turn.up.left.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
             }
             .padding(16)
             .frame(width: 720)
@@ -1391,21 +1559,114 @@ struct FramesWorkspaceView: View {
                     .stroke(.white.opacity(0.14), lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.40), radius: 26, y: 16)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .onTapGesture { }
         }
+    }
+
+    private func selectedFrameDetailPreview(_ frame: SampledFrame) -> some View {
+        let fallbackImage = libraryStore.thumbnailImage(for: frame)
+        return detailPreviewBox(image: fallbackImage) {
+            selectedFramePreview(frame, fallbackImage: fallbackImage)
+        }
+    }
+
+    private func storyboardItemDetailPreview(_ item: FrameStoryboardItem) -> some View {
+        let fallbackImage = storyboardPreviewFallbackImage(for: item)
+        return detailPreviewBox(image: fallbackImage) {
+            storyboardItemPreview(item, fallbackImage: fallbackImage)
+        }
+    }
+
+    private func detailPreviewBox<Content: View>(
+        image: NSImage?,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let previewSize = detailPreviewSize(for: image)
+        return content()
+            .frame(width: previewSize.width, height: previewSize.height)
+            .background(Color.black.opacity(0.24))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func detailPreviewSize(for image: NSImage?) -> CGSize {
+        let aspectRatio = detailPreviewAspectRatio(for: image)
+        let maxWidth: CGFloat = 688
+        let maxHeight: CGFloat = 430
+        let widthAtMaxHeight = maxHeight * aspectRatio
+
+        if widthAtMaxHeight <= maxWidth {
+            return CGSize(width: widthAtMaxHeight, height: maxHeight)
+        }
+
+        return CGSize(width: maxWidth, height: maxWidth / aspectRatio)
+    }
+
+    private func detailPreviewAspectRatio(for image: NSImage?) -> CGFloat {
+        guard
+            let size = image?.size,
+            size.width > 0,
+            size.height > 0
+        else { return 16 / 9 }
+
+        return min(10, max(0.1, size.width / size.height))
     }
 
     private func latestFrame(_ frame: SampledFrame) -> SampledFrame {
         libraryStore.sampledFrame(id: frame.id) ?? frame
     }
 
+    private func latestStoryboardSample(for item: FrameStoryboardItem) -> SampledFrame? {
+        if let sample = item.sample {
+            return latestFrame(sample)
+        }
+
+        guard let cut = item.cut else { return nil }
+        return libraryStore.sampledFrames(for: item.video).first {
+            $0.kind == .sceneRepresentative &&
+            sceneSampleKey(for: $0.time) == sceneSampleKey(for: cut.time)
+        }
+    }
+
+    private func storyboardTagAddAction(for item: FrameStoryboardItem) -> ((String) -> Void)? {
+        guard latestStoryboardSample(for: item) != nil || item.cut != nil else { return nil }
+        return { tag in
+            addStoryboardFrameTag(tag, to: item)
+        }
+    }
+
+    private func addStoryboardFrameTag(_ tag: String, to item: FrameStoryboardItem) {
+        if let sample = latestStoryboardSample(for: item) {
+            libraryStore.addFrameTag(tag, to: sample)
+            return
+        }
+
+        guard let cut = item.cut else { return }
+        let video = item.video
+        let sceneIndex = item.sceneIndex
+        Task {
+            if let frame = await libraryStore.ensureSceneFrameExported(
+                video: video,
+                cut: cut,
+                sceneIndex: sceneIndex
+            ) {
+                libraryStore.addFrameTag(tag, to: frame)
+            }
+        }
+    }
+
     @ViewBuilder
-    private func storyboardItemPreview(_ item: FrameStoryboardItem) -> some View {
+    private func storyboardItemPreview(_ item: FrameStoryboardItem, fallbackImage: NSImage? = nil) -> some View {
         FullResolutionFramePreview(
             videoURL: item.video.url,
             time: storyboardOriginalFrameTime(for: item),
-            fallbackImage: item.sample.flatMap { libraryStore.thumbnailImage(for: $0) } ?? item.thumbnailImage,
+            fallbackImage: fallbackImage ?? storyboardPreviewFallbackImage(for: item),
             dragItemProvider: { storyboardDragProvider(for: item) }
         )
+    }
+
+    private func storyboardPreviewFallbackImage(for item: FrameStoryboardItem) -> NSImage? {
+        item.sample.flatMap { libraryStore.thumbnailImage(for: $0) } ?? item.thumbnailImage
     }
 
     private func storyboardColorData(for item: FrameStoryboardItem) -> Data {
@@ -1424,11 +1685,11 @@ struct FramesWorkspaceView: View {
     }
 
     @ViewBuilder
-    private func selectedFramePreview(_ frame: SampledFrame) -> some View {
+    private func selectedFramePreview(_ frame: SampledFrame, fallbackImage: NSImage? = nil) -> some View {
         FullResolutionFramePreview(
             videoURL: URL(fileURLWithPath: frame.videoPath),
             time: frame.time,
-            fallbackImage: libraryStore.thumbnailImage(for: frame),
+            fallbackImage: fallbackImage ?? libraryStore.thumbnailImage(for: frame),
             dragItemProvider: { libraryStore.fullResolutionFrameProvider(for: frame) }
         )
     }
@@ -1438,64 +1699,5 @@ struct FramesWorkspaceView: View {
             return sample.time
         }
         return item.cut == nil ? item.time : item.time + 0.08
-    }
-
-    private func frameAnalysisView(for frame: SampledFrame) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                analyzeFrame(frame)
-            } label: {
-                Label(isAnalyzingCurrentFrame(frame) ? "正在分析" : "分析画面", systemImage: "sparkles")
-            }
-            .disabled(isAnalyzingCurrentFrame(frame))
-            .buttonStyle(.bordered)
-            .help("使用本机 Ollama 视觉模型分析景别、构图和色调")
-
-            switch frameAnalysisState {
-            case .idle:
-                EmptyView()
-            case .loading where analyzedFrameID == frame.id:
-                RecognitionProgressRow(
-                    message: "正在调用本机视觉模型...",
-                    progress: nil,
-                    showPercent: false
-                )
-                .recognitionProgressCard()
-            case let .loaded(analysis) where analyzedFrameID == frame.id:
-                FrameAnalysisSummary(analysis: analysis)
-            case let .failed(message) where analyzedFrameID == frame.id:
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(Color.red.opacity(0.86))
-                    .fixedSize(horizontal: false, vertical: true)
-            default:
-                EmptyView()
-            }
-        }
-    }
-
-    private func isAnalyzingCurrentFrame(_ frame: SampledFrame) -> Bool {
-        if case .loading = frameAnalysisState, analyzedFrameID == frame.id {
-            return true
-        }
-        return false
-    }
-
-    private func analyzeFrame(_ frame: SampledFrame) {
-        frameAnalysisTask?.cancel()
-        analyzedFrameID = frame.id
-        frameAnalysisState = .loading
-        libraryStore.prepareExternalServiceWork()
-
-        frameAnalysisTask = Task { @MainActor in
-            do {
-                let analysis = try await LocalFrameAnalyzer.analyze(imageData: frame.thumbnailData)
-                guard !Task.isCancelled, analyzedFrameID == frame.id else { return }
-                frameAnalysisState = .loaded(analysis)
-            } catch {
-                guard !Task.isCancelled, analyzedFrameID == frame.id else { return }
-                frameAnalysisState = .failed(LocalFrameAnalyzer.userFacingMessage(for: error))
-            }
-        }
     }
 }

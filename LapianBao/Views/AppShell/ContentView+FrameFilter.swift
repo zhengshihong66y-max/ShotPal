@@ -20,15 +20,12 @@ extension ContentView {
     @ViewBuilder
     func frameVideoFilterColumn(isCompact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Spacer(minLength: 4)
-
-                HStack(spacing: 8) {
-                    frameAllButton
-                }
+            HStack(spacing: Design.libraryToolbarButtonGap) {
+                Spacer(minLength: 0)
+                frameAllButton
             }
-            .frame(minHeight: Design.libraryToolbarHeight)
-            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: Design.libraryToolbarHeight, alignment: .leading)
+            .padding(.horizontal, Design.libraryContentInset)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -37,10 +34,9 @@ extension ContentView {
                     }
                 }
                 .padding(.vertical, 2)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Design.libraryContentInset)
             }
-            .scrollIndicators(.hidden)
-            .background(HiddenScrollIndicators())
+            .fadingVerticalScrollIndicators()
             .overlay {
                 if videosWithCollectedFrames.isEmpty {
                     AppEmptyState(
@@ -63,23 +59,18 @@ extension ContentView {
             frameFilterVideoPath = nil
             frameSelectedFrameID = libraryStore.collectedFrames.first?.id
         } label: {
-            Image(systemName: frameFilterVideoPath == nil ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Design.libraryToolbarIconTint)
-                .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+            libraryToolbarIcon(
+                systemName: frameFilterVideoPath == nil ? "photo.on.rectangle.angled.fill" : "photo.on.rectangle.angled",
+                size: 12
+            )
                 .overlay(alignment: .topTrailing) {
                     if !libraryStore.collectedFrames.isEmpty {
-                        Text("\(libraryStore.collectedFrames.count)")
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Design.neutralBadgeFill)
-                            .clipShape(Capsule())
-                            .offset(x: 5, y: -4)
+                        libraryToolbarBadge(libraryStore.collectedFrames.count)
                     }
                 }
         }
         .buttonStyle(.plain)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
         .help("全部画面")
     }
@@ -94,9 +85,8 @@ extension ContentView {
                 thumbnailImage: thumbnailImage(for: video),
                 durationText: durationTextIfReady(for: video),
                 sourcePlatform: sourcePlatformName(for: video),
-                tags: libraryStore.tagsByVideoPath[video.url.path, default: []],
-                suggestedTags: libraryStore.allTags,
-                analysisItems: analysisMenuItems(for: video),
+                tags: libraryStore.videoTags(for: video),
+                suggestedTags: libraryStore.videoTagSuggestions(for: video),
                 isSelected: frameFilterVideoPath == video.url.path,
                 onSelect: {
                     frameFilterVideoPath = video.url.path
@@ -107,12 +97,6 @@ extension ContentView {
                 },
                 onRemoveTag: { tag in
                     libraryStore.removeTag(tag, from: video)
-                },
-                onRunAnalysis: { kind in
-                    runAnalysis(kind, for: video)
-                },
-                onDeleteAnalysis: { kind in
-                    deleteAnalysis(kind, for: video)
                 },
                 onDelete: {
                     libraryStore.removeVideo(video)

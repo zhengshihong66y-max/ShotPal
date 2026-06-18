@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-detect_music.py — Recognize songs in a video file using Shazam.
+detect_music.py — Recognize songs in a media file using Shazam.
 
 Setup (one-time, run from repo root):
     python3 -m venv Tools/music-env
     Tools/music-env/bin/pip install shazamio aiohttp requests
 
 Usage:
-    python detect_music.py <video_path>
+    python detect_music.py <media_path>
 
 Output (NDJSON, one JSON object per line):
     {"type": "progress", "value": 0.3, "message": "3/10"}
@@ -70,13 +70,13 @@ def emit(obj: dict) -> None:
     print(json.dumps(obj, ensure_ascii=False), flush=True)
 
 
-def get_duration(video_path: str) -> float:
+def get_duration(media_path: str) -> float:
     cmd = [
         find_tool("ffprobe"), "-v", "quiet",
         "-print_format", "json",
         "-show_format",
         "-show_streams",
-        video_path,
+        media_path,
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFPROBE_TIMEOUT)
@@ -97,12 +97,12 @@ def get_duration(video_path: str) -> float:
     return 0.0
 
 
-def extract_segment(video_path: str, start: float, duration: float, out_path: str) -> bool:
-    """Extract a mono 44.1kHz WAV segment from the video."""
+def extract_segment(media_path: str, start: float, duration: float, out_path: str) -> bool:
+    """Extract a mono 44.1kHz WAV segment from a media file."""
     cmd = [
         find_tool("ffmpeg"), "-y",
         "-ss", str(start),
-        "-i", video_path,
+        "-i", media_path,
         "-t", str(duration),
         "-vn",           # no video
         "-ar", "44100",
@@ -135,11 +135,13 @@ def itunes_enrich(title: str, artist: str) -> dict:
         for r in resp.json().get("results", []):
             if r.get("kind") == "song":
                 artwork = normalize_itunes_artwork_url(r.get("artworkUrl100", ""))
+                duration_ms = float(r.get("trackTimeMillis") or 0)
                 return {
                     "apple_music_url": r.get("trackViewUrl", ""),
                     "artwork_url": artwork,
                     "artist": r.get("artistName", ""),
                     "genre": r.get("primaryGenreName", ""),
+                    "duration": duration_ms / 1000 if duration_ms > 0 else 0,
                 }
     except Exception:
         pass
@@ -223,20 +225,20 @@ async def recognize(shazam: Shazam, seg_path: str, timeout: float = RECOGNIZE_TI
 
 async def main() -> None:
     if len(sys.argv) < 2:
-        emit({"type": "error", "message": "用法：detect_music.py <video_path>"})
+        emit({"type": "error", "message": "用法：detect_music.py <media_path>"})
         sys.exit(1)
 
-    video_path = sys.argv[1]
-    if not os.path.exists(video_path):
-        emit({"type": "error", "message": f"文件不存在：{video_path}"})
+    media_path = sys.argv[1]
+    if not os.path.exists(media_path):
+        emit({"type": "error", "message": f"文件不存在：{media_path}"})
         sys.exit(1)
 
-    duration = get_duration(video_path)
+    duration = get_duration(media_path)
     if duration <= 0:
-        emit({"type": "error", "message": "无法读取视频时长：请确认已安装 ffmpeg/ffprobe，且视频文件可被读取"})
+        emit({"type": "error", "message": "无法读取媒体时长：请确认已安装 ffmpeg/ffprobe，且文件可被读取"})
         sys.exit(1)
     if duration <= 3:
-        emit({"type": "error", "message": f"视频过短：当前约 {duration:.1f} 秒"})
+        emit({"type": "error", "message": f"音频过短：当前约 {duration:.1f} 秒"})
         sys.exit(1)
 
     # Build sampling positions
@@ -279,7 +281,7 @@ async def main() -> None:
                 break
 
             seg_path = os.path.join(tmpdir, f"seg_{idx}.wav")
-            ok = extract_segment(video_path, start, SEGMENT_DURATION, seg_path)
+            ok = extract_segment(media_path, start, SEGMENT_DURATION, seg_path)
 
             if ok:
                 remaining = max(1.0, TOTAL_TIMEOUT - (time.monotonic() - started_at))
@@ -298,6 +300,8 @@ async def main() -> None:
                             song["artwork_url"] = extra.get("artwork_url", "")
                         if not song.get("genre"):
                             song["genre"] = extra.get("genre", "")
+                        if not song.get("duration"):
+                            song["duration"] = extra.get("duration", 0)
 
                         song["detected_at"] = start
                         song["tags"] = clean_music_tags(song.get("artist", ""), song.get("genre", ""))

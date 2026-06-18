@@ -40,7 +40,7 @@ extension LibraryStore {
                 environment: env,
                 extraArguments: extraArguments
             )
-            let authorName = normalizedImportTag(videoInfo?.bestUploader ?? "")
+            let authorName = normalizedSourceAuthorName(videoInfo?.bestUploader ?? "")
             let sourceTitle = screenedSourceTitle(
                 rawTitle: videoInfo?.title,
                 description: videoInfo?.description,
@@ -100,6 +100,7 @@ extension LibraryStore {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
+            let startedAt = Date()
             let outputCollector = PipeLineCollector()
             let errorCollector = PipeLineCollector()
             let handleProgressLines: @Sendable ([String]) -> Void = { lines in
@@ -118,7 +119,16 @@ extension LibraryStore {
                 handleProgressLines(errorCollector.append(handle.availableData))
             }
 
-            try process.run()
+            do {
+                try process.run()
+            } catch {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                throw YTDLPDownloaderFailure(
+                    message: ytdlpLaunchFailureMessage(error, executableURL: executableURL),
+                    authorName: authorName
+                )
+            }
             processCallback?(process)
             process.waitUntilExit()
 
@@ -135,25 +145,30 @@ extension LibraryStore {
             let errorOutput = String(data: errorCollector.data, encoding: .utf8) ?? ""
 
             guard process.terminationStatus == 0 else {
-                throw YTDLPDownloaderFailure(message: errorOutput, authorName: authorName)
+                throw YTDLPDownloaderFailure(
+                    message: userFacingYTDLPFailureMessage(errorOutput, sourceURL: sourceURL),
+                    authorName: authorName
+                )
             }
 
-            let outputPath = output
-                .split(whereSeparator: \.isNewline)
-                .map(String.init)
-                .last?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            guard
-                let outputPath,
-                !outputPath.isEmpty,
-                FileManager.default.fileExists(atPath: outputPath)
-            else {
-                throw YTDLPDownloaderFailure(message: errorOutput, authorName: authorName)
+            guard let downloadedURL = downloadedVideoFileURL(
+                fromYTDLPOutput: output,
+                destinationDirectory: destinationDirectory,
+                expectedOutputURL: outputURL,
+                startedAt: startedAt
+            ) else {
+                throw YTDLPDownloaderFailure(
+                    message: userFacingYTDLPFailureMessage(
+                        [errorOutput, output].joined(separator: "\n"),
+                        sourceURL: sourceURL,
+                        fallback: "yt-dlp 下载完成，但找不到输出视频文件"
+                    ),
+                    authorName: authorName
+                )
             }
 
             return DownloadedVideoResult(
-                url: URL(fileURLWithPath: outputPath),
+                url: downloadedURL,
                 authorName: authorName,
                 sourceTitle: sourceTitle
             )
@@ -214,7 +229,7 @@ extension LibraryStore {
         try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: temporaryDirectory) }
 
-        let authorName = normalizedImportTag(plan.info.bestUploader ?? "")
+        let authorName = normalizedSourceAuthorName(plan.info.bestUploader ?? "")
         let sourceTitle = screenedSourceTitle(
             rawTitle: plan.info.title,
             description: plan.info.description,
@@ -354,27 +369,287 @@ extension LibraryStore {
             return ytdlpYouTubeArgumentAttempts()
         }
         if isInstagramURL(sourceURL) {
-            return [
+            var attempts = [
                 YTDLPArgumentAttempt(label: "本地解析", arguments: []),
                 YTDLPArgumentAttempt(label: "Chrome Cookie", arguments: ["--cookies-from-browser", "chrome"])
             ]
+            for proxyURL in currentYTDLPProxyURLs() {
+                let proxyArguments = ["--proxy", proxyURL]
+                let label = ytdlpProxyAttemptLabel(for: proxyURL)
+                attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
+                attempts.append(YTDLPArgumentAttempt(
+                    label: "\(label) + Chrome Cookie",
+                    arguments: proxyArguments + ["--cookies-from-browser", "chrome"]
+                ))
+            }
+            return attempts
         }
         return [YTDLPArgumentAttempt(arguments: [])]
     }
 
     nonisolated static func ytdlpYouTubeArgumentAttempts() -> [YTDLPArgumentAttempt] {
-        return [
-            YTDLPArgumentAttempt(label: "本地解析", arguments: []),
-            YTDLPArgumentAttempt(label: "备用客户端", arguments: ytdlpYouTubeClientArguments()),
-            YTDLPArgumentAttempt(label: "本地代理", arguments: ["--proxy", "http://127.0.0.1:1082"]),
-            YTDLPArgumentAttempt(label: "代理备用客户端", arguments: ["--proxy", "http://127.0.0.1:1082"] + ytdlpYouTubeClientArguments()),
-            YTDLPArgumentAttempt(label: "Safari Cookie", arguments: ["--cookies-from-browser", "safari"] + ytdlpYouTubeClientArguments()),
-            YTDLPArgumentAttempt(label: "远程组件", arguments: ["--remote-components", "ejs:github"] + ytdlpYouTubeClientArguments())
+        let browserCookieAttempts = ytdlpBrowserCookieAttempts()
+        let clientArguments = ytdlpYouTubeClientArguments()
+        var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
+        attempts += browserCookieAttempts
+
+        for proxyURL in currentYTDLPProxyURLs() {
+            let proxyArguments = ["--proxy", proxyURL]
+            let label = ytdlpProxyAttemptLabel(for: proxyURL)
+            attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
+            for cookieAttempt in browserCookieAttempts {
+                attempts.append(YTDLPArgumentAttempt(
+                    label: "\(label) + \(cookieAttempt.label)",
+                    arguments: proxyArguments + cookieAttempt.arguments
+                ))
+            }
+            attempts.append(YTDLPArgumentAttempt(label: "\(label)备用客户端", arguments: proxyArguments + clientArguments))
+        }
+
+        attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
+        for cookieAttempt in browserCookieAttempts {
+            attempts.append(YTDLPArgumentAttempt(
+                label: "\(cookieAttempt.label) + 备用客户端",
+                arguments: cookieAttempt.arguments + clientArguments
+            ))
+        }
+        attempts.append(YTDLPArgumentAttempt(label: "远程组件", arguments: ["--remote-components", "ejs:github"] + clientArguments))
+        return uniqueYTDLPArgumentAttempts(attempts)
+    }
+
+    nonisolated static func ytdlpYouTubeSelfCheckArgumentAttempts() -> [YTDLPArgumentAttempt] {
+        let browserCookieAttempts = Array(ytdlpBrowserCookieAttempts().prefix(1))
+        let proxyURLs = currentYTDLPProxyURLs()
+        let clientArguments = ytdlpYouTubeClientArguments()
+        var attempts: [YTDLPArgumentAttempt] = []
+
+        if let proxyURL = proxyURLs.first {
+            let proxyArguments = ["--proxy", proxyURL]
+            let proxyLabel = ytdlpProxyAttemptLabel(for: proxyURL)
+            for cookieAttempt in browserCookieAttempts {
+                attempts.append(YTDLPArgumentAttempt(
+                    label: "\(proxyLabel) + \(cookieAttempt.label)",
+                    arguments: proxyArguments + cookieAttempt.arguments
+                ))
+            }
+            attempts.append(YTDLPArgumentAttempt(label: proxyLabel, arguments: proxyArguments))
+            attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel)备用客户端", arguments: proxyArguments + clientArguments))
+        } else {
+            attempts += browserCookieAttempts
+            attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
+        }
+
+        attempts.append(YTDLPArgumentAttempt(label: "本地解析", arguments: []))
+        return Array(uniqueYTDLPArgumentAttempts(attempts).prefix(4))
+    }
+
+    nonisolated static func ytdlpBrowserCookieAttempts() -> [YTDLPArgumentAttempt] {
+        struct BrowserCandidate {
+            var label: String
+            var name: String
+            var relativeProfilePath: String?
+        }
+
+        let candidates = [
+            BrowserCandidate(label: "Chrome Cookie", name: "chrome", relativeProfilePath: "Library/Application Support/Google/Chrome"),
+            BrowserCandidate(label: "Edge Cookie", name: "edge", relativeProfilePath: "Library/Application Support/Microsoft Edge"),
+            BrowserCandidate(label: "Brave Cookie", name: "brave", relativeProfilePath: "Library/Application Support/BraveSoftware/Brave-Browser"),
+            BrowserCandidate(label: "Firefox Cookie", name: "firefox", relativeProfilePath: "Library/Application Support/Firefox"),
+            BrowserCandidate(label: "Chromium Cookie", name: "chromium", relativeProfilePath: "Library/Application Support/Chromium"),
+            BrowserCandidate(label: "Safari Cookie", name: "safari", relativeProfilePath: "Library/Containers/com.apple.Safari/Data/Library/Cookies")
         ]
+
+        let homeURL = FileManager.default.homeDirectoryForCurrentUser
+        var attempts = candidates.compactMap { candidate -> YTDLPArgumentAttempt? in
+            if let relativeProfilePath = candidate.relativeProfilePath {
+                let path = homeURL.appendingPathComponent(relativeProfilePath).path
+                guard FileManager.default.fileExists(atPath: path) else { return nil }
+            }
+            return YTDLPArgumentAttempt(
+                label: candidate.label,
+                arguments: ["--cookies-from-browser", candidate.name]
+            )
+        }
+
+        if !attempts.contains(where: { $0.arguments == ["--cookies-from-browser", "chrome"] }) {
+            attempts.insert(
+                YTDLPArgumentAttempt(label: "Chrome Cookie", arguments: ["--cookies-from-browser", "chrome"]),
+                at: 0
+            )
+        }
+        return attempts
+    }
+
+    nonisolated static func uniqueYTDLPArgumentAttempts(_ attempts: [YTDLPArgumentAttempt]) -> [YTDLPArgumentAttempt] {
+        var seen = Set<String>()
+        return attempts.compactMap { attempt in
+            let key = attempt.arguments.joined(separator: "\u{1f}")
+            guard seen.insert(key).inserted else { return nil }
+            return attempt
+        }
     }
 
     nonisolated static func ytdlpYouTubeClientArguments() -> [String] {
         ["--extractor-args", "youtube:player_client=web_safari,mweb,android_vr"]
+    }
+
+    nonisolated static func currentYTDLPProxyURLs() -> [String] {
+        var candidates: [String] = []
+        candidates += systemProxyURLsForYTDLP()
+        candidates += environmentProxyURLsForYTDLP()
+        if isLocalProxyURLReachable("http://127.0.0.1:1082") {
+            candidates.append("http://127.0.0.1:1082")
+        }
+
+        var seen = Set<String>()
+        return candidates.compactMap { candidate in
+            let normalized = normalizedProxyURL(candidate)
+            guard !normalized.isEmpty,
+                  isLocalProxyURLReachable(normalized),
+                  seen.insert(normalized).inserted
+            else { return nil }
+            return normalized
+        }
+    }
+
+    nonisolated static func systemProxyURLsForYTDLP() -> [String] {
+        guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else {
+            return []
+        }
+
+        var proxies: [String] = []
+        appendProxyURL(
+            from: settings,
+            enableKey: "HTTPEnable",
+            hostKey: "HTTPProxy",
+            portKey: "HTTPPort",
+            scheme: "http",
+            to: &proxies
+        )
+        appendProxyURL(
+            from: settings,
+            enableKey: "HTTPSEnable",
+            hostKey: "HTTPSProxy",
+            portKey: "HTTPSPort",
+            scheme: "http",
+            to: &proxies
+        )
+        appendProxyURL(
+            from: settings,
+            enableKey: "SOCKSEnable",
+            hostKey: "SOCKSProxy",
+            portKey: "SOCKSPort",
+            scheme: "socks5",
+            to: &proxies
+        )
+        return proxies
+    }
+
+    nonisolated static func environmentProxyURLsForYTDLP() -> [String] {
+        let environment = ProcessInfo.processInfo.environment
+        return [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy"
+        ].compactMap { environment[$0] }
+    }
+
+    nonisolated static func appendProxyURL(
+        from settings: [String: Any],
+        enableKey: String,
+        hostKey: String,
+        portKey: String,
+        scheme: String,
+        to proxies: inout [String]
+    ) {
+        guard boolProxyValue(settings[enableKey]),
+              let host = settings[hostKey] as? String,
+              let port = intProxyValue(settings[portKey]),
+              let proxyURL = proxyURLString(scheme: scheme, host: host, port: port)
+        else { return }
+        proxies.append(proxyURL)
+    }
+
+    nonisolated static func boolProxyValue(_ value: Any?) -> Bool {
+        if let value = value as? Bool { return value }
+        if let value = value as? NSNumber { return value.boolValue }
+        if let value = value as? String { return value == "1" || value.lowercased() == "true" }
+        return false
+    }
+
+    nonisolated static func intProxyValue(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        if let value = value as? String { return Int(value) }
+        return nil
+    }
+
+    nonisolated static func proxyURLString(scheme: String, host: String, port: Int) -> String? {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty, port > 0 else { return nil }
+        let formattedHost = trimmedHost.contains(":") && !trimmedHost.hasPrefix("[")
+            ? "[\(trimmedHost)]"
+            : trimmedHost
+        return "\(scheme)://\(formattedHost):\(port)"
+    }
+
+    nonisolated static func normalizedProxyURL(_ candidate: String) -> String {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.contains("://") { return trimmed }
+        return "http://\(trimmed)"
+    }
+
+    nonisolated static func ytdlpProxyAttemptLabel(for proxyURL: String) -> String {
+        guard let components = URLComponents(string: proxyURL),
+              let host = components.host,
+              let port = components.port
+        else { return "系统代理" }
+        if isLoopbackProxyHost(host) {
+            return "本机代理 \(port)"
+        }
+        return "系统代理 \(host):\(port)"
+    }
+
+    nonisolated static func isLocalProxyURLReachable(_ proxyURL: String) -> Bool {
+        guard let components = URLComponents(string: proxyURL),
+              let host = components.host,
+              let port = components.port
+        else { return false }
+        guard isLoopbackProxyHost(host) else { return true }
+        return isLoopbackTCPPortOpen(host: host, port: port)
+    }
+
+    nonisolated static func isLoopbackProxyHost(_ host: String) -> Bool {
+        let lowered = host.lowercased()
+        return lowered == "localhost"
+            || lowered == "127.0.0.1"
+            || lowered == "::1"
+            || lowered.hasPrefix("127.")
+    }
+
+    nonisolated static func isLoopbackTCPPortOpen(host: String, port: Int) -> Bool {
+        let address = host == "localhost" ? "127.0.0.1" : host
+        guard !address.contains(":") else { return true }
+
+        let socketDescriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard socketDescriptor >= 0 else { return false }
+        defer { close(socketDescriptor) }
+
+        var socketAddress = sockaddr_in()
+        socketAddress.sin_family = sa_family_t(AF_INET)
+        socketAddress.sin_port = in_port_t(port).bigEndian
+        guard inet_pton(AF_INET, address, &socketAddress.sin_addr) == 1 else { return false }
+
+        let result = withUnsafePointer(to: &socketAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketPointer in
+                connect(socketDescriptor, socketPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result == 0
     }
 
     nonisolated static func ytdlpProbeNetworkArguments(isYouTube: Bool) -> [String] {
@@ -411,6 +686,28 @@ extension LibraryStore {
             || lowercased.contains("private video")
             || lowercased.contains("this video is unavailable")
             || lowercased.contains("not available in your country")
+            || isYouTubeBotVerificationFailure(message)
+    }
+
+    nonisolated static func userFacingYTDLPFailureMessage(
+        _ message: String,
+        sourceURL: URL,
+        fallback: String = "yt-dlp 下载失败"
+    ) -> String {
+        let concise = conciseYTDLPError(message, fallback: fallback)
+        guard isYouTubeURL(sourceURL),
+              isYouTubeBotVerificationFailure(concise)
+        else { return concise }
+
+        return "YouTube 要求登录验证：请先在 Chrome、Edge、Brave 或 Firefox 登录 YouTube 后重试。若仍失败，请给拉片宝开启完全磁盘访问权限，以便读取浏览器 Cookie；也可以配置可用代理或手动 Cookie。"
+    }
+
+    nonisolated static func isYouTubeBotVerificationFailure(_ message: String) -> Bool {
+        let lowercased = message.lowercased()
+        return lowercased.contains("sign in to confirm")
+            && lowercased.contains("not a bot")
+            || lowercased.contains("use --cookies-from-browser")
+            && lowercased.contains("youtube")
     }
 
     nonisolated static func isYouTubeURL(_ url: URL) -> Bool {
@@ -429,6 +726,73 @@ extension LibraryStore {
     nonisolated static func isBilibiliURL(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
         return host.contains("bilibili.com") || host == "b23.tv"
+    }
+
+    nonisolated static func remoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
+        if platformName(for: sourceURL) == "小红书" {
+            if let nativeMetadata = await xiaohongshuRemoteImportCandidateMetadataIfNeeded(for: sourceURL),
+               nativeMetadata.hasAnyValue {
+                return nativeMetadata
+            }
+            return await ytdlpRemoteImportCandidateMetadata(for: sourceURL)
+        }
+
+        async let ytdlpMetadata = ytdlpRemoteImportCandidateMetadata(for: sourceURL)
+        async let nativeMetadata = xiaohongshuRemoteImportCandidateMetadataIfNeeded(for: sourceURL)
+
+        let ytdlp = await ytdlpMetadata
+        let native = await nativeMetadata
+        return RemoteImportCandidateMetadata(
+            title: ytdlp.title ?? native?.title,
+            authorName: ytdlp.authorName ?? native?.authorName,
+            thumbnailData: ytdlp.thumbnailData ?? native?.thumbnailData
+        )
+    }
+
+    nonisolated static func ytdlpRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
+        guard let ytdlp = localYTDLPURL() else {
+            return RemoteImportCandidateMetadata()
+        }
+
+        let environment = downloaderProcessEnvironment()
+        let info = ytdlpArgumentAttempts(for: sourceURL)
+            .lazy
+            .compactMap { attempt in
+                fetchYTDLPVideoInfo(
+                    executableURL: ytdlp,
+                    sourceURL: sourceURL,
+                    environment: environment,
+                    extraArguments: attempt.arguments
+                )
+            }
+            .first
+
+        let title = screenedSourceTitle(
+            rawTitle: info?.title,
+            description: info?.description,
+            sourceURL: sourceURL
+        )
+        let authorName = normalizedSourceAuthorName(info?.bestUploader ?? "")
+
+        let thumbnailData: Data?
+        if let thumbnailURL = info?.bestThumbnailURL {
+            thumbnailData = await fetchRemoteImageData(from: thumbnailURL)
+        } else {
+            thumbnailData = await remoteThumbnailData(for: sourceURL)
+        }
+
+        return RemoteImportCandidateMetadata(
+            title: title,
+            authorName: authorName,
+            thumbnailData: thumbnailData
+        )
+    }
+
+    nonisolated static func xiaohongshuRemoteImportCandidateMetadataIfNeeded(
+        for sourceURL: URL
+    ) async -> RemoteImportCandidateMetadata? {
+        guard platformName(for: sourceURL) == "小红书" else { return nil }
+        return await Self.xiaohongshuRemoteImportCandidateMetadata(for: sourceURL)
     }
 
     nonisolated static func remoteThumbnailData(for sourceURL: URL) async -> Data? {
@@ -490,6 +854,77 @@ extension LibraryStore {
 
             return await fetchRemoteImageData(from: thumbnailURL)
         }.value
+    }
+
+    nonisolated static func downloadedVideoFileURL(
+        fromYTDLPOutput output: String,
+        destinationDirectory: URL,
+        expectedOutputURL: URL?,
+        startedAt: Date
+    ) -> URL? {
+        let fm = FileManager.default
+        let videoExtensions = Set(supportedVideoExtensions.map { $0.lowercased() })
+
+        func isUsableVideoFile(_ url: URL) -> Bool {
+            guard videoExtensions.contains(url.pathExtension.lowercased()),
+                  fm.fileExists(atPath: url.path)
+            else { return false }
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+            return values?.isRegularFile == true
+        }
+
+        for line in output.components(separatedBy: .newlines).reversed() {
+            guard let candidate = ytdlpPrintedFileURL(
+                from: line,
+                destinationDirectory: destinationDirectory
+            ) else { continue }
+            if isUsableVideoFile(candidate) {
+                return candidate
+            }
+        }
+
+        if let expectedOutputURL, isUsableVideoFile(expectedOutputURL) {
+            return expectedOutputURL
+        }
+
+        let urls = (try? fm.contentsOfDirectory(
+            at: destinationDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return urls
+            .filter(isUsableVideoFile)
+            .compactMap { url -> (URL, Date)? in
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+                guard values?.isRegularFile == true,
+                      let modifiedAt = values?.contentModificationDate,
+                      modifiedAt >= startedAt.addingTimeInterval(-2)
+                else { return nil }
+                return (url, modifiedAt)
+            }
+            .sorted { $0.1 > $1.1 }
+            .first?
+            .0
+    }
+
+    nonisolated static func ytdlpPrintedFileURL(from line: String, destinationDirectory: URL) -> URL? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.hasPrefix("[")
+        else { return nil }
+
+        if let fileURL = URL(string: trimmed),
+           fileURL.isFileURL {
+            return fileURL.standardizedFileURL
+        }
+
+        if trimmed.hasPrefix("/") {
+            return URL(fileURLWithPath: trimmed).standardizedFileURL
+        }
+        return destinationDirectory
+            .appendingPathComponent(trimmed)
+            .standardizedFileURL
     }
 
     nonisolated static func fetchRemoteImageData(from url: URL) async -> Data? {

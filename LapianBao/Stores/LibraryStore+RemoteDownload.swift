@@ -32,10 +32,12 @@ extension LibraryStore {
         var sourceTitle: String?
 
         var ytdlpFailure: Error?
+        var xiaohongshuNativeFailure: Error?
+        let ytdlp = usableYTDLPURL()
 
         // Instagram 图文轮播里可能有多段视频：先按轮播顺序打包成一个视频再入库。
         if rawURL == nil, platform == "Instagram",
-           let ytdlp = localYTDLPURL(),
+           let ytdlp,
            !Task.isCancelled,
            let result = try await downloadInstagramCarouselBundleIfNeeded(
                executableURL: ytdlp,
@@ -50,7 +52,7 @@ extension LibraryStore {
         }
 
         // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
-        if rawURL == nil, let ytdlp = localYTDLPURL(),
+        if rawURL == nil, let ytdlp,
            !Task.isCancelled {
             let attempts = ytdlpArgumentAttempts(for: sourceURL)
             for attempt in attempts {
@@ -82,15 +84,21 @@ extension LibraryStore {
         }
 
         // 2. 小红书：原生页面解析（yt-dlp 对需要登录的内容失效时接手）
-        if rawURL == nil, platform == "小红书",
-           let result = try? await downloadXiaoHongShuNative(
-               from: sourceURL,
-               destinationDirectory: destinationDirectory,
-               progressCallback: progressCallback
-           ) {
-            rawURL = result.url
-            authorName = authorName ?? result.authorName
-            sourceTitle = sourceTitle ?? result.sourceTitle
+        if rawURL == nil, platform == "小红书" {
+            do {
+                let result = try await downloadXiaoHongShuNative(
+                    from: sourceURL,
+                    destinationDirectory: destinationDirectory,
+                    progressCallback: progressCallback
+                )
+                rawURL = result.url
+                authorName = authorName ?? result.authorName
+                sourceTitle = sourceTitle ?? result.sourceTitle
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                xiaohongshuNativeFailure = error
+            }
         }
 
         // 3. 用户自定义 API
@@ -122,11 +130,14 @@ extension LibraryStore {
             if isYouTubeURL(sourceURL), let ytdlpFailure {
                 throw ytdlpFailure
             }
+            if platform == "小红书", let xiaohongshuNativeFailure {
+                throw xiaohongshuNativeFailure
+            }
             throw RemoteImportError.downloaderFailed("所有下载方式均失败，请确认链接是否可公开访问")
         }
 
         // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264
-        finalizingCallback?(0)
+        finalizingCallback?(1)
         let finalURL = await transcodeToH264IfNeeded(downloadedURL, progressCallback: transcodingCallback) ?? downloadedURL
         finalizingCallback?(1)
         return DownloadedVideoResult(

@@ -7,6 +7,12 @@ import Foundation
 struct PlaybackClockValue: Equatable {
     var elapsed = 0.0
     var progress = 0.0
+    var sampledAt = Date()
+
+    static func == (lhs: PlaybackClockValue, rhs: PlaybackClockValue) -> Bool {
+        lhs.elapsed == rhs.elapsed
+            && lhs.progress == rhs.progress
+    }
 }
 
 @MainActor
@@ -16,9 +22,9 @@ final class PlaybackClock: ObservableObject {
     var elapsed: Double { value.elapsed }
     var progress: Double { value.progress }
 
-    func update(elapsed: Double, progress: Double) {
-        let next = PlaybackClockValue(elapsed: elapsed, progress: progress)
-        guard next != value else { return }
+    func update(elapsed: Double, progress: Double, force: Bool = false) {
+        let next = PlaybackClockValue(elapsed: elapsed, progress: progress, sampledAt: Date())
+        guard force || next != value else { return }
         value = next
     }
 
@@ -28,6 +34,14 @@ final class PlaybackClock: ObservableObject {
 
     func setProgress(_ progress: Double) {
         update(elapsed: value.elapsed, progress: progress)
+    }
+
+    func anchorCurrentValue() {
+        value = PlaybackClockValue(
+            elapsed: value.elapsed,
+            progress: value.progress,
+            sampledAt: Date()
+        )
     }
 }
 
@@ -105,7 +119,7 @@ final class PreviewController: ObservableObject {
 
     // MARK: – 加载视频
 
-    func loadVideo(_ video: VideoItem?, autoplay: Bool) {
+    func loadVideo(_ video: VideoItem?, autoplay: Bool, preserveIfAlreadyLoaded: Bool = false) {
         frameRateTask?.cancel()
         frameRateTask = nil
         reverseProxyTask?.cancel()
@@ -127,6 +141,8 @@ final class PreviewController: ObservableObject {
         playbackRate = 0
         isPlaying = false
 
+        let previouslyLoadedVideoPath = currentVideoPath
+        let previouslyLoadedPlaybackURL = activePlaybackURL
         currentVideoPath = video.url.path
         currentSourceURL = video.url
         loadFrameRate(for: video)
@@ -144,6 +160,26 @@ final class PreviewController: ObservableObject {
 
         playbackMessage = nil
         activePlaybackURL = video.url
+        if preserveIfAlreadyLoaded,
+           previouslyLoadedVideoPath == video.url.path,
+           previouslyLoadedPlaybackURL?.path == video.url.path,
+           player.currentItem != nil {
+            duration = store?.durationByVideoPath[video.url.path] ?? duration
+            updateProgress()
+            if autoplay {
+                setRate(1)
+                isPlaying = true
+            } else {
+                player.pause()
+                playbackRate = 0
+                isPlaying = false
+            }
+            store?.loadWaveform(for: video)
+            store?.loadFrameStrip(for: video)
+            store?.loadCachedSceneCuts(for: video)
+            return
+        }
+
         replacePlayerItem(with: video.url)
         elapsed = 0
         duration = store?.durationByVideoPath[video.url.path] ?? 0
@@ -275,8 +311,7 @@ final class PreviewController: ObservableObject {
            abs(t - playerTime) <= max(0.01, frameDuration / 2) {
             return
         }
-        progress = min(1, max(0, t / d))
-        elapsed = t
+        clock.update(elapsed: t, progress: min(1, max(0, t / d)), force: true)
         player.seek(
             to: CMTime(seconds: t, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero
@@ -335,11 +370,9 @@ final class PreviewController: ObservableObject {
         isPlaying = false
         playbackRate = 0
         if let d = effectiveDuration, d > 0 {
-            progress = 1
-            elapsed = d
+            clock.update(elapsed: d, progress: 1, force: true)
         } else {
-            progress = 0
-            elapsed = 0
+            clock.update(elapsed: 0, progress: 0, force: true)
         }
     }
 
@@ -347,8 +380,7 @@ final class PreviewController: ObservableObject {
         let d = effectiveDuration; guard let d, d > 0 else { return }
         let snapped = nearestFrameTime(elapsed, duration: d)
         guard abs(snapped - elapsed) > 0.0001 else { return }
-        progress = min(1, max(0, snapped / d))
-        elapsed = snapped
+        clock.update(elapsed: snapped, progress: min(1, max(0, snapped / d)), force: true)
         player.seek(
             to: CMTime(seconds: snapped, preferredTimescale: frameTimeScale),
             toleranceBefore: .zero, toleranceAfter: .zero
@@ -401,12 +433,12 @@ final class PreviewController: ObservableObject {
         }
         playbackRate = rate
         isPlaying = true
+        clock.anchorCurrentValue()
     }
 
     private func beginReversePlaybackFromEnd(rate: Double, duration: Double) {
         let target = nearestFrameTime(duration, duration: duration)
-        progress = 1
-        elapsed = target
+        clock.update(elapsed: target, progress: 1, force: true)
         player.seek(
             to: CMTime(seconds: target, preferredTimescale: frameTimeScale),
             toleranceBefore: .zero,

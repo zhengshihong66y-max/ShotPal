@@ -16,28 +16,28 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var libraryStore: LibraryStore
-    @AppStorage("appWorkspace") var appWorkspaceRawValue = AppWorkspace.home.rawValue
-    @AppStorage("isSidebarCollapsed") var isSidebarCollapsed = false
-    @State var mediaPanelWidth = UserDefaults.standard.object(forKey: "mediaPanelWidth") as? Double ?? 340.0
-    @State var frameMediaPanelWidth = UserDefaults.standard.object(forKey: "frameMediaPanelWidth") as? Double
+    @StateObject var previewController = PreviewController()
+    @AppStorage(AppSettings.Key.appWorkspace) var appWorkspaceRawValue = AppWorkspace.home.rawValue
+    @AppStorage(AppSettings.Key.isSidebarCollapsed) var isSidebarCollapsed = false
+    @State var mediaPanelWidth = AppSettings.mediaPanelWidth
+    @State var frameMediaPanelWidth = AppSettings.frameMediaPanelWidth
     @State var renamingTag: String? = nil
     @State var renameInput = ""
     @State var isImportSheetPresented = false
-    @State var isSettingsSheetPresented = false
     @State var importURLText = ""
     @State var importEndpointText = ""
     @State var librarySearchText = ""
-    @State var isInstagramSavedSyncing = false
-    @State var instagramSavedSyncMessage: String?
-    @State var instagramSavedSyncIsError = false
-    @State var isXiaohongshuSavedSyncing = false
-    @State var xiaohongshuSavedSyncMessage: String?
-    @State var xiaohongshuSavedSyncIsError = false
+    @State var selectedLibraryPlatforms: Set<String> = []
+    @State var selectedLibraryAuthors: Set<String> = []
+    @State var isLibrarySidebarFilterAreaPresented = true
     @State var savedImportCandidates: [PendingImportVideo] = []
     @State var isSavedImportRefreshing = false
     @State var savedImportRefreshMessage: String?
     @State var savedImportRefreshIsError = false
     @State var savedImportRefreshTask: Task<Void, Never>?
+    @State var savedImportRefreshID: UUID?
+    @State var savedImportMetadataTask: Task<Void, Never>?
+    @State var savedImportMetadataID: UUID?
     @State var savedImportSerialTask: Task<Void, Never>?
     @State var isSavedImportSerialRunning = false
     @State var expandedImportBatchIDs: Set<UUID> = []
@@ -46,10 +46,12 @@ struct ContentView: View {
     @State var isTagFilterMenuPresented = false
     @State var frameFilterVideoPath: String?
     @State var frameSelectedFrameID: UUID?
+    @State var pendingHomeSeekRequest: AppEventBus.SeekRequest?
     @State var mediaPanelDragStartWidth: Double?
     @State var mediaPanelDragStartX: CGFloat?
     @State var isDividerHovered = false
     @State var canRestorePersistedWorkspace = false
+    @State var pendingStoryboardOpenPath: String?
 
     var appWorkspace: AppWorkspace {
         get {
@@ -81,9 +83,6 @@ struct ContentView: View {
                     importOverlay(containerSize: proxy.size)
                 }
 
-                if isSettingsSheetPresented {
-                    settingsOverlay(containerSize: proxy.size)
-                }
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -112,7 +111,20 @@ struct ContentView: View {
         } message: {
             Text("重命名后，所有含此标签的视频都会同步更新")
         }
-        .onAppear(perform: restorePersistedWorkspaceAfterFirstFrame)
+        .onAppear {
+            restorePersistedWorkspaceAfterFirstFrame()
+        }
+        .onReceive(libraryStore.$sceneDetectionProgress) { _ in
+            completePendingStoryboardOpenIfReady()
+        }
+        .onReceive(libraryStore.$sceneCutsByVideoPath) { _ in
+            completePendingStoryboardOpenIfReady()
+        }
+        .onReceive(libraryStore.$sceneDetectionErrorByVideoPath) { errors in
+            if let path = pendingStoryboardOpenPath, errors[path] != nil {
+                pendingStoryboardOpenPath = nil
+            }
+        }
     }
 
     static let clipboardProbeTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
@@ -130,7 +142,7 @@ struct ContentView: View {
 
     func restorePersistedWorkspaceAfterFirstFrame() {
         guard !canRestorePersistedWorkspace else { return }
-        let storedRawValue = UserDefaults.standard.string(forKey: "appWorkspace") ?? AppWorkspace.home.rawValue
+        let storedRawValue = AppSettings.appWorkspaceRawValue ?? AppWorkspace.home.rawValue
         let stored = AppWorkspace(rawValue: storedRawValue) ?? .home
         guard stored.canRestoreDuringLaunch else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -143,7 +155,10 @@ struct ContentView: View {
         let activeMediaPanelWidth = resolvedMediaPanelWidth(containerWidth: containerWidth)
 
         HStack(spacing: Design.panelSpacing) {
-            if presentedAppWorkspace == .audio || presentedAppWorkspace == .frames || presentedAppWorkspace == .music {
+            if presentedAppWorkspace == .audio ||
+                presentedAppWorkspace == .frames ||
+                presentedAppWorkspace == .music ||
+                presentedAppWorkspace == .settings {
                 navigationRail
                     .frame(width: Design.railWidth, alignment: .leading)
                     .background(Design.sidebarBg)
@@ -255,23 +270,17 @@ struct ContentView: View {
     }
 
     func navigationRailButton(_ workspace: AppWorkspace) -> some View {
-        let isSelected = workspace == .settings ? isSettingsSheetPresented : presentedAppWorkspace == workspace
+        let isSelected = presentedAppWorkspace == workspace
 
         return Button {
-            if workspace == .settings {
-                withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                    isSettingsSheetPresented = true
-                }
-            } else {
-                appWorkspace = workspace
-            }
+            switchWorkspace(to: workspace)
         } label: {
             Image(systemName: workspace.icon)
                 .font(.system(size: workspace.railIconSize, weight: isSelected ? .semibold : .regular))
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(isSelected ? Color.white.opacity(0.94) : Color.white.opacity(0.40))
                 .frame(width: Design.railIconBoxSize, height: Design.railIconBoxSize)
-                .offset(x: workspace.railIconOffset)
+                .offset(x: Design.railIconAlignmentOffsetX + workspace.railIconOffset)
                 .frame(width: Design.railWidth, height: Design.railButtonHeight, alignment: .center)
                 .contentShape(Rectangle())
         }
@@ -313,9 +322,9 @@ struct ContentView: View {
                 }
                 .onEnded { _ in
                     if presentedAppWorkspace == .frames {
-                        UserDefaults.standard.set(frameMediaPanelWidth, forKey: "frameMediaPanelWidth")
+                        AppSettings.frameMediaPanelWidth = frameMediaPanelWidth
                     } else {
-                        UserDefaults.standard.set(mediaPanelWidth, forKey: "mediaPanelWidth")
+                        AppSettings.mediaPanelWidth = mediaPanelWidth
                     }
                     mediaPanelDragStartWidth = nil
                     mediaPanelDragStartX = nil
@@ -329,8 +338,9 @@ struct ContentView: View {
         switch presentedAppWorkspace {
         case .home:
             PreviewPanelView(
-                openWorkspace: { appWorkspace = $0 },
-                openStoryboardBoard: openFrameStoryboard
+                controller: previewController,
+                openStoryboardBoard: openFrameStoryboard,
+                pendingSeekRequest: $pendingHomeSeekRequest
             )
         case .frames:
             FramesWorkspaceView(
@@ -342,28 +352,61 @@ struct ContentView: View {
             AudioWorkspaceView(goHome: jumpToVideo)
         case .music:
             MusicWorkspaceView(goHome: jumpToVideo)
-        case .content:
-            ContentWorkspaceView(goHome: jumpToVideo)
         case .settings:
             SettingsWorkspaceView()
         }
     }
 
     func jumpToVideo(path: String, time: Double) {
+        pendingHomeSeekRequest = AppEventBus.SeekRequest(path: path, time: time)
         libraryStore.selectVideo(path: path)
-        appWorkspace = .home
-        NotificationCenter.default.post(
-            name: .lapianBaoSeekRequest,
-            object: nil,
-            userInfo: ["path": path, "time": time]
-        )
+        switchWorkspace(to: .home)
     }
 
     func openFrameStoryboard(for video: VideoItem) {
         libraryStore.selectVideo(path: video.url.path)
         frameFilterVideoPath = video.url.path
         frameSelectedFrameID = nil
-        appWorkspace = .frames
+
+        libraryStore.loadCachedSceneCuts(for: video)
+        if libraryStore.hasSceneRecognitionResult(for: video) {
+            openRecognizedFrameStoryboard(for: video)
+            return
+        }
+
+        pendingStoryboardOpenPath = video.url.path
+        libraryStore.detectSceneCuts(for: video)
+        completePendingStoryboardOpenIfReady()
+    }
+
+    func completePendingStoryboardOpenIfReady() {
+        guard
+            let path = pendingStoryboardOpenPath,
+            let video = libraryStore.videos.first(where: { $0.url.path == path }),
+            libraryStore.sceneDetectionProgress[path] == nil,
+            libraryStore.hasSceneRecognitionResult(for: video)
+        else { return }
+
+        pendingStoryboardOpenPath = nil
+        openRecognizedFrameStoryboard(for: video)
+    }
+
+    func openRecognizedFrameStoryboard(for video: VideoItem) {
+        libraryStore.selectVideo(path: video.url.path)
+        frameFilterVideoPath = video.url.path
+        frameSelectedFrameID = nil
+        switchWorkspace(to: .frames)
+    }
+
+    func switchWorkspace(to workspace: AppWorkspace) {
+        guard presentedAppWorkspace != workspace else { return }
+        let previous = presentedAppWorkspace
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        PerformanceDiagnostics.mark("workspace switch \(previous.rawValue)->\(workspace.rawValue)")
+        withTransaction(transaction) {
+            appWorkspace = workspace
+        }
     }
 
     var windowControls: some View {
@@ -417,7 +460,7 @@ struct ContentView: View {
                     label: workspace.title,
                     isSelected: presentedAppWorkspace == workspace
                 ) {
-                    appWorkspace = workspace
+                    switchWorkspace(to: workspace)
                 }
             }
 

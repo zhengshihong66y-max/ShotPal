@@ -23,6 +23,23 @@ struct SceneGridItem: Identifiable {
     let sceneIndex: Int?
 }
 
+private struct SceneRecognitionProgressGlyph: View {
+    let progress: Double
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.20), lineWidth: 1.6)
+            Circle()
+                .trim(from: 0, to: normalizedProgressFraction(progress))
+                .stroke(.white.opacity(0.88), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 13, height: 13)
+        .accessibilityHidden(true)
+    }
+}
+
 /// Equatable 视图：只有视频、场景数据或选中状态变化时才重新渲染 body。
 /// 播放时钟只驱动时间线小组件；PreviewPanelView 的低频重渲
 /// 将相同的播放状态传给本视图，
@@ -33,14 +50,16 @@ struct ScenePanelView: View, Equatable {
     let sceneCuts: [SceneCut]
     let hasSceneRecognitionResult: Bool
     let sceneDetectionProgress: Double?
+    let sceneDetectionError: String?
     let sceneThumbnailVersion: Int
     let sceneThumbnailsNeedHydration: Bool
     let isHydratingSceneThumbnails: Bool
     let sampledFrames: [SampledFrame]
     var activeItemID: String?
+    var activeProgressTick: Double?
     let openStoryboardBoard: () -> Void
     @EnvironmentObject private var libraryStore: LibraryStore
-    @AppStorage("sceneGridSize") private var sceneGridSize = 1
+    @AppStorage(AppSettings.Key.sceneGridSize) private var sceneGridSize = 1
     @State private var selectedItemID: String?
 
     static func == (lhs: ScenePanelView, rhs: ScenePanelView) -> Bool {
@@ -49,11 +68,13 @@ struct ScenePanelView: View, Equatable {
             && lhs.activeItemID == rhs.activeItemID
             && lhs.hasSceneRecognitionResult == rhs.hasSceneRecognitionResult
             && lhs.sceneDetectionProgress == rhs.sceneDetectionProgress
+            && lhs.sceneDetectionError == rhs.sceneDetectionError
             && lhs.sceneThumbnailVersion == rhs.sceneThumbnailVersion
             && lhs.sceneThumbnailsNeedHydration == rhs.sceneThumbnailsNeedHydration
             && lhs.isHydratingSceneThumbnails == rhs.isHydratingSceneThumbnails
             && lhs.sceneCutSignature == rhs.sceneCutSignature
             && lhs.sampledFrameSignature == rhs.sampledFrameSignature
+            && lhs.activeProgressTick == rhs.activeProgressTick
     }
 
     var body: some View {
@@ -81,12 +102,18 @@ struct ScenePanelView: View, Equatable {
                                         isScreenshot: item.sample?.kind == .screenshot,
                                         isSelected: selectedItemID == item.id,
                                         isActive: activeItemID == item.id,
+                                        activeProgress: activeProgress(for: item),
                                         onTap: {
                                             selectedItemID = item.id
                                             controller.seekToSeconds(item.time)
                                         },
-                                        onCollect: collectAction(for: item),
+                                        tags: item.sample?.tags ?? [],
+                                        suggestedTags: libraryStore.allFrameTags,
+                                        onAddTag: addTagAction(for: item),
+                                        onRemoveTag: removeTagAction(for: item),
+                                        onShowInFinder: showInFinderAction(for: item),
                                         onDelete: deleteAction(for: item),
+                                        showsUnavailableFileActions: item.cut != nil && item.sample == nil,
                                         dragItemProvider: dragProvider(for: item)
                                     )
                                     .id(item.id)
@@ -94,8 +121,7 @@ struct ScenePanelView: View, Equatable {
                             }
                             .padding(.bottom, 48)
                         }
-                        .scrollIndicators(.hidden)
-                        .background(HiddenScrollIndicators())
+                        .fadingVerticalScrollIndicators()
 
                         sceneGridOverlayControls
                             .padding(.trailing, 8)
@@ -129,27 +155,38 @@ struct ScenePanelView: View, Equatable {
     private var storyboardBoardButton: some View {
         Button(action: openStoryboardBoard) {
             HStack(spacing: 6) {
-                Image(systemName: "rectangle.stack")
-                    .font(.system(size: 11, weight: .semibold))
-                    .symbolRenderingMode(.monochrome)
+                if let progress = sceneDetectionProgress {
+                    SceneRecognitionProgressGlyph(progress: progress)
+                } else {
+                    Image(systemName: "rectangle.stack")
+                        .font(.system(size: 11, weight: .semibold))
+                        .symbolRenderingMode(.monochrome)
+                }
 
-                Text("分镜模式")
+                Text(storyboardButtonTitle)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
             }
             .foregroundStyle(.white.opacity(0.86))
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(.black.opacity(0.56))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.48))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(.white.opacity(0.16), lineWidth: 0.7)
+                    .stroke(.white.opacity(0.13), lineWidth: 0.7)
             }
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .help("在画面页查看此视频分镜")
+        .help(sceneDetectionProgress == nil ? "在画面页查看此视频分镜" : "场景识别完成后自动进入分镜")
+    }
+
+    private var storyboardButtonTitle: String {
+        if let progress = sceneDetectionProgress {
+            return "识别中 \(progressPercentText(progress))"
+        }
+        return hasSceneRecognitionResult ? "分镜模式" : "识别场景"
     }
 
     private var sceneGridSizeControl: some View {
@@ -183,9 +220,9 @@ struct ScenePanelView: View, Equatable {
 
     private var shouldShowSceneRecognitionStatus: Bool {
         sceneDetectionProgress != nil
-            || isHydratingSceneThumbnails
-            || (!hasSceneRecognitionResult && !sceneThumbnailsNeedHydration)
+            || sceneDetectionError != nil
             || (hasSceneRecognitionResult && sceneCuts.isEmpty)
+            || (!hasSceneRecognitionResult && sceneCuts.isEmpty && sampledFrames.isEmpty)
     }
 
     @ViewBuilder
@@ -200,22 +237,14 @@ struct ScenePanelView: View, Equatable {
     private func sceneRecognitionStatusContent(centered: Bool) -> some View {
         if let progress = sceneDetectionProgress {
             RecognitionProgressRow(
-                message: "正在识别场景...",
-                progress: progress
+                message: "正在识别场景",
+                progress: progress,
+                compact: false
             )
-        } else if isHydratingSceneThumbnails {
-            RecognitionProgressRow(
-                message: "正在补齐场景缩略图...",
-                progress: nil,
-                showPercent: false
-            )
-        } else if !hasSceneRecognitionResult {
-            RecognitionProgressRow(
-                message: "准备识别场景...",
-                progress: nil,
-                showPercent: false
-            )
-        } else if sceneCuts.isEmpty {
+            .padding(10)
+        } else if let sceneDetectionError {
+            sceneRecognitionFailureContent(sceneDetectionError, centered: centered)
+        } else if hasSceneRecognitionResult && sceneCuts.isEmpty {
             AppEmptyState(
                 title: centered ? "未识别到场景切点" : "未识别到场景切点，已有截图会继续保留",
                 systemImage: centered ? "checkmark.circle" : nil,
@@ -225,7 +254,47 @@ struct ScenePanelView: View, Equatable {
                 textAlignment: centered ? .center : .leading,
                 fillsWidth: true
             )
+        } else {
+            RecognitionProgressRow(
+                message: "正在准备场景识别",
+                progress: nil,
+                compact: false,
+                showPercent: false
+            )
+            .padding(10)
         }
+    }
+
+    private func sceneRecognitionFailureContent(_ message: String, centered: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: centered ? 18 : 13, weight: .semibold))
+                .foregroundStyle(.red.opacity(0.92))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("场景识别失败")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                libraryStore.detectSceneCuts(for: video, force: true)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("重新识别场景")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: centered ? 92 : nil, alignment: .leading)
     }
 
     private func startSceneRecognitionIfNeeded() {
@@ -235,17 +304,36 @@ struct ScenePanelView: View, Equatable {
             }
             return
         }
-        guard !hasSceneRecognitionResult, sceneDetectionProgress == nil else { return }
+        guard !hasSceneRecognitionResult, sceneDetectionProgress == nil, sceneDetectionError == nil else { return }
         libraryStore.detectSceneCuts(for: video)
     }
 
-    private var sceneCutSignature: [String] {
-        sceneCuts.map { "\($0.id):\($0.time):\($0.isPlaceholder):\(ObjectIdentifier($0.thumbnailImage).hashValue)" }
+    private var sceneCutSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(sceneCuts.count)
+        for cut in sceneCuts {
+            hasher.combine(cut.id)
+            hasher.combine(Int((cut.time * 1000).rounded()))
+            hasher.combine(cut.isPlaceholder)
+            hasher.combine(ObjectIdentifier(cut.thumbnailImage))
+        }
+        return hasher.finalize()
     }
 
-    private var sampledFrameSignature: [String] {
-        sampledFrames
-            .map { "\($0.id):\($0.time):\($0.kind.rawValue):\($0.isExported)" }
+    private var sampledFrameSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(sampledFrames.count)
+        for frame in sampledFrames {
+            hasher.combine(frame.id)
+            hasher.combine(Int((frame.time * 1000).rounded()))
+            hasher.combine(frame.kind.rawValue)
+            hasher.combine(frame.isExported)
+            hasher.combine(frame.sceneIndex)
+            for tag in frame.tags {
+                hasher.combine(tag)
+            }
+        }
+        return hasher.finalize()
     }
 
     private func sceneGridItems(cuts: [SceneCut]) -> [SceneGridItem] {
@@ -317,15 +405,47 @@ struct ScenePanelView: View, Equatable {
             .map { min(1, max(0, $0.time / duration)) }
     }
 
-    private func collectAction(for item: SceneGridItem) -> (() -> Void)? {
-        guard let cut = item.cut, item.sample?.isExported != true else { return nil }
+    private func addTagAction(for item: SceneGridItem) -> ((String) -> Void)? {
+        if let sample = item.sample {
+            return { tag in
+                libraryStore.addFrameTag(tag, to: sample)
+            }
+        }
+
+        guard let cut = item.cut else { return nil }
+        return { tag in
+            Task {
+                if let frame = await libraryStore.ensureSceneFrameExported(
+                    video: video,
+                    cut: cut,
+                    sceneIndex: item.sceneIndex
+                ) {
+                    libraryStore.addFrameTag(tag, to: frame)
+                }
+            }
+        }
+    }
+
+    private func removeTagAction(for item: SceneGridItem) -> ((String) -> Void)? {
+        guard let sample = item.sample else { return nil }
+        return { tag in
+            libraryStore.removeFrameTagOrDeleteIfEmpty(tag, from: sample)
+        }
+    }
+
+    private func showInFinderAction(for item: SceneGridItem) -> (() -> Void)? {
+        guard let sample = item.sample else { return nil }
         return {
-            libraryStore.markSceneFrameExported(video: video, cut: cut, sceneIndex: item.sceneIndex)
+            if let imageURL = libraryStore.imageExportURL(for: sample) {
+                NSWorkspace.shared.activateFileViewerSelecting([imageURL])
+            } else {
+                NSWorkspace.shared.open(libraryStore.imageExportDestination(for: video))
+            }
         }
     }
 
     private func deleteAction(for item: SceneGridItem) -> (() -> Void)? {
-        guard let sample = item.sample, sample.kind == .screenshot else { return nil }
+        guard let sample = item.sample else { return nil }
         return {
             libraryStore.deleteSampledFrame(sample)
             if selectedItemID == item.id {
@@ -357,42 +477,35 @@ struct ScenePanelView: View, Equatable {
         formatDuration(max(0, item.endTime - item.time))
     }
 
+    private func activeProgress(for item: SceneGridItem) -> Double? {
+        guard activeItemID == item.id else { return nil }
+        let start = item.time
+        let end = sceneEndTime(for: item)
+        guard end > start else { return nil }
+        return min(1, max(0, (controller.elapsed - start) / (end - start)))
+    }
+
+    private func sceneEndTime(for item: SceneGridItem) -> Double {
+        guard let sceneIndex = item.sceneIndex,
+              sceneCuts.indices.contains(sceneIndex)
+        else {
+            return item.endTime
+        }
+
+        let nextIndex = sceneIndex + 1
+        if sceneCuts.indices.contains(nextIndex) {
+            return sceneCuts[nextIndex].time
+        }
+
+        return max(item.time + 1, controller.duration)
+    }
+
     private func formatDuration(_ seconds: Double) -> String {
         let s = max(0, Int(seconds.rounded()))
         let h = s / 3600; let m = (s % 3600) / 60; let sec = s % 60
         return h > 0
             ? String(format: "%d:%02d:%02d", h, m, sec)
             : String(format: "%d:%02d", m, sec)
-    }
-}
-
-struct PlaybackClockSnapshot {
-    let elapsed: Double
-    let progress: Double
-
-    var timecodeText: String {
-        previewPlaybackTimecode(elapsed)
-    }
-}
-
-struct PlaybackClockDrivenView<Content: View>: View {
-    @ObservedObject var clock: PlaybackClock
-    private let content: (PlaybackClockSnapshot) -> Content
-
-    init(clock: PlaybackClock, @ViewBuilder content: @escaping (PlaybackClockSnapshot) -> Content) {
-        self.clock = clock
-        self.content = content
-    }
-
-    var body: some View {
-        let value = clock.value
-        content(PlaybackClockSnapshot(
-            elapsed: value.elapsed,
-            progress: value.progress
-        ))
-        .transaction { transaction in
-            transaction.animation = nil
-        }
     }
 }
 

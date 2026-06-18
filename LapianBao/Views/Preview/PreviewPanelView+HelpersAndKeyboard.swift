@@ -16,9 +16,14 @@ extension PreviewPanelView {
     // MARK: – Helper views / computed properties
 
     func frameStripImages(for video: VideoItem) -> [NSImage]? {
-        guard let images = libraryStore.frameStripImagesByVideoPath[video.url.path],
-              !images.isEmpty else { return nil }
-        return images
+        let path = video.url.path
+        if let images = libraryStore.frameStripImagesByVideoPath[path], !images.isEmpty {
+            return images
+        }
+        if let thumbnail = libraryStore.thumbnailImageByVideoPath[path] {
+            return Array(repeating: thumbnail, count: 16)
+        }
+        return nil
     }
 
     /// 场景识别完成时返回每个场景的代表帧列表（index 0 = 片头帧，1…N = 切点首帧）。
@@ -152,6 +157,30 @@ extension PreviewPanelView {
         min(1, max(0.02, 1 / max(timelineZoom, 1)))
     }
 
+    var timelineLiveFollowFrameInterval: TimeInterval {
+        1.0 / 30.0
+    }
+
+    func timelineLiveFollowOffsetEpsilon(for span: Double) -> Double {
+        min(0.0008, max(0.00005, span * 0.001))
+    }
+
+    func updateTimelineViewportWithoutAnimation(
+        zoom: Double? = nil,
+        offset: Double? = nil
+    ) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            if let zoom {
+                timelineZoom = zoom
+            }
+            if let offset {
+                timelineOffset = offset
+            }
+        }
+    }
+
     func focusSceneTimelineOnOpeningIfNeeded() {
         guard
             activePreviewTab == .frames,
@@ -169,8 +198,10 @@ extension PreviewPanelView {
         sceneTimelineAutoFocusedKey = key
         guard let span = sceneTimelineOpeningSpan(from: cuts) else { return }
 
-        timelineZoom = min(Design.sceneTimelineAutoMaxZoom, max(1, 1 / span))
-        timelineOffset = 0
+        updateTimelineViewportWithoutAnimation(
+            zoom: min(Design.sceneTimelineAutoMaxZoom, max(1, 1 / span)),
+            offset: 0
+        )
     }
 
     func sceneTimelineOpeningFocusKey(for video: VideoItem, cuts: [Double]) -> String {
@@ -196,7 +227,7 @@ extension PreviewPanelView {
             protectManualTimelineScroll()
             return
         }
-        timelineOffset = nextOffset
+        updateTimelineViewportWithoutAnimation(offset: nextOffset)
         timelineAutoScrollLastUpdate = .distantPast
         protectManualTimelineScroll()
     }
@@ -215,15 +246,16 @@ extension PreviewPanelView {
             protectManualTimelineScroll()
             return
         }
-        timelineZoom = nextZoom
-        timelineOffset = min(maxOffset, max(0, anchorProgress - min(1, max(0, anchor)) * nextSpan))
+        updateTimelineViewportWithoutAnimation(
+            zoom: nextZoom,
+            offset: min(maxOffset, max(0, anchorProgress - min(1, max(0, anchor)) * nextSpan))
+        )
         timelineAutoScrollLastUpdate = .distantPast
         protectManualTimelineScroll()
     }
 
     func resetTimelineViewport() {
-        timelineZoom = 1
-        timelineOffset = 0
+        updateTimelineViewportWithoutAnimation(zoom: 1, offset: 0)
         timelineAutoScrollLastUpdate = .distantPast
         timelineManualScrollProtectionUntil = .distantPast
     }
@@ -249,16 +281,17 @@ extension PreviewPanelView {
             targetOffset = nil
         }
 
-        guard let targetOffset, abs(targetOffset - timelineOffset) > 0.0005 else { return }
+        guard let targetOffset else { return }
+        let offsetDelta = abs(targetOffset - timelineOffset)
+        guard offsetDelta > timelineLiveFollowOffsetEpsilon(for: span) else { return }
         if controller.isPlaying || keyboardShuttleDirection != 0 {
-            let minInterval = 0.12
             let largeJumpThreshold = span * 0.18
-            guard now.timeIntervalSince(timelineAutoScrollLastUpdate) >= minInterval
-                    || abs(targetOffset - timelineOffset) >= largeJumpThreshold else {
+            guard now.timeIntervalSince(timelineAutoScrollLastUpdate) >= timelineLiveFollowFrameInterval
+                    || offsetDelta >= largeJumpThreshold else {
                 return
             }
             timelineAutoScrollLastUpdate = now
-            timelineOffset = targetOffset
+            updateTimelineViewportWithoutAnimation(offset: targetOffset)
         } else {
             withAnimation(.easeOut(duration: 0.14)) {
                 timelineOffset = targetOffset
@@ -289,14 +322,51 @@ extension PreviewPanelView {
 
     // MARK: – Keyboard control
 
+    func flashTransportShortcutFeedback(_ feedback: PreviewTransportShortcutFeedback) {
+        transportShortcutFeedbackTask?.cancel()
+        withAnimation(.easeOut(duration: 0.06)) {
+            activeTransportShortcutFeedback = feedback
+        }
+
+        transportShortcutFeedbackTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 160_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.16)) {
+                if activeTransportShortcutFeedback == feedback {
+                    activeTransportShortcutFeedback = nil
+                }
+            }
+            transportShortcutFeedbackTask = nil
+        }
+    }
+
+    func holdTransportShortcutFeedback(_ feedback: PreviewTransportShortcutFeedback) {
+        transportShortcutFeedbackTask?.cancel()
+        transportShortcutFeedbackTask = nil
+        withAnimation(.easeOut(duration: 0.06)) {
+            activeTransportShortcutFeedback = feedback
+        }
+    }
+
+    func clearTransportShortcutFeedback(_ feedback: PreviewTransportShortcutFeedback? = nil) {
+        guard feedback == nil || activeTransportShortcutFeedback == feedback else { return }
+        transportShortcutFeedbackTask?.cancel()
+        transportShortcutFeedbackTask = nil
+        withAnimation(.easeOut(duration: 0.12)) {
+            activeTransportShortcutFeedback = nil
+        }
+    }
+
     func handlePreviewKeyboardCommand(_ command: PreviewKeyboardCommand) -> Bool {
         guard let selectedVideo = libraryStore.selectedVideo else { return false }
 
         switch command {
         case .togglePlayback:
+            flashTransportShortcutFeedback(.playback)
             controller.togglePlayback()
         case .pause:
             stopKeyboardShuttle()
+            flashTransportShortcutFeedback(.playback)
             controller.pause()
         case .shuttleForward:
             startKeyboardShuttle(direction: 1)
@@ -309,9 +379,11 @@ extension PreviewPanelView {
         case .stepForward:
             stopKeyboardShuttle()
             controller.stepFrame(by: 1)
+            flashTransportShortcutFeedback(.forward)
         case .stepBackward:
             stopKeyboardShuttle()
             controller.stepFrame(by: -1)
+            flashTransportShortcutFeedback(.backward)
         case .previousSceneCut:
             stopKeyboardShuttle()
             seekSceneCut(for: selectedVideo, direction: -1)
@@ -319,13 +391,17 @@ extension PreviewPanelView {
             stopKeyboardShuttle()
             seekSceneCut(for: selectedVideo, direction: 1)
         case .setAudioIn:
+            flashTransportShortcutFeedback(.io)
             setAudioInPoint()
         case .setAudioOut:
+            flashTransportShortcutFeedback(.io)
             setAudioOutPoint()
         case .clearAudioSelection:
+            flashTransportShortcutFeedback(.io)
             clearAudioSelection()
         case .captureCurrentFrame:
             stopKeyboardShuttle()
+            flashTransportShortcutFeedback(.screenshot)
             libraryStore.captureCurrentFrame(video: selectedVideo, time: controller.elapsed)
         case .exportAudioSelection:
             exportCurrentAudioSelection(for: selectedVideo)
@@ -355,9 +431,10 @@ extension PreviewPanelView {
 
     func startKeyboardShuttle(direction: Int) {
         keyboardShuttleLastCommandAt = Date()
+        holdTransportShortcutFeedback(direction > 0 ? .forward : .backward)
         guard keyboardShuttleDirection != direction else { return }
 
-        stopKeyboardShuttle()
+        stopKeyboardShuttle(clearsTransportShortcutFeedback: false)
         keyboardShuttleDirection = direction
         keyboardShuttleFrameStep = 2
         controller.pause()
@@ -367,17 +444,8 @@ extension PreviewPanelView {
         )
 
         keyboardShuttleTask = Task { @MainActor in
-            let startedAt = Date()
             try? await Task.sleep(nanoseconds: 180_000_000)
             while !Task.isCancelled, keyboardShuttleDirection == direction {
-                let now = Date()
-                guard now.timeIntervalSince(startedAt) <= 8,
-                      now.timeIntervalSince(keyboardShuttleLastCommandAt) <= 1.2
-                else {
-                    stopKeyboardShuttle()
-                    break
-                }
-
                 let frameStep = Double(keyboardShuttleFrameStep) / max(controller.frameRate, 1)
                 let next = controller.elapsed + Double(direction) * frameStep
                 if direction > 0, next >= controller.duration {
@@ -401,14 +469,22 @@ extension PreviewPanelView {
         guard keyboardShuttleDirection != 0 else { return }
         keyboardShuttleLastCommandAt = Date()
         keyboardShuttleFrameStep = min(keyboardShuttleFrameStep + 1, 12)
+        holdTransportShortcutFeedback(keyboardShuttleDirection > 0 ? .forward : .backward)
     }
 
-    func stopKeyboardShuttle() {
+    func stopKeyboardShuttle(clearsTransportShortcutFeedback: Bool = true) {
         keyboardShuttleTask?.cancel()
         keyboardShuttleTask = nil
         keyboardShuttleDirection = 0
         keyboardShuttleFrameStep = 2
         keyboardShuttleLastCommandAt = .distantPast
+        if clearsTransportShortcutFeedback {
+            if let feedback = activeTransportShortcutFeedback, feedback == .backward || feedback == .forward {
+                flashTransportShortcutFeedback(feedback)
+            } else {
+                clearTransportShortcutFeedback()
+            }
+        }
     }
 
 }

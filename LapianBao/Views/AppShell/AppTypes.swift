@@ -70,7 +70,6 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
     case frames
     case audio
     case music
-    case content
     case settings
 
     static var allCases: [AppWorkspace] {
@@ -89,7 +88,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         switch self {
         case .home:
             return true
-        case .frames, .audio, .music, .content, .settings:
+        case .frames, .audio, .music, .settings:
             return false
         }
     }
@@ -100,7 +99,6 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         case .frames: return "画面"
         case .audio: return "音效"
         case .music: return "AM 库"
-        case .content: return "内容"
         case .settings: return "设置"
         }
     }
@@ -111,14 +109,13 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         case .frames: return "photo.on.rectangle.angled"
         case .audio: return "waveform"
         case .music: return "music.note.list"
-        case .content: return "text.quote"
         case .settings: return "gearshape"
         }
     }
 
     var railIconOffset: CGFloat {
         switch self {
-        case .home, .audio, .content, .settings:
+        case .home, .audio, .settings:
             return 0
         case .frames:
             return 0.25
@@ -137,8 +134,6 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
             return 17
         case .music:
             return 16
-        case .content:
-            return 15
         case .settings:
             return 16.5
         }
@@ -159,7 +154,7 @@ enum FramesBoardMode: String, CaseIterable, Identifiable {
     }
 }
 
-struct VideoDateSection: Identifiable {
+struct VideoDateSection: Identifiable, Equatable {
     var id: String
     var title: String
     var videos: [VideoItem]
@@ -213,6 +208,11 @@ struct PendingImportVideo: Identifiable, Equatable {
     var platform: String
     var title: String
     var subtitle: String
+    var authorName: String? = nil
+    var thumbnailData: Data? = nil
+    var thumbnailURLString: String? = nil
+    var hasSeededMetadata: Bool = false
+    var isMetadataLoading: Bool = false
     var isSupported: Bool
 }
 
@@ -222,6 +222,7 @@ enum VideoSourcePlatform: String, CaseIterable {
     case xiaohongshu = "小红书"
     case bilibili = "Bilibili"
     case douyin = "抖音"
+    case other = "其他"
 
     var iconName: String {
         switch self {
@@ -230,6 +231,7 @@ enum VideoSourcePlatform: String, CaseIterable {
         case .xiaohongshu: return "book.pages.fill"
         case .bilibili: return "play.rectangle.fill"
         case .douyin: return "music.note.tv.fill"
+        case .other: return "questionmark.circle.fill"
         }
     }
 
@@ -240,6 +242,7 @@ enum VideoSourcePlatform: String, CaseIterable {
         case .xiaohongshu: return Color(red: 0.88, green: 0.24, blue: 0.30)
         case .bilibili: return Color(red: 0.28, green: 0.68, blue: 0.95)
         case .douyin: return Color(red: 0.34, green: 0.84, blue: 0.78)
+        case .other: return Color(red: 0.62, green: 0.66, blue: 0.72)
         }
     }
 
@@ -253,33 +256,6 @@ enum VideoSourcePlatform: String, CaseIterable {
 
     static func color(for value: String) -> Color {
         matching(value)?.color ?? Color(red: 0.62, green: 0.66, blue: 0.72)
-    }
-}
-
-enum VideoTagPalette {
-    private static let colors: [Color] = [
-        Color(red: 0.78, green: 0.34, blue: 0.64),
-        Color(red: 0.40, green: 0.62, blue: 0.96),
-        Color(red: 0.58, green: 0.62, blue: 0.68),
-        Color(red: 0.30, green: 0.70, blue: 0.40),
-        Color(red: 0.22, green: 0.72, blue: 0.68),
-        Color(red: 0.32, green: 0.56, blue: 0.96),
-        Color(red: 0.56, green: 0.43, blue: 0.92),
-        Color(red: 0.84, green: 0.38, blue: 0.78)
-    ]
-
-    static func color(for tag: String) -> Color {
-        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return colors.first ?? Color(red: 0.62, green: 0.66, blue: 0.72)
-        }
-
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for scalar in trimmed.lowercased().unicodeScalars {
-            hash ^= UInt64(scalar.value)
-            hash &*= 1_099_511_628_211
-        }
-        return colors[Int(hash % UInt64(colors.count))]
     }
 }
 

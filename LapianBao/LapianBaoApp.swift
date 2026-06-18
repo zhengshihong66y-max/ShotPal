@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static var retainedDelegate: AppDelegate?
 
     private let libraryStore = LibraryStore()
+    private var didHandleInitialActivation = false
     private var previewKeyMonitor: Any?
     private var pressedPreviewKeyCodes = Set<UInt16>()
     private lazy var windowManager = AppWindowManager(
@@ -102,7 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         windowManager.ensureMainWindowVisible()
-        libraryStore.startDailyExternalServiceSelfCheckIfNeeded()
+        guard didHandleInitialActivation else {
+            didHandleInitialActivation = true
+            return
+        }
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -145,8 +149,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func processPreviewKeyboardEvent(_ event: NSEvent) -> NSEvent? {
         let isPlainShortcut = PreviewKeyboardEventRouter.isPlainShortcutEvent(event)
         let hasActiveHandler = PreviewKeyboardEventRouter.hasActiveHandler
+        let isMusicPreviewSpace = isPlainShortcut && event.keyCode == 49 && libraryStore.activeMusicPreviewJobID != nil
 
         if event.type == .keyUp {
+            if isMusicPreviewSpace,
+               !PreviewKeyboardEventRouter.isEditableTextResponder(NSApp.keyWindow?.firstResponder) {
+                return nil
+            }
+
             let wasTrackingKey = pressedPreviewKeyCodes.contains(event.keyCode)
             pressedPreviewKeyCodes.remove(event.keyCode)
 
@@ -165,10 +175,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         guard event.type == .keyDown else { return event }
-        guard hasActiveHandler else { return event }
         guard !PreviewKeyboardEventRouter.isEditableTextResponder(NSApp.keyWindow?.firstResponder) else {
             return event
         }
+
+        if isMusicPreviewSpace {
+            if !event.isARepeat, let id = libraryStore.activeMusicPreviewJobID {
+                AppEventBus.postMusicPreviewToggleRequest(id: id)
+            }
+            return nil
+        }
+
+        guard hasActiveHandler else { return event }
         guard isPlainShortcut, PreviewKeyboardEventRouter.isHandledKeyCode(event.keyCode) else { return event }
 
         if event.isARepeat {

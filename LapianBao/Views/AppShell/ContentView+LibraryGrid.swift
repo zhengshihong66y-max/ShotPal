@@ -16,53 +16,53 @@ extension ContentView {
     @ViewBuilder
     func videoGrid(isCompact: Bool, framed: Bool = true) -> some View {
         let columns = libraryGridColumns
-        let videos = visibleLibraryVideos
+        let projection = libraryProjection
+        let videos = projection.visibleVideos
 
         let content = VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: Design.libraryToolbarButtonGap) {
-                librarySearchField
-                    .layoutPriority(1)
+            libraryHomeToolbar
 
-                importButton
-                tagFilterMenu
-                sortMenu
-            }
-            .frame(maxWidth: .infinity, minHeight: Design.libraryToolbarHeight, alignment: .leading)
-            .padding(.leading, Design.libraryToolbarLeadingInset)
-            .padding(.trailing, Design.libraryToolbarTrailingInset)
+            TopChromeBoundedContent {
+                if isLibrarySidebarFilterAreaPresented {
+                    librarySidebarFilterArea()
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
-            ScrollView {
-                Group {
-                    if libraryStore.sortOption == .importDate {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(importDateVideoSections) { section in
-                                VStack(alignment: .leading, spacing: 0) {
-                                    dateDivider(section.title)
+                ScrollView {
+                    Group {
+                        if libraryStore.sortOption == .importDate {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(projection.importDateSections.enumerated()), id: \.element.id) { indexedSection in
+                                    VStack(alignment: .leading, spacing: 0) {
+                                        dateDivider(
+                                            indexedSection.element.title,
+                                            keepsHeaderPosition: indexedSection.offset == 0
+                                        )
 
-                                    LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                                        ForEach(section.videos) { video in
-                                            videoTile(video)
-                                                .frame(maxWidth: .infinity)
+                                        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                                            ForEach(indexedSection.element.videos) { video in
+                                                videoTile(video)
+                                                    .frame(maxWidth: .infinity)
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
-                    } else {
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                            ForEach(videos) { video in
-                                videoTile(video)
-                                    .frame(maxWidth: .infinity)
+                        } else {
+                            LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                                ForEach(videos) { video in
+                                    videoTile(video)
+                                        .frame(maxWidth: .infinity)
+                                }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, Design.libraryContentInset)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 2)
-                .padding(.horizontal, Design.libraryContentInset)
+                .fadingVerticalScrollIndicators()
             }
-            .scrollIndicators(.hidden)
-            .background(HiddenScrollIndicators())
         }
         .padding(.top, Design.libraryToolbarTop)
         .padding(.bottom, 14)
@@ -81,39 +81,210 @@ extension ContentView {
         )
     }
 
-    var visibleLibraryVideos: [VideoItem] {
-        let query = normalizedSearch(librarySearchText)
-        guard !query.isEmpty else { return libraryStore.filteredVideos }
+    var libraryProjection: LibraryBrowserProjection {
+        libraryStore.libraryBrowserProjection(
+            searchText: librarySearchText,
+            selectedPlatforms: selectedLibraryPlatforms,
+            selectedAuthors: selectedLibraryAuthors
+        )
+    }
 
-        return libraryStore.filteredVideos.filter { video in
-            let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
-            return normalizedSearch(videoDisplayName(for: video)).contains(query)
-                || normalizedSearch(video.name).contains(query)
-                || tags.contains { normalizedSearch($0).contains(query) }
-                || normalizedSearch(sourcePlatformName(for: video) ?? "").contains(query)
+    var libraryHomeToolbar: some View {
+        LibraryToolbar(placeholder: "", text: $librarySearchText) {
+            importButton
+            libraryFilterVisibilityButton
+            sortMenu
         }
     }
 
-    var librarySearchField: some View {
-        LibraryToolbarSearchField(placeholder: "搜索视频、标签", text: $librarySearchText, expands: true)
+    var visibleLibraryVideos: [VideoItem] {
+        libraryProjection.visibleVideos
+    }
+
+    var libraryTagFilterOptions: [String: LibraryTagFilterOption] {
+        libraryProjection.tagFilterOptions
+    }
+
+    func librarySidebarFilterArea() -> some View {
+        let metrics = libraryStore.librarySidebarMetrics
+        let tagOptions = libraryTagFilterOptions
+
+        return VStack(alignment: .leading, spacing: 8) {
+            libraryPlatformFilterSection(
+                title: "平台",
+                values: metrics.platforms,
+                emptyTitle: "暂无平台"
+            ) { platform in
+                libraryCompactFilterChip(
+                    title: platform,
+                    count: metrics.platformCounts[platform, default: 0],
+                    isSelected: selectedLibraryPlatforms.contains(platform),
+                    tint: VideoSourcePlatform.color(for: platform)
+                ) {
+                    toggleLibraryPlatformFilter(platform)
+                }
+            }
+
+            librarySidebarFilterSection(
+                title: "作者",
+                values: metrics.authors,
+                emptyTitle: "暂无作者"
+            ) { author in
+                libraryCompactFilterChip(
+                    title: author,
+                    count: metrics.authorCounts[author, default: 0],
+                    isSelected: selectedLibraryAuthors.contains(author),
+                    tint: Design.annotationAccent
+                ) {
+                    toggleLibraryAuthorFilter(author)
+                }
+            }
+
+            librarySidebarFilterSection(
+                title: "内容",
+                values: libraryStore.allTags,
+                emptyTitle: "暂无标签"
+            ) { tag in
+                let option = tagOptions[tag] ?? LibraryTagFilterOption(
+                    count: metrics.tagCountsByKey[normalizedSearch(tag), default: 0],
+                    isEnabled: true
+                )
+                libraryCompactFilterChip(
+                    title: tag,
+                    count: option.count,
+                    isSelected: libraryStore.selectedTags.contains(tag),
+                    isEnabled: option.isEnabled,
+                    tint: Design.neutralAccent
+                ) {
+                    libraryStore.toggleTagSelection(tag)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.horizontal, Design.libraryContentInset)
+        .padding(.vertical, 2)
+    }
+
+    func librarySidebarFilterSection<Chip: View>(
+        title: String,
+        values: [String],
+        emptyTitle: String,
+        @ViewBuilder chip: @escaping (String) -> Chip
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.tertiary)
+
+            if values.isEmpty {
+                Text(emptyTitle)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(minHeight: 28, alignment: .leading)
+            } else {
+                WrappingFilterChipGroup(spacing: 4, rowSpacing: 5) {
+                    ForEach(values, id: \.self) { value in
+                        chip(value)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    func libraryPlatformFilterSection<Chip: View>(
+        title: String,
+        values: [String],
+        emptyTitle: String,
+        @ViewBuilder chip: @escaping (String) -> Chip
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.tertiary)
+
+            if values.isEmpty {
+                Text(emptyTitle)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(minHeight: 28, alignment: .leading)
+            } else {
+                WrappingFilterChipGroup(spacing: 4, rowSpacing: 5) {
+                    ForEach(values, id: \.self) { value in
+                        chip(value)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    var selectedLibraryFilterCount: Int {
+        selectedLibraryPlatforms.count + selectedLibraryAuthors.count + libraryStore.selectedTags.count
+    }
+
+    func libraryCompactFilterChip(
+        title: String,
+        count: Int,
+        isSelected: Bool,
+        isEnabled: Bool = true,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        let isDimmed = !isEnabled && !isSelected
+
+        return Button(action: action) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 116, alignment: .leading)
+
+                Text("\(count)")
+                    .font(Design.numericFont(size: 9, weight: .bold))
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? .white.opacity(0.86) : .secondary.opacity(isDimmed ? 0.34 : 0.82))
+            }
+            .foregroundStyle(isSelected ? .white.opacity(0.94) : .secondary.opacity(isDimmed ? 0.42 : 1))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(isSelected ? Design.tagChipSelectedFill : .white.opacity(isDimmed ? 0.018 : 0.045))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(isSelected ? Design.tagChipSelectedStroke : .white.opacity(isDimmed ? 0.035 : 0.09), lineWidth: 0.7)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isDimmed ? 0.58 : 1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    func sourceAuthorName(for video: VideoItem) -> String? {
+        libraryStore.videoSourceAuthorName(for: video)
+    }
+
+    func toggleLibraryPlatformFilter(_ platform: String) {
+        if selectedLibraryPlatforms.contains(platform) {
+            selectedLibraryPlatforms.remove(platform)
+        } else {
+            selectedLibraryPlatforms.insert(platform)
+        }
+    }
+
+    func toggleLibraryAuthorFilter(_ author: String) {
+        if selectedLibraryAuthors.contains(author) {
+            selectedLibraryAuthors.remove(author)
+        } else {
+            selectedLibraryAuthors.insert(author)
+        }
     }
 
     var importDateVideoSections: [VideoDateSection] {
-        var sections: [VideoDateSection] = []
-        var sectionIndexByID: [String: Int] = [:]
-
-        for video in visibleLibraryVideos {
-            let section = importDateSection(for: video)
-
-            if let index = sectionIndexByID[section.id] {
-                sections[index].videos.append(video)
-            } else {
-                sectionIndexByID[section.id] = sections.count
-                sections.append(VideoDateSection(id: section.id, title: section.title, videos: [video]))
-            }
-        }
-
-        return sections
+        libraryProjection.importDateSections
     }
 
     func importDateSection(for video: VideoItem) -> (id: String, title: String) {
@@ -126,7 +297,7 @@ extension ContentView {
         return (id, title)
     }
 
-    func dateDivider(_ title: String) -> some View {
+    func dateDivider(_ title: String, keepsHeaderPosition: Bool = false) -> some View {
         HStack(alignment: .center, spacing: 10) {
             Rectangle()
                 .fill(.white.opacity(0.10))
@@ -143,13 +314,12 @@ extension ContentView {
                 .frame(height: 1)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, Design.libraryDateDividerTopInset)
-        .padding(.bottom, Design.libraryDateDividerBottomInset)
+        .padding(.top, keepsHeaderPosition ? Design.libraryHeaderDateDividerTopInset : Design.libraryDateDividerTopInset)
+        .padding(.bottom, keepsHeaderPosition ? Design.libraryHeaderDateDividerBottomInset : Design.libraryDateDividerBottomInset)
     }
 
     var importButton: some View {
         Button {
-            libraryStore.prewarmSavedCollectionCookieCache()
             importEndpointText = libraryStore.instagramImportEndpoint
             autoFillClipboardURL()
             withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
@@ -164,6 +334,31 @@ extension ContentView {
         .help("下载视频")
     }
 
+    var libraryFilterVisibilityButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                isLibrarySidebarFilterAreaPresented.toggle()
+            }
+        } label: {
+            libraryToolbarIcon(
+                systemName: selectedLibraryFilterCount == 0 ? "tag" : "tag.fill",
+                size: 12,
+                tint: isLibrarySidebarFilterAreaPresented || selectedLibraryFilterCount > 0
+                    ? Design.neutralStrongAccent
+                    : Design.libraryToolbarIconTint
+            )
+            .overlay(alignment: .topTrailing) {
+                if selectedLibraryFilterCount > 0 {
+                    libraryToolbarBadge(selectedLibraryFilterCount)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .contentShape(Rectangle())
+        .help("筛选")
+    }
+
     var tagFilterMenu: some View {
         Button {
             isTagFilterMenuPresented.toggle()
@@ -171,13 +366,7 @@ extension ContentView {
             libraryToolbarIcon(systemName: libraryStore.selectedTags.isEmpty ? "tag" : "tag.fill", size: 12)
                 .overlay(alignment: .topTrailing) {
                     if !libraryStore.selectedTags.isEmpty {
-                        Text("\(libraryStore.selectedTags.count)")
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Design.neutralBadgeFill)
-                            .clipShape(Capsule())
-                            .offset(x: 4, y: -3)
+                        libraryToolbarBadge(libraryStore.selectedTags.count)
                     }
                 }
         }
@@ -191,6 +380,8 @@ extension ContentView {
     }
 
     var tagFilterPopover: some View {
+        let tagOptions = libraryTagFilterOptions
+
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("标签筛选")
@@ -212,15 +403,18 @@ extension ContentView {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
                         ForEach(libraryStore.allTags, id: \.self) { tag in
+                            let isSelected = libraryStore.selectedTags.contains(tag)
+                            let option = tagOptions[tag] ?? LibraryTagFilterOption(count: 0, isEnabled: true)
+                            let isEnabled = option.isEnabled
+
                             HStack(spacing: 7) {
                                 Button {
                                     libraryStore.toggleTagSelection(tag)
                                 } label: {
                                     HStack(spacing: 7) {
-                                        Image(systemName: libraryStore.selectedTags.contains(tag) ? "checkmark.square.fill" : "square")
-                                            .foregroundStyle(libraryStore.selectedTags.contains(tag) ? Design.neutralStrongAccent : .secondary)
+                                        Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                                            .foregroundStyle(isSelected ? Design.neutralStrongAccent : .secondary)
                                             .frame(width: 15)
-                                        VideoTagColorDot(tag: tag)
                                         Text(tag)
                                             .font(.caption)
                                             .lineLimit(1)
@@ -229,6 +423,9 @@ extension ContentView {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
+                                .disabled(!isEnabled)
+                                .opacity(isEnabled ? 1 : 0.38)
+                                .help(isEnabled ? "切换标签筛选" : "与当前标签筛选无交集")
 
                                 Button {
                                     renamingTag = tag
@@ -251,13 +448,13 @@ extension ContentView {
                             }
                             .padding(.horizontal, 7)
                             .padding(.vertical, 5)
-                            .background(libraryStore.selectedTags.contains(tag) ? Color.white.opacity(0.08) : Color.clear)
+                            .background(isSelected ? Color.white.opacity(0.08) : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                     }
                 }
                 .frame(maxHeight: 260)
-                .scrollIndicators(.hidden)
+                .fadingVerticalScrollIndicators()
             }
         }
         .padding(12)
@@ -292,19 +489,6 @@ extension ContentView {
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .help("排序")
-    }
-
-    func libraryToolbarIcon(systemName: String, size: CGFloat, opticalOffsetX: CGFloat = 0) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: size, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(Design.libraryToolbarIconTint)
-            .frame(
-                width: Design.libraryToolbarButtonSlotWidth,
-                height: Design.libraryToolbarButtonSlotHeight,
-                alignment: .center
-            )
-            .offset(x: opticalOffsetX)
     }
 
 }

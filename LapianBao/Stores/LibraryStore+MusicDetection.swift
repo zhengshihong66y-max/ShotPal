@@ -166,9 +166,6 @@ extension LibraryStore {
     ) async -> URL? {
         let attempt = ytdlpYouTubeArgumentAttempts().first ?? YTDLPArgumentAttempt(arguments: [])
         return await Task.detached(priority: .utility) { () -> URL? in
-            let process = Process()
-            process.executableURL = executableURL
-            process.environment = downloaderProcessEnvironment()
             var arguments = [
                 "--no-playlist",
                 "--skip-download",
@@ -179,47 +176,20 @@ extension LibraryStore {
             ]
             arguments.insert(contentsOf: ytdlpProbeNetworkArguments(isYouTube: true), at: 3)
             arguments.insert(contentsOf: attempt.arguments, at: max(0, arguments.count - 2))
-            process.arguments = arguments
-
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            let outputCollector = PipeDataCollector()
-            let errorCollector = PipeDataCollector()
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
-
-            outputPipe.fileHandleForReading.readabilityHandler = { handle in
-                outputCollector.append(handle.availableData)
-            }
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                errorCollector.append(handle.availableData)
-            }
-
-            do {
-                try process.run()
-            } catch {
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-                return nil
-            }
-
-            processRegistry.set(process)
-            process.waitUntilExit()
-            processRegistry.set(nil)
-
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            let result = ExternalProcessRunner.run(
+                executableURL: executableURL,
+                arguments: arguments,
+                environment: downloaderProcessEnvironment(),
+                processRegistry: processRegistry
+            )
 
             if Task.isCancelled {
-                if process.isRunning { process.terminate() }
+                processRegistry.cancelRunningProcess()
                 return nil
             }
-            guard process.terminationStatus == 0 else { return nil }
+            guard result.succeeded else { return nil }
 
-            let output = String(data: outputCollector.data, encoding: .utf8) ?? ""
-            return firstYouTubeWatchURL(fromYTDLPOutput: output)
+            return firstYouTubeWatchURL(fromYTDLPOutput: result.outputText)
         }.value
     }
 
@@ -373,8 +343,8 @@ extension LibraryStore {
         progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         try await Task.detached(priority: .utility) {
-            guard let ytdlp = localYTDLPURL() else {
-                throw RemoteImportError.downloaderFailed("未找到 yt-dlp。请先安装 yt-dlp 和 ffmpeg，用于从 YouTube 搜索视频并抽取音频。")
+            guard let ytdlp = usableYTDLPURL() else {
+                throw RemoteImportError.downloaderFailed("未找到可用的 yt-dlp，自动安装/更新也未完成。请检查网络后在设置里重新运行 yt-dlp 自检。")
             }
 
             let startedAt = Date()
@@ -436,7 +406,15 @@ extension LibraryStore {
                 handleProgressLines(errorCollector.append(handle.availableData))
             }
 
-            try process.run()
+            do {
+                try process.run()
+            } catch {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                throw RemoteImportError.downloaderFailed(
+                    ytdlpLaunchFailureMessage(error, executableURL: ytdlp)
+                )
+            }
             processRegistry.set(process)
             defer {
                 processRegistry.set(nil)
@@ -654,10 +632,15 @@ extension LibraryStore {
 
             switch type {
             case "progress":
-                let msg = json["message"] as? String ?? ""
+                let msg = (json["message"] as? String ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 let val = json["value"] as? Double ?? 0
                 let percent = Int((min(1, max(0, val)) * 100).rounded())
-                await onEvent(.progress("识别中 \(percent)% · \(msg)"))
+                let statusPrefix = "识别中 \(percent)%"
+                let displayMessage = Self.isMusicDetectionSegmentTotalMessage(msg)
+                    ? statusPrefix
+                    : "\(statusPrefix) · \(msg)"
+                await onEvent(.progress(displayMessage))
 
             case "found":
                 if let songDict = json["song"] as? [String: Any],
@@ -730,15 +713,57 @@ extension LibraryStore {
     nonisolated static func parseMusicItem(from dict: [String: Any]) -> MusicRecognitionItem? {
         guard let title = dict["title"] as? String, !title.isEmpty else { return nil }
         let artist = dict["artist"] as? String ?? ""
-        let tags = dict["tags"] as? [String] ?? [artist, dict["genre"] as? String ?? ""]
+        let tags = dict["tags"] as? [String] ?? [dict["genre"] as? String ?? ""]
         return MusicRecognitionItem(
             title: title,
             artist: artist,
             artworkURL: dict["artwork_url"] as? String ?? "",
             appleMusicURL: dict["apple_music_url"] as? String ?? "",
             detectedAt: dict["detected_at"] as? Double ?? 0,
+            duration: parseMusicDurationSeconds(from: dict),
             tags: tags
         )
+    }
+
+    nonisolated static func parseMusicDurationSeconds(from dict: [String: Any]) -> Double {
+        func doubleValue(_ value: Any?) -> Double? {
+            switch value {
+            case let value as Double:
+                return value
+            case let value as Float:
+                return Double(value)
+            case let value as Int:
+                return Double(value)
+            case let value as Int64:
+                return Double(value)
+            case let value as String:
+                return Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+            default:
+                return nil
+            }
+        }
+
+        if let seconds = doubleValue(dict["duration"] ?? dict["duration_seconds"]),
+           seconds.isFinite,
+           seconds > 0 {
+            return seconds
+        }
+
+        if let millis = doubleValue(dict["track_time_millis"] ?? dict["trackTimeMillis"]),
+           millis.isFinite,
+           millis > 0 {
+            return millis / 1000
+        }
+
+        return 0
+    }
+
+    nonisolated static func isMusicDetectionSegmentTotalMessage(_ message: String) -> Bool {
+        message.isEmpty
+            || message.range(
+                of: #"^共\s*\d+\s*段$"#,
+                options: .regularExpression
+            ) != nil
     }
 
     enum MusicDetectionError: LocalizedError {

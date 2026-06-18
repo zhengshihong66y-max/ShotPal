@@ -251,6 +251,9 @@
 				ENABLE_PREVIEWS = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
@@ -281,6 +284,9 @@
 				ENABLE_PREVIEWS = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;

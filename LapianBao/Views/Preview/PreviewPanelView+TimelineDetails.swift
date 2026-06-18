@@ -17,27 +17,32 @@ extension PreviewPanelView {
     func timelineDetailContent(_ tab: PreviewTab, for video: VideoItem) -> some View {
         switch tab {
         case .frames:
-            ScenePanelView(
-                video: video,
-                controller: controller,
-                sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
-                hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
-                sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
-                sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
-                sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
-                isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
-                sampledFrames: libraryStore.sampledFrames(for: video),
-                activeItemID: activeSceneItemID(for: video),
-                openStoryboardBoard: { openStoryboardBoard(video) }
-            )
-            .equatable()
+            frameTimelineDetailContent(for: video)
         case .audio, .content:
-            if tab == .audio {
-                audioTimelineDetailContent(for: video)
-            } else {
-                contentTimelineDetailContent(for: video)
-            }
+            contentTimelineDetailContent(for: video)
         }
+    }
+
+    func frameTimelineDetailContent(
+        for video: VideoItem,
+        activeProgressTick: Double? = nil
+    ) -> some View {
+        ScenePanelView(
+            video: video,
+            controller: controller,
+            sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
+            hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
+            sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
+            sceneDetectionError: libraryStore.sceneDetectionErrorByVideoPath[video.url.path],
+            sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
+            sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
+            isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
+            sampledFrames: libraryStore.sampledFrames(for: video),
+            activeItemID: activeSceneItemID(for: video),
+            activeProgressTick: activeProgressTick,
+            openStoryboardBoard: { openStoryboardBoard(video) }
+        )
+        .equatable()
     }
 
     func audioTimelineDetailContent(for video: VideoItem) -> some View {
@@ -55,12 +60,13 @@ extension PreviewPanelView {
             contentRecognitionStartBlock(for: video, status: status)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
-            HStack(alignment: .top, spacing: Self.contentTimelineDetailBlockGap) {
+            ZStack(alignment: .bottomTrailing) {
                 subtitleTimelineBlock(for: video)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                videoNodeTimelineBlock(for: video)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                transcriptExportOverlayButton(for: video)
+                    .padding(.trailing, 8)
+                    .padding(.bottom, 8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -68,9 +74,7 @@ extension PreviewPanelView {
 
     @ViewBuilder
     func contentRecognitionStartBlock(for video: VideoItem, status: TranscriptJobStatus?) -> some View {
-        if case let .running(message) = status {
-            timelineProgressRow(message)
-        } else if case let .failed(message) = status {
+        if case let .failed(message) = status {
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(Color.red.opacity(0.86))
@@ -80,7 +84,7 @@ extension PreviewPanelView {
                 .background(.white.opacity(0.045))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
-            timelineProgressRow("准备字幕分析…")
+            EmptyView()
         }
     }
 
@@ -91,9 +95,7 @@ extension PreviewPanelView {
         let segments = libraryStore.transcriptSegmentsByVideoPath[path, default: []]
 
         VStack(alignment: .leading, spacing: 8) {
-            if case let .running(message) = status {
-                timelineProgressRow(message)
-
+            if case .running = status {
                 if !segments.isEmpty {
                     subtitleSegmentList(segments)
                 }
@@ -125,42 +127,6 @@ extension PreviewPanelView {
             }
         }
         .padding(Self.contentTimelineDetailBlockPadding)
-        .background(.white.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    @ViewBuilder
-    func videoNodeTimelineBlock(for video: VideoItem) -> some View {
-        let segments = libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []]
-        let chapters = loadedContentNodeChapters(for: video)
-
-        VStack(alignment: .leading, spacing: 8) {
-            switch contentNodeTimelineStatus {
-            case let .running(videoPath) where videoPath == video.url.path:
-                timelineProgressRow("正在整理视频节点…")
-            case let .failed(videoPath, message) where videoPath == video.url.path:
-                VStack(spacing: 10) {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(Color.red.opacity(0.86))
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            default:
-                if chapters.isEmpty {
-                    if segments.isEmpty {
-                        timelineProgressRow("等待字幕生成…")
-                    } else {
-                        timelineContentNodePrompt(video: video, segments: segments)
-                    }
-                } else {
-                    videoNodeList(chapters, video: video)
-                }
-            }
-        }
-        .padding(Self.contentTimelineDetailBlockPadding)
-        .background(.white.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     func timelineProgressRow(_ message: String) -> some View {
@@ -171,17 +137,32 @@ extension PreviewPanelView {
         .recognitionProgressCard()
     }
 
-    func timelineContentNodePrompt(video: VideoItem, segments: [TranscriptSegment]) -> some View {
-        VStack(spacing: 10) {
-            Button {
-                generateContentNodeTimeline(video: video, segments: segments)
-            } label: {
-                Label("生成视频节点", systemImage: "sparkles")
+    func transcriptExportOverlayButton(for video: VideoItem) -> some View {
+        Button {
+            exportCurrentTranscript(for: video)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 11, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+
+                Text("导出字幕")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
             }
-            .buttonStyle(.borderless)
-            .help("使用本机 Ollama 文本模型把字幕整理成视频节点")
+            .foregroundStyle(.white.opacity(0.86))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.48))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(.white.opacity(0.13), lineWidth: 0.7)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .help("导出字幕")
     }
 
     func subtitleSegmentList(_ segments: [TranscriptSegment]) -> some View {
@@ -196,7 +177,7 @@ extension PreviewPanelView {
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
                                 Text(formatDuration(segment.start))
-                                    .font(.caption2.monospacedDigit().weight(.semibold))
+                                    .font(Design.numericCaption2(weight: .semibold))
                                     .foregroundStyle(isActive ? Design.annotationAccent : Design.annotationAccent.opacity(0.62))
                                     .frame(width: 52, alignment: .leading)
                                 Text(segment.text)
@@ -214,7 +195,9 @@ extension PreviewPanelView {
                         .id(segment.id)
                     }
                 }
+                .padding(.bottom, 48)
             }
+            .fadingVerticalScrollIndicators()
             .onChange(of: activeTranscriptSegmentID) { _, newID in
                 if let newID {
                     withAnimation(.easeInOut(duration: 0.3)) {
@@ -223,107 +206,6 @@ extension PreviewPanelView {
                 }
             }
         }
-    }
-
-    func videoNodeList(_ chapters: [TranscriptTimelineChapter], video: VideoItem) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 7) {
-                ForEach(chapters) { chapter in
-                    let isActive = isActiveContentNode(chapter, in: chapters)
-                    Button {
-                        activeTranscriptSegmentID = chapter.segmentID
-                        controller.pause()
-                        controller.seekToSeconds(chapter.start)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(spacing: 6) {
-                                Text(formatDuration(chapter.start))
-                                    .font(.caption2.monospacedDigit().weight(.bold))
-                                    .foregroundStyle(Design.annotationAccent)
-                                if let end = chapter.end {
-                                    Text("- \(formatDuration(end))")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                                Text(chapter.type)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            Text(chapter.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-
-                            Text(chapter.summary)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(isActive ? Color.white.opacity(0.12) : Color.white.opacity(0.055))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(.white.opacity(isActive ? 0.24 : 0.08), lineWidth: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .help(chapter.summary)
-                }
-            }
-        }
-    }
-
-    func loadedContentNodeChapters(for video: VideoItem) -> [TranscriptTimelineChapter] {
-        if case let .loaded(videoPath, chapters) = contentNodeTimelineStatus,
-           videoPath == video.url.path {
-            return chapters
-        }
-        return []
-    }
-
-    func isActiveContentNode(_ chapter: TranscriptTimelineChapter, in chapters: [TranscriptTimelineChapter]) -> Bool {
-        let elapsed = controller.elapsed
-        if elapsed >= chapter.start, elapsed <= (chapter.end ?? controller.duration) {
-            return true
-        }
-        guard chapter.end == nil else { return false }
-        return chapters.last { $0.start <= elapsed }?.id == chapter.id
-    }
-
-    func canSeekAdjacentContentChapter(for video: VideoItem, direction: Int) -> Bool {
-        adjacentContentChapter(for: video, direction: direction) != nil
-    }
-
-    func seekAdjacentContentChapter(for video: VideoItem, direction: Int) {
-        guard let chapter = adjacentContentChapter(for: video, direction: direction) else { return }
-        activeTranscriptSegmentID = chapter.segmentID
-        controller.seekToSeconds(chapter.start)
-    }
-
-    func adjacentContentChapter(for video: VideoItem, direction: Int) -> TranscriptTimelineChapter? {
-        let chapters = loadedContentNodeChapters(for: video).sorted { $0.start < $1.start }
-        guard !chapters.isEmpty else { return nil }
-
-        let elapsed = controller.elapsed
-        let currentIndex = chapters.lastIndex { $0.start <= elapsed + 0.1 }
-
-        if direction < 0 {
-            guard let currentIndex else { return nil }
-            let targetIndex = max(0, currentIndex - 1)
-            return targetIndex == currentIndex ? nil : chapters[targetIndex]
-        }
-
-        if let currentIndex {
-            let targetIndex = currentIndex + 1
-            return chapters.indices.contains(targetIndex) ? chapters[targetIndex] : nil
-        }
-
-        return chapters.first
     }
 
     func statusFailed(_ status: TranscriptJobStatus?) -> Bool {
@@ -338,9 +220,9 @@ extension PreviewPanelView {
         switch timeline {
         case .frames:
             startSceneRecognitionIfNeeded(for: video)
-        case .content:
+        case .audio, .content:
             startContentRecognitionIfNeeded(for: video)
-        case .audio, .none:
+        case .none:
             break
         }
     }
@@ -363,7 +245,8 @@ extension PreviewPanelView {
         }
 
         guard
-            libraryStore.sceneDetectionProgress[path] == nil
+            libraryStore.sceneDetectionProgress[path] == nil,
+            libraryStore.sceneDetectionErrorByVideoPath[path] == nil
         else { return }
 
         libraryStore.detectSceneCuts(for: video)
@@ -374,6 +257,7 @@ extension PreviewPanelView {
         let segments = libraryStore.transcriptSegmentsByVideoPath[path, default: []]
 
         if segments.isEmpty {
+            libraryStore.prepareExternalServiceWork()
             startSubtitleRecognitionIfNeeded(for: video)
         }
     }
@@ -388,30 +272,6 @@ extension PreviewPanelView {
         libraryStore.transcribe(video: video)
     }
 
-    func generateContentNodeTimeline(video: VideoItem, segments: [TranscriptSegment]) {
-        guard !segments.isEmpty else { return }
-        let authorName = libraryStore.videoAuthorName(for: video)
-        contentNodeTimelineStatus = .running(videoPath: video.url.path)
-        libraryStore.prepareExternalServiceWork()
-
-        Task {
-            do {
-                let chapters = try await LocalTranscriptTimelineAnalyzer.analyze(
-                    videoName: video.name,
-                    videoAuthor: authorName,
-                    segments: segments
-                )
-                await MainActor.run {
-                    contentNodeTimelineStatus = .loaded(videoPath: video.url.path, chapters: chapters)
-                }
-            } catch {
-                await MainActor.run {
-                    contentNodeTimelineStatus = .failed(videoPath: video.url.path, message: LocalTranscriptTimelineAnalyzer.userFacingMessage(for: error))
-                }
-            }
-        }
-    }
-
     func frameTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         let cuts = libraryStore.sceneCutsByVideoPath[video.url.path] ?? []
 
@@ -421,6 +281,7 @@ extension PreviewPanelView {
             timecodeText: clock.timecodeText,
             sceneCuts: sceneStoryboardCuts(for: video),
             isPlaying: controller.isPlaying,
+            playbackRate: controller.playbackRate,
             togglePlayback: { controller.togglePlayback() },
             seek: { controller.seekToProgress($0) },
             screenshotMarkers: normalizedSampledFrames(for: video),
@@ -439,7 +300,7 @@ extension PreviewPanelView {
             panViewport: panTimelineViewport,
             zoomViewport: zoomTimelineViewport,
             resetViewport: resetTimelineViewport,
-            timelineHeight: Design.timelineLaneContentHeight,
+            timelineHeight: previewTimelineLaneContentHeight,
             sceneImages: sceneStripImages(for: video)
         )
     }
@@ -472,8 +333,6 @@ extension PreviewPanelView {
             isPlaying: controller.isPlaying,
             togglePlayback: { controller.togglePlayback() },
             seek: { controller.seekToProgress($0) },
-            chapters: loadedContentNodeChapters(for: video),
-            duration: controller.duration,
             annotationItems: normalizedAnnotations(for: video),
             onAnnotationSelect: { openAnnotation($0, sourceTab: .content) },
             playheadTint: Design.timelinePlayheadAccent,
@@ -484,20 +343,6 @@ extension PreviewPanelView {
         )
     }
 
-    func openDetailWorkspace(_ workspace: AppWorkspace) {
-        switch workspace {
-        case .frames:
-            activePreviewTab = .frames
-        case .audio:
-            activePreviewTab = .audio
-        case .content:
-            activePreviewTab = .content
-        case .home, .music, .settings:
-            break
-        }
-        openWorkspace(workspace)
-    }
-
     func annotationEditorView(for video: VideoItem) -> some View {
         let editingAnnotation = editingAnnotation(for: video)
         let title = editingAnnotation.map { "编辑\($0.kind.title)批注" }
@@ -506,8 +351,11 @@ extension PreviewPanelView {
         return VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.headline)
-            TextEditor(text: $annotationText)
-                .frame(width: 260, height: 88)
+            AnnotationEditorTextView(text: $annotationText)
+                .frame(maxWidth: .infinity)
+                .frame(height: 104)
+                .background(.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             HStack {
                 if let editingAnnotation {
                     Button(role: .destructive) {
@@ -574,4 +422,76 @@ extension PreviewPanelView {
         return libraryStore.annotations(for: video).first { $0.id == editingAnnotationID }
     }
 
+}
+
+private struct AnnotationEditorTextView: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScroller?.controlSize = .small
+
+        let textView = NSTextView()
+        textView.delegate = context.coordinator
+        textView.string = text
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.textColor = .white
+        textView.insertionPointColor = .white
+        textView.font = .systemFont(ofSize: 16, weight: .regular)
+        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+
+        DispatchQueue.main.async {
+            textView.window?.makeFirstResponder(textView)
+        }
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.text = $text
+        guard let textView = context.coordinator.textView ?? scrollView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.textContainer?.lineFragmentPadding = 0
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+        weak var textView: NSTextView?
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text.wrappedValue = textView.string
+        }
+    }
 }

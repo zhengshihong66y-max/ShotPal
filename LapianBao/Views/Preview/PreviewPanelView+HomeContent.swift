@@ -85,7 +85,12 @@ extension PreviewPanelView {
 
     @ViewBuilder
     func previewTimeline(for video: VideoItem) -> some View {
-        PlaybackClockDrivenView(clock: controller.clock) { clock in
+        PlaybackClockDrivenView(
+            clock: controller.clock,
+            duration: controller.duration,
+            playbackRate: controller.playbackRate,
+            isPlaying: controller.isPlaying
+        ) { clock in
             switch activePreviewTab {
             case .frames:
                 frameTimeline(for: video, clock: clock)
@@ -125,17 +130,17 @@ extension PreviewPanelView {
 
                 if let inT = audioInPoint {
                     Text("In \(formatDuration(inT))")
-                        .font(.caption2.monospacedDigit())
+                        .font(Design.numericCaption2())
                         .foregroundStyle(.secondary)
                 }
                 if let outT = audioOutPoint {
                     Text("Out \(formatDuration(outT))")
-                        .font(.caption2.monospacedDigit())
+                        .font(Design.numericCaption2())
                         .foregroundStyle(.secondary)
                 }
                 if let inT = audioInPoint, let outT = audioOutPoint {
                     Text("·  \(formatDuration(abs(outT - inT)))")
-                        .font(.caption2.monospacedDigit())
+                        .font(Design.numericCaption2())
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -155,11 +160,13 @@ extension PreviewPanelView {
                 sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
                 hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
                 sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
+                sceneDetectionError: libraryStore.sceneDetectionErrorByVideoPath[video.url.path],
                 sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
                 sceneThumbnailsNeedHydration: libraryStore.sceneThumbnailsNeedHydration(for: video),
                 isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
                 sampledFrames: libraryStore.sampledFrames(for: video),
                 activeItemID: activeSceneItemID(for: video),
+                activeProgressTick: nil,
                 openStoryboardBoard: { openStoryboardBoard(video) }
             )
             .equatable()
@@ -181,7 +188,7 @@ extension PreviewPanelView {
                     .foregroundStyle(.secondary)
 
                 Text("\(clips.count)")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .font(Design.numericCaption2(weight: .semibold))
                     .foregroundStyle(.tertiary)
 
                 Spacer(minLength: 0)
@@ -217,6 +224,30 @@ extension PreviewPanelView {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
+            if let message = libraryStore.audioClipExportErrorByVideoPath[video.url.path],
+               libraryStore.audioClipExportProgressByVideoPath[video.url.path] == nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(message)
+                        .font(.caption2.weight(.medium))
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button {
+                        libraryStore.audioClipExportErrorByVideoPath[video.url.path] = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .help("关闭提示")
+                }
+                .foregroundStyle(.red.opacity(0.92))
+                .padding(9)
+                .background(.red.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
             if clips.isEmpty {
                 AppEmptyState(
                     title: "暂无声音片段",
@@ -233,7 +264,7 @@ extension PreviewPanelView {
                     }
                     .padding(.trailing, 2)
                 }
-                .scrollIndicators(.hidden)
+                .fadingVerticalScrollIndicators()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -258,7 +289,7 @@ extension PreviewPanelView {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.84))
                 Text("\(formatDuration(min(inTime, end))) - \(formatDuration(max(inTime, end))) · \(formatDuration(duration))")
-                    .font(.caption2.monospacedDigit())
+                    .font(Design.numericCaption2())
                     .foregroundStyle(.white.opacity(0.58))
             }
 
@@ -290,23 +321,20 @@ extension PreviewPanelView {
         return HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(audioClipTitle(index: index))
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.86))
-                        .lineLimit(1)
+                    exportAudioTagPreview(for: clip)
+                        .layoutPriority(1)
+
                     Spacer(minLength: 0)
-                    Text(audioClipTimecode(duration: duration, progress: progress, isPlaying: isPlaying))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.white.opacity(isPlaying ? 0.78 : 0.48))
                 }
                 .frame(height: 16, alignment: .center)
 
-                AudioClipWaveformStrip(
+                exportAudioWaveformWithTimecode(
                     samples: clip.waveformSamples,
-                    isActive: isPlaying,
-                    progress: progress
+                    isPlaying: isPlaying,
+                    progress: progress,
+                    duration: duration,
+                    height: 58
                 )
-                .frame(height: 58)
             }
             .frame(height: Self.exportRowContentHeight, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -318,6 +346,7 @@ extension PreviewPanelView {
             .itemProviderDrag(audioClipDragProvider(for: clip))
 
             exportItemActionColumn(
+                showInFinderURL: libraryStore.audioClipFileURL(for: clip),
                 jumpHelp: "回到原视频位置",
                 deleteHelp: "删除声音片段",
                 onJump: {
@@ -329,16 +358,7 @@ extension PreviewPanelView {
                 onDelete: {
                     deleteExportAudioClip(clip)
                 }
-            ) {
-                InlineTagEditorButton(
-                    title: "声音标签",
-                    tags: clip.tags,
-                    suggestedTags: libraryStore.allAudioTags,
-                    buttonSize: 22,
-                    onAdd: { libraryStore.addAudioTag($0, to: clip) },
-                    onRemove: { libraryStore.removeAudioTag($0, from: clip) }
-                )
-            }
+            )
         }
         .padding(.horizontal, 9)
         .padding(.vertical, Self.exportRowVerticalPadding)
@@ -418,7 +438,6 @@ extension PreviewPanelView {
             } else if case .failed = status {
                 AppEmptyState(
                     title: "暂无音乐识别结果",
-                    systemImage: "music.note",
                     style: .compact,
                     minHeight: 82,
                     showsBackground: true
@@ -426,7 +445,6 @@ extension PreviewPanelView {
             } else if status == .completed, songs.isEmpty {
                 AppEmptyState(
                     title: "暂无音乐识别结果",
-                    systemImage: "music.note",
                     style: .compact,
                     minHeight: 82,
                     showsBackground: true
@@ -494,7 +512,7 @@ extension PreviewPanelView {
                             } label: {
                                 HStack(alignment: .top, spacing: 8) {
                                     Text(formatDuration(segment.start))
-                                        .font(.caption2.monospacedDigit().weight(.semibold))
+                                        .font(Design.numericCaption2(weight: .semibold))
                                         .foregroundStyle(isActive ? .primary : .secondary)
                                         .frame(width: 52, alignment: .leading)
                                     Text(segment.text)
@@ -512,6 +530,7 @@ extension PreviewPanelView {
                         }
                     }
                 }
+                .fadingVerticalScrollIndicators()
                 .onChange(of: activeTranscriptSegmentID) { _, newID in
                     if let newID {
                         withAnimation(.easeInOut(duration: 0.3)) {

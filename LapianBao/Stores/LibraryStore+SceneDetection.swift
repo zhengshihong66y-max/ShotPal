@@ -12,11 +12,184 @@ import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
+nonisolated final class SceneDetectionFrameReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generators: [AVAssetImageGenerator] = []
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        let result = cancelled
+        lock.unlock()
+        return result
+    }
+
+    func register(_ generator: AVAssetImageGenerator) -> Bool {
+        lock.lock()
+        if cancelled {
+            lock.unlock()
+            generator.cancelAllCGImageGeneration()
+            return false
+        }
+        generators.append(generator)
+        lock.unlock()
+        return true
+    }
+
+    func unregister(_ generator: AVAssetImageGenerator) {
+        lock.lock()
+        generators.removeAll { $0 === generator }
+        lock.unlock()
+    }
+
+    func cancelReading() {
+        lock.lock()
+        cancelled = true
+        let activeGenerators = generators
+        generators.removeAll()
+        lock.unlock()
+
+        activeGenerators.forEach { $0.cancelAllCGImageGeneration() }
+    }
+}
+
+nonisolated enum SceneDetectionError: LocalizedError, Sendable {
+    case pluginPythonMissing
+    case pluginScriptMissing
+    case videoMissing(String)
+    case videoUnreadable(String)
+    case processFailed(String)
+    case invalidOutput(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .pluginPythonMissing:
+            return "未检测到独立场景识别环境：Tools/transnet-env/bin/python"
+        case .pluginScriptMissing:
+            return "未找到场景识别脚本：Tools/detect_scene_cuts_transnet.py"
+        case .videoMissing:
+            return "视频文件不存在，无法识别场景"
+        case .videoUnreadable:
+            return "视频文件不可读取，无法识别场景"
+        case .processFailed(let message):
+            return message.isEmpty ? "场景识别模型运行失败" : "场景识别模型运行失败：\(message)"
+        case .invalidOutput(let message):
+            return message.isEmpty ? "场景识别模型输出无效" : "场景识别模型输出无效：\(message)"
+        }
+    }
+}
+
+nonisolated struct SceneDetectionPlugin: Sendable {
+    let pythonURL: URL
+    let scriptURL: URL
+
+    var environment: [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let binURL = pythonURL.deletingLastPathComponent()
+        let envURL = binURL.deletingLastPathComponent()
+        let toolPath = [
+            binURL.path,
+            "/opt/homebrew/bin",
+            "/opt/miniconda3/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"
+        ].joined(separator: ":")
+
+        environment["VIRTUAL_ENV"] = envURL.path
+        environment["PATH"] = [toolPath, environment["PATH"]]
+            .compactMap { $0 }
+            .joined(separator: ":")
+        environment["PYTHONUNBUFFERED"] = "1"
+        environment["PYTHONIOENCODING"] = "utf-8"
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment.removeValue(forKey: "PYTHONPATH")
+        environment["OMP_NUM_THREADS"] = "1"
+        environment["OPENBLAS_NUM_THREADS"] = "1"
+        environment["MKL_NUM_THREADS"] = "1"
+        environment["VECLIB_MAXIMUM_THREADS"] = "1"
+        environment["NUMEXPR_NUM_THREADS"] = "1"
+        return environment
+    }
+
+    static func resolve(sourceFilePath: String = #filePath) throws -> SceneDetectionPlugin {
+        let fileManager = FileManager.default
+        let roots = candidateProjectRoots(sourceFilePath: sourceFilePath)
+        let pythonRelativePaths = [
+            "Tools/transnet-env/bin/python",
+            "Tools/transnet-env/bin/python3"
+        ]
+
+        guard let pythonURL = firstToolURL(
+            relativePaths: pythonRelativePaths,
+            roots: roots,
+            mustBeExecutable: true,
+            fileManager: fileManager
+        ) else {
+            throw SceneDetectionError.pluginPythonMissing
+        }
+        guard let scriptURL = firstToolURL(
+            relativePaths: ["Tools/detect_scene_cuts_transnet.py"],
+            roots: roots,
+            mustBeExecutable: false,
+            fileManager: fileManager
+        ) else {
+            throw SceneDetectionError.pluginScriptMissing
+        }
+
+        return SceneDetectionPlugin(pythonURL: pythonURL, scriptURL: scriptURL)
+    }
+
+    private static func firstToolURL(
+        relativePaths: [String],
+        roots: [URL],
+        mustBeExecutable: Bool,
+        fileManager: FileManager
+    ) -> URL? {
+        var checkedPaths = Set<String>()
+        for root in roots {
+            for relativePath in relativePaths {
+                let url = root.appendingPathComponent(relativePath)
+                guard checkedPaths.insert(url.path).inserted else { continue }
+                if mustBeExecutable {
+                    if fileManager.isExecutableFile(atPath: url.path) { return url }
+                } else if fileManager.fileExists(atPath: url.path) {
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func candidateProjectRoots(sourceFilePath: String) -> [URL] {
+        let fileManager = FileManager.default
+        let sourceDirectory = URL(fileURLWithPath: sourceFilePath).deletingLastPathComponent()
+        let currentDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        let bundleResourceURL = Bundle.main.resourceURL
+
+        return deduplicatedURLs([
+            bundleResourceURL,
+            sourceDirectory,
+            sourceDirectory.deletingLastPathComponent(),
+            sourceDirectory.deletingLastPathComponent().deletingLastPathComponent(),
+            currentDirectory,
+            currentDirectory.deletingLastPathComponent()
+        ].compactMap { $0 })
+    }
+
+    private static func deduplicatedURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+}
+
 extension LibraryStore {
+    nonisolated static let sceneDetectionProgressLinePrefix = "LAPIANBAO_PROGRESS\t"
+
     nonisolated static func performSceneDetection(
         for url: URL,
         progressCallback: @escaping (Double) -> Void
-    ) async -> [SceneCut] {
+    ) async throws -> [SceneCut] {
         await SceneDetectionGate.shared.acquire()
         defer {
             Task {
@@ -24,84 +197,58 @@ extension LibraryStore {
             }
         }
 
-        guard !Task.isCancelled else { return [] }
+        try Task.checkCancellation()
+        let processRegistry = SceneDetectionProcessRegistry()
+        let reader = SceneDetectionFrameReader()
 
-        let detectionTask = Task.detached(priority: .utility) { () -> [SceneCut] in
+        let detectionTask = Task.detached(priority: .utility) { () throws -> [SceneCut] in
+            let fileManager = FileManager.default
+            guard fileManager.fileExists(atPath: url.path) else {
+                throw SceneDetectionError.videoMissing(url.path)
+            }
+            guard fileManager.isReadableFile(atPath: url.path) else {
+                throw SceneDetectionError.videoUnreadable(url.path)
+            }
+
             let asset = AVURLAsset(url: url)
 
-            guard let duration = try? await asset.load(.duration) else { return [] }
+            guard let duration = try? await asset.load(.duration) else {
+                throw SceneDetectionError.videoUnreadable(url.path)
+            }
             let totalSeconds = CMTimeGetSeconds(duration)
-            guard totalSeconds.isFinite, totalSeconds > 0 else { return [] }
-
-            progressCallback(0.03)
-            if let transNetCutTimes = runTransNetSceneDetection(for: url), !transNetCutTimes.isEmpty {
-                progressCallback(0.82)
-                let cuts = await makeSceneCuts(for: asset, cutTimes: transNetCutTimes)
-                progressCallback(1.0)
-                return cuts
+            guard totalSeconds.isFinite, totalSeconds > 0 else {
+                throw SceneDetectionError.videoUnreadable(url.path)
             }
 
-            guard
-                let tracks = try? await asset.loadTracks(withMediaType: .video),
-                let videoTrack = tracks.first,
-                let reader = try? AVAssetReader(asset: asset)
-            else { return [] }
-
-            let frameRate = Double((try? await videoTrack.load(.nominalFrameRate)) ?? 24)
-            let minimumSceneLength = max(0.12, 4.0 / max(1.0, frameRate))
-            let fingerprintWidth = 48
-            let fingerprintHeight = 27
-
-            let outputSettings: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: fingerprintWidth,
-                kCVPixelBufferHeightKey as String: fingerprintHeight
-            ]
-
-            let output = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: outputSettings)
-            output.alwaysCopiesSampleData = false
-
-            guard reader.canAdd(output) else { return [] }
-            reader.add(output)
-            guard reader.startReading() else { return [] }
-
-            var previousFingerprint: SceneFingerprint?
-            var changes: [SceneChange] = []
-            var lastReportedProgress = 0.03
-
-            while reader.status == .reading {
-                guard let sampleBuffer = output.copyNextSampleBuffer() else { break }
-
-                let timestamp = CMTimeGetSeconds(sampleBuffer.presentationTimeStamp)
-
-                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
-
-                let fingerprint = extractSceneFingerprint(
-                    from: pixelBuffer,
-                    width: fingerprintWidth,
-                    height: fingerprintHeight
-                )
-
-                if let previousFingerprint {
-                    let score = sceneChangeScore(from: previousFingerprint, to: fingerprint)
-                    changes.append(SceneChange(time: timestamp, score: score))
+            progressCallback(0.02)
+            let transNetCutTimes = try runTransNetSceneDetection(
+                for: url,
+                processRegistry: processRegistry,
+                progressCallback: { progress in
+                    progressCallback(min(0.86, max(0.02, progress)))
                 }
-
-                previousFingerprint = fingerprint
-
-                let progress = min(1.0, timestamp / totalSeconds)
-                if progress - lastReportedProgress >= 0.01 || progress >= 0.995 {
-                    progressCallback(progress)
-                    lastReportedProgress = progress
+            )
+            try Task.checkCancellation()
+            progressCallback(0.86)
+            let cuts = await makeSceneCuts(
+                for: asset,
+                cutTimes: transNetCutTimes,
+                reader: reader,
+                progressCallback: { progress in
+                    progressCallback(0.86 + Self.normalizedProgress(progress) * 0.13)
                 }
-            }
-
-            let cutTimes = selectSceneCutTimes(from: changes, minimumSceneLength: minimumSceneLength)
-            guard !cutTimes.isEmpty else { return [] }
-
-            return await makeSceneCuts(for: asset, cutTimes: cutTimes)
+            )
+            progressCallback(1.0)
+            return cuts
         }
-        return await detectionTask.value
+
+        return try await withTaskCancellationHandler {
+            try await detectionTask.value
+        } onCancel: {
+            detectionTask.cancel()
+            processRegistry.cancelRunningProcess()
+            reader.cancelReading()
+        }
     }
 
     nonisolated struct TransNetDetectionResult: Decodable {
@@ -112,99 +259,115 @@ extension LibraryStore {
         }
     }
 
-    nonisolated static func runTransNetSceneDetection(for url: URL) -> [Double]? {
+    nonisolated static func runTransNetSceneDetection(
+        for url: URL,
+        processRegistry: SceneDetectionProcessRegistry,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) throws -> [Double] {
         let fileManager = FileManager.default
-        guard
-            fileManager.isExecutableFile(atPath: transNetPythonPath),
-            fileManager.fileExists(atPath: transNetScriptPath)
-        else { return nil }
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw SceneDetectionError.videoMissing(url.path)
+        }
+        guard fileManager.isReadableFile(atPath: url.path) else {
+            throw SceneDetectionError.videoUnreadable(url.path)
+        }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: transNetPythonPath)
-        process.qualityOfService = .utility
-        process.arguments = [
-            transNetScriptPath,
+        let plugin = try SceneDetectionPlugin.resolve()
+        let arguments = [
+            plugin.scriptURL.path,
             url.path,
             "--threshold",
             "0.35",
             "--device",
             "cpu"
         ]
-        var environment = ProcessInfo.processInfo.environment
-        environment["OMP_NUM_THREADS"] = "1"
-        environment["OPENBLAS_NUM_THREADS"] = "1"
-        environment["MKL_NUM_THREADS"] = "1"
-        environment["VECLIB_MAXIMUM_THREADS"] = "1"
-        environment["NUMEXPR_NUM_THREADS"] = "1"
-        process.environment = environment
 
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        let outputCollector = PipeDataCollector()
-        let errorCollector = PipeDataCollector()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
+        let result = ExternalProcessRunner.run(
+            executableURL: plugin.pythonURL,
+            arguments: arguments,
+            environment: plugin.environment,
+            qualityOfService: .utility,
+            errorLineHandler: { line in
+                guard let progress = sceneDetectionProgress(from: line) else { return }
+                progressCallback?(progress)
+            },
+            processRegistry: processRegistry
+        )
 
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
-            outputCollector.append(handle.availableData)
-        }
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            errorCollector.append(handle.availableData)
+        guard result.succeeded else {
+            throw SceneDetectionError.processFailed(nonProgressProcessErrorText(result.errorText))
         }
 
+        let detectionResult: TransNetDetectionResult
         do {
-            try process.run()
-            SceneDetectionProcessRegistry.shared.set(process)
-            process.waitUntilExit()
-            SceneDetectionProcessRegistry.shared.set(nil)
+            detectionResult = try JSONDecoder().decode(TransNetDetectionResult.self, from: result.outputData)
         } catch {
-            SceneDetectionProcessRegistry.shared.set(nil)
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            return nil
+            let output = result.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw SceneDetectionError.invalidOutput(output.isEmpty ? error.localizedDescription : output)
         }
 
-        outputPipe.fileHandleForReading.readabilityHandler = nil
-        errorPipe.fileHandleForReading.readabilityHandler = nil
-        outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-        errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
-
-        guard process.terminationStatus == 0 else { return nil }
-
-        guard
-            let result = try? JSONDecoder().decode(TransNetDetectionResult.self, from: outputCollector.data),
-            !result.cutTimes.isEmpty
-        else { return nil }
-
-        return result.cutTimes
+        return detectionResult.cutTimes
             .map { max(0, $0) }
             .sorted()
     }
 
-    nonisolated static func makeSceneCuts(for asset: AVAsset, cutTimes: [Double]) async -> [SceneCut] {
+    nonisolated static func sceneDetectionProgress(from line: String) -> Double? {
+        guard line.hasPrefix(sceneDetectionProgressLinePrefix) else { return nil }
+        let valueText = line.dropFirst(sceneDetectionProgressLinePrefix.count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Double(valueText), value.isFinite else { return nil }
+        return normalizedProgress(value)
+    }
+
+    nonisolated static func nonProgressProcessErrorText(_ text: String) -> String {
+        text.components(separatedBy: .newlines)
+            .filter { sceneDetectionProgress(from: $0) == nil }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated static func makeSceneCuts(
+        for asset: AVAsset,
+        cutTimes: [Double],
+        reader: SceneDetectionFrameReader? = nil,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async -> [SceneCut] {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 200, height: 113)
         // 从切点之后取帧，保证拿到新场景的首帧而非旧场景末帧
         generator.requestedTimeToleranceBefore = CMTime(seconds: 0.06, preferredTimescale: 600)
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.12, preferredTimescale: 600)
+        guard reader?.register(generator) ?? true else { return [] }
+        defer { reader?.unregister(generator) }
 
         let orderedCutTimes = stableSceneCutTimes(from: cutTimes)
+        if orderedCutTimes.isEmpty {
+            progressCallback?(1.0)
+            return []
+        }
+
         var cuts: [SceneCut] = []
         cuts.reserveCapacity(orderedCutTimes.count)
+        var placeholderImage: NSImage?
 
         for (index, time) in orderedCutTimes.enumerated() {
+            guard reader?.isCancelled != true else { break }
             // 切点时刻 + 80ms，确保落在新场景内
             let targetTime = CMTime(seconds: max(0, time + 0.08), preferredTimescale: 600)
-            guard let image = await sceneThumbnailImage(from: generator, at: targetTime) else {
-                continue
+            let image = await sceneThumbnailImage(from: generator, at: targetTime)
+            let isPlaceholder = image == nil
+            if isPlaceholder, placeholderImage == nil {
+                placeholderImage = scenePlaceholderImage()
             }
 
             cuts.append(SceneCut(
                 id: sceneCutID(index: index, time: time),
                 time: time,
-                thumbnailImage: image
+                thumbnailImage: image ?? placeholderImage ?? scenePlaceholderImage(),
+                isPlaceholder: isPlaceholder
             ))
+            progressCallback?(Double(index + 1) / Double(orderedCutTimes.count))
         }
 
         return removeDuplicateThumbnailCuts(cuts)
@@ -215,6 +378,10 @@ extension LibraryStore {
         var result: [SceneCut] = [cuts[0]]
         for cut in cuts.dropFirst() {
             guard let previousCut = result.last else {
+                result.append(cut)
+                continue
+            }
+            if previousCut.isPlaceholder || cut.isPlaceholder {
                 result.append(cut)
                 continue
             }
@@ -271,175 +438,6 @@ extension LibraryStore {
     nonisolated static func normalizedSceneCutProgresses(from cutTimes: [Double], duration: Double) -> [Double] {
         guard duration.isFinite, duration > 0 else { return [] }
         return cutTimes.map { min(1, max(0, $0 / duration)) }
-    }
-
-    struct SceneFingerprint {
-        let luma: [Double]
-        let histogram: [Double]
-        let edges: [Double]
-        let contrast: Double
-    }
-
-    struct SceneChange {
-        let time: Double
-        let score: Double
-    }
-
-    nonisolated static func extractSceneFingerprint(from pixelBuffer: CVPixelBuffer, width: Int, height: Int) -> SceneFingerprint {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            return SceneFingerprint(
-                luma: [Double](repeating: 0, count: width * height),
-                histogram: [Double](repeating: 0, count: 64),
-                edges: [Double](repeating: 0, count: width * height),
-                contrast: 0
-            )
-        }
-
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let pointer = baseAddress.assumingMemoryBound(to: UInt8.self)
-
-        let pixelCount = width * height
-        var luma = [Double](repeating: 0, count: width * height)
-        var histogram = [Double](repeating: 0, count: 64)
-        var lumaSum = 0.0
-
-        for y in 0..<height {
-            for x in 0..<width {
-                let offset = y * bytesPerRow + x * 4
-                let b = Double(pointer[offset]) / 255.0
-                let g = Double(pointer[offset + 1]) / 255.0
-                let r = Double(pointer[offset + 2]) / 255.0
-                let value = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                luma[y * width + x] = value
-                lumaSum += value
-
-                let rBin = min(3, Int(r * 4))
-                let gBin = min(3, Int(g * 4))
-                let bBin = min(3, Int(b * 4))
-                histogram[rBin * 16 + gBin * 4 + bBin] += 1
-            }
-        }
-
-        let normalizer = max(1.0, Double(pixelCount))
-        for index in histogram.indices {
-            histogram[index] /= normalizer
-        }
-
-        let meanLuma = lumaSum / normalizer
-        let contrast = luma.reduce(0.0) { $0 + abs($1 - meanLuma) } / normalizer
-
-        let edges = extractEdges(from: luma, width: width, height: height)
-
-        return SceneFingerprint(luma: luma, histogram: histogram, edges: edges, contrast: contrast)
-    }
-
-    nonisolated static func sceneChangeScore(from previous: SceneFingerprint, to current: SceneFingerprint) -> Double {
-        let frameSize = min(previous.luma.count, current.luma.count)
-        guard frameSize > 0 else { return 0 }
-
-        var lumaDifference = 0.0
-        for index in 0..<frameSize {
-            lumaDifference += abs(current.luma[index] - previous.luma[index])
-        }
-        lumaDifference /= Double(frameSize)
-
-        var histogramDifference = 0.0
-        for index in previous.histogram.indices {
-            histogramDifference += abs(current.histogram[index] - previous.histogram[index])
-        }
-        histogramDifference *= 0.5
-
-        let edgeSize = min(previous.edges.count, current.edges.count)
-        var edgeDifference = 0.0
-        if edgeSize > 0 {
-            for index in 0..<edgeSize {
-                edgeDifference += abs(current.edges[index] - previous.edges[index])
-            }
-            edgeDifference /= Double(edgeSize)
-        }
-
-        let contrastDifference = abs(current.contrast - previous.contrast)
-        return lumaDifference * 0.38 + histogramDifference * 0.32 + edgeDifference * 0.22 + contrastDifference * 0.08
-    }
-
-    nonisolated static func extractEdges(from luma: [Double], width: Int, height: Int) -> [Double] {
-        guard width > 2, height > 2, luma.count == width * height else {
-            return [Double](repeating: 0, count: width * height)
-        }
-
-        var edges = [Double](repeating: 0, count: width * height)
-        for y in 1..<(height - 1) {
-            for x in 1..<(width - 1) {
-                let left = luma[y * width + x - 1]
-                let right = luma[y * width + x + 1]
-                let top = luma[(y - 1) * width + x]
-                let bottom = luma[(y + 1) * width + x]
-                edges[y * width + x] = min(1.0, abs(right - left) + abs(bottom - top))
-            }
-        }
-        return edges
-    }
-
-    nonisolated static func selectSceneCutTimes(from changes: [SceneChange], minimumSceneLength: Double) -> [Double] {
-        guard !changes.isEmpty else { return [0.0] }
-
-        let scores = changes.map(\.score).sorted()
-        let medianScore = median(ofSortedValues: scores)
-        let deviations = scores.map { abs($0 - medianScore) }.sorted()
-        let medianDeviation = median(ofSortedValues: deviations)
-        let upperQuartile = percentile(ofSortedValues: scores, percentile: 0.75)
-        let threshold = max(0.08, max(medianScore + max(0.018, medianDeviation * 4.0), upperQuartile * 1.35))
-        let peakWindow = 2
-
-        var selected: [SceneChange] = []
-        for index in changes.indices {
-            let change = changes[index]
-            guard change.score >= threshold else { continue }
-
-            let lowerBound = max(changes.startIndex, index - peakWindow)
-            let upperBound = min(changes.index(before: changes.endIndex), index + peakWindow)
-            var isLocalPeak = true
-            for neighborIndex in lowerBound...upperBound where neighborIndex != index {
-                if changes[neighborIndex].score > change.score {
-                    isLocalPeak = false
-                    break
-                }
-            }
-            guard isLocalPeak else { continue }
-
-            if let last = selected.last, change.time - last.time < minimumSceneLength {
-                if change.score > last.score {
-                    selected[selected.count - 1] = change
-                }
-            } else {
-                selected.append(change)
-            }
-        }
-
-        return ([0.0] + selected.map(\.time)).sorted()
-    }
-
-    nonisolated static func median(ofSortedValues values: [Double]) -> Double {
-        guard !values.isEmpty else { return 0 }
-        let middle = values.count / 2
-        if values.count.isMultiple(of: 2) {
-            return (values[middle - 1] + values[middle]) / 2
-        }
-        return values[middle]
-    }
-
-    nonisolated static func percentile(ofSortedValues values: [Double], percentile: Double) -> Double {
-        guard !values.isEmpty else { return 0 }
-        let clampedPercentile = min(1, max(0, percentile))
-        let position = clampedPercentile * Double(values.count - 1)
-        let lowerIndex = Int(position.rounded(.down))
-        let upperIndex = Int(position.rounded(.up))
-        guard lowerIndex != upperIndex else { return values[lowerIndex] }
-        let fraction = position - Double(lowerIndex)
-        return values[lowerIndex] * (1 - fraction) + values[upperIndex] * fraction
     }
 
     nonisolated static func stableSceneCutTimes(from cutTimes: [Double]) -> [Double] {

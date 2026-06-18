@@ -2,6 +2,11 @@
 .DS_Store
 .codex-derived/
 
+# Python local files
+__pycache__/
+*.py[cod]
+Tools/*-env/
+
 # Xcode local user state
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/

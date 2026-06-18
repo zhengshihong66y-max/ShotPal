@@ -12,60 +12,6 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-struct LuminanceHistogram: View {
-    let imageData: Data
-
-    var body: some View {
-        let buckets = luminanceBuckets()
-        VStack(alignment: .leading, spacing: 6) {
-            Text("亮度分布")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Canvas { context, size in
-                guard !buckets.isEmpty else { return }
-                let maxVal = buckets.max() ?? 1
-                let barW = size.width / CGFloat(buckets.count)
-                for (i, val) in buckets.enumerated() {
-                    let h = maxVal > 0 ? CGFloat(val) / CGFloat(maxVal) * size.height : 0
-                    let rect = CGRect(x: CGFloat(i) * barW, y: size.height - h, width: max(1, barW - 0.5), height: h)
-                    var path = Path()
-                    path.addRoundedRect(in: rect, cornerSize: CGSize(width: 1, height: 1))
-                    let brightness = Double(i) / Double(buckets.count)
-                    context.fill(path, with: .color(Color.white.opacity(0.25 + brightness * 0.65)))
-                }
-            }
-            .frame(height: 44)
-            .background(Color.black.opacity(0.28))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-    }
-
-    private func luminanceBuckets(count: Int = 32) -> [Int] {
-        guard let image = NSImage(data: imageData),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return Array(repeating: 0, count: count)
-        }
-        let w = 64, h = 36
-        var pixels = [UInt8](repeating: 0, count: w * h * 4)
-        guard let ctx = CGContext(
-            data: &pixels, width: w, height: h,
-            bitsPerComponent: 8, bytesPerRow: w * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return Array(repeating: 0, count: count) }
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
-
-        var buckets = Array(repeating: 0, count: count)
-        for i in stride(from: 0, to: pixels.count, by: 4) {
-            let r = Double(pixels[i]), g = Double(pixels[i + 1]), b = Double(pixels[i + 2])
-            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
-            let idx = min(count - 1, Int(luma / 255.0 * Double(count)))
-            buckets[idx] += 1
-        }
-        return buckets
-    }
-}
-
 struct ColorSwatches: View {
     enum Orientation {
         case horizontal
@@ -176,10 +122,4 @@ func formatDuration(_ seconds: Double) -> String {
     let m = total / 60
     let s = total % 60
     return m > 0 ? "\(m) 分 \(s) 秒" : "\(s) 秒"
-}
-
-extension Notification.Name {
-    static let lapianBaoSeekRequest = Notification.Name("lapianBaoSeekRequest")
-    static let lapianBaoPausePreviewRequest = Notification.Name("lapianBaoPausePreviewRequest")
-    static let lapianBaoMusicPreviewStarted = Notification.Name("lapianBaoMusicPreviewStarted")
 }

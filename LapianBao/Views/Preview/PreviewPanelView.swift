@@ -12,19 +12,30 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+enum PreviewTransportShortcutFeedback: Equatable {
+    case playback
+    case backward
+    case forward
+    case framesTimeline
+    case contentTimeline
+    case screenshot
+    case io
+    case annotation
+}
+
 // MARK: - PreviewPanelView
 /// 预览面板：使用 @StateObject controller 驱动播放，
 /// 场景网格由 ScenePanelView（Equatable）单独渲染，与 Timer 完全解耦。
 struct PreviewPanelView: View {
     @EnvironmentObject var libraryStore: LibraryStore
-    @StateObject var controller = PreviewController()
-    let openWorkspace: (AppWorkspace) -> Void
+    @ObservedObject var controller: PreviewController
     let openStoryboardBoard: (VideoItem) -> Void
+    @Binding var pendingSeekRequest: AppEventBus.SeekRequest?
     @Namespace var tabNamespace
     static let contentTimelineDetailBlockGap: CGFloat = 8
     static let contentTimelineDetailBlockPadding: CGFloat = 8
     static let annotationEditorWidth: CGFloat = 288
-    static let annotationEditorHeight: CGFloat = 184
+    static let annotationEditorHeight: CGFloat = 204
     static let exportActionButtonSize: CGFloat = 22
     static let exportRowContentHeight: CGFloat = 78
     static let exportRowVerticalPadding: CGFloat = 10
@@ -32,7 +43,7 @@ struct PreviewPanelView: View {
     static let exportFramePreviewWidth: CGFloat = 100
     static let exportFramePreviewMinWidth: CGFloat = 48
     static let exportFramePreviewMaxWidth: CGFloat = 142
-    static let exportTranscriptIconWidth: CGFloat = 34
+    static let exportTranscriptIconWidth: CGFloat = exportFramePreviewWidth
     @State var activePreviewTab: PreviewTab = .frames
     @State var annotationText = ""
     @State var pendingAnnotationKind: AnnotationItem.Kind = .frame
@@ -42,17 +53,16 @@ struct PreviewPanelView: View {
     @State var audioInPoint: Double?
     @State var audioOutPoint: Double?
     @State var activeTranscriptSegmentID: UUID? = nil
-    @State var contentNodeTimelineStatus: TranscriptTimelineStatus = .idle
     @State var expandedPreviewTab: PreviewTab?
     @State var visibleTimelineDetailTab: PreviewTab?
+    @State var pendingTimelineExpansionTab: PreviewTab?
+    @State var pendingTimelineExpansionVideoPath: String?
     @State var timelineZoom: Double = 1
     @State var timelineOffset: Double = 0
     @State var timelineAutoScrollLastUpdate = Date.distantPast
     @State var timelineManualScrollProtectionUntil = Date.distantPast
     @State var sceneTimelineAutoFocusedKey: String?
     @State var isVideoTagPopoverPresented = false
-    @State var isVideoTagAddHovered = false
-    @State var draftVideoTag = ""
     @State var isExportPanelPresented = false
     @State var exportPanelFilter: ExportPanelFilter = .recent
     @State var exportPanelKnownItemIDs: Set<String> = []
@@ -68,6 +78,9 @@ struct PreviewPanelView: View {
     @State var keyboardShuttleDirection = 0
     @State var keyboardShuttleFrameStep = 2
     @State var keyboardShuttleLastCommandAt = Date.distantPast
+    @State var activeTransportShortcutFeedback: PreviewTransportShortcutFeedback?
+    @State var transportShortcutFeedbackTask: Task<Void, Never>?
+    @State var pendingSeekTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -89,7 +102,8 @@ struct PreviewPanelView: View {
         .contentPanel()
         .onAppear {
             controller.libraryStore = libraryStore
-            controller.loadVideo(libraryStore.selectedVideo, autoplay: false)
+            controller.loadVideo(libraryStore.selectedVideo, autoplay: false, preserveIfAlreadyLoaded: true)
+            consumePendingSeekRequestIfNeeded()
             focusSceneTimelineOnOpeningIfNeeded()
             hydrateSceneThumbnailsForFrameTimelineIfIdle()
             PreviewKeyboardCommandDispatcher.setHandler { command in
@@ -99,16 +113,16 @@ struct PreviewPanelView: View {
         .onDisappear {
             PreviewKeyboardCommandDispatcher.clearHandler()
             stopKeyboardShuttle()
+            transportShortcutFeedbackTask?.cancel()
+            transportShortcutFeedbackTask = nil
+            activeTransportShortcutFeedback = nil
+            pendingSeekTask?.cancel()
+            pendingSeekTask = nil
             stopExportAudioClipPlayback()
             exportPanelHighlightTask?.cancel()
             exportPanelHighlightTask = nil
             libraryStore.cancelAllSceneThumbnailHydration()
-            controller.stopPlayback()
-        }
-        .onChange(of: isVideoTagPopoverPresented) { _, isPresented in
-            if !isPresented {
-                draftVideoTag = ""
-            }
+            controller.pause()
         }
         .onChange(of: libraryStore.selectedVideoSelectionID) { _, _ in
             libraryStore.cancelAllSceneThumbnailHydration()
@@ -124,7 +138,10 @@ struct PreviewPanelView: View {
             isAnnotationPopoverPresented = false
             expandedPreviewTab = nil
             visibleTimelineDetailTab = nil
+            pendingTimelineExpansionTab = nil
+            pendingTimelineExpansionVideoPath = nil
             resetTimelineViewport()
+            consumePendingSeekRequestIfNeeded()
             stopKeyboardShuttle()
             stopExportAudioClipPlayback()
             focusSceneTimelineOnOpeningIfNeeded()
@@ -148,6 +165,35 @@ struct PreviewPanelView: View {
         .onChange(of: visibleTimelineDetailTab) { _, _ in
             startRecognitionForVisibleTimelineIfNeeded()
         }
+        .onReceive(libraryStore.$sceneDetectionProgress) { _ in
+            completePendingTimelineExpansionIfReady()
+        }
+        .onReceive(libraryStore.$sceneCutsByVideoPath) { _ in
+            completePendingTimelineExpansionIfReady()
+        }
+        .onReceive(libraryStore.$transcriptSegmentsByVideoPath) { _ in
+            completePendingTimelineExpansionIfReady()
+        }
+        .onReceive(libraryStore.$transcriptStatusByVideoPath) { statuses in
+            completePendingTimelineExpansionIfReady()
+            guard
+                pendingTimelineExpansionTab == .audio,
+                let path = pendingTimelineExpansionVideoPath,
+                case .failed = statuses[path]
+            else { return }
+
+            pendingTimelineExpansionTab = nil
+            pendingTimelineExpansionVideoPath = nil
+        }
+        .onReceive(libraryStore.$sceneDetectionErrorByVideoPath) { errors in
+            guard
+                let path = pendingTimelineExpansionVideoPath,
+                errors[path] != nil
+            else { return }
+
+            pendingTimelineExpansionTab = nil
+            pendingTimelineExpansionVideoPath = nil
+        }
         .onChange(of: activePreviewTab) { _, _ in
             focusSceneTimelineOnOpeningIfNeeded()
             hydrateSceneThumbnailsForFrameTimelineIfIdle()
@@ -155,19 +201,65 @@ struct PreviewPanelView: View {
         .onChange(of: libraryStore.sceneCutProgressesByVideoPath) { _, _ in
             focusSceneTimelineOnOpeningIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lapianBaoSeekRequest)) { notification in
+        .onReceive(AppEventBus.seekRequestPublisher) { notification in
             guard
-                let path = notification.userInfo?["path"] as? String,
-                let time = notification.userInfo?["time"] as? Double,
-                path == libraryStore.selectedVideo?.url.path
+                let request = AppEventBus.seekRequest(from: notification),
+                request.path == libraryStore.selectedVideo?.url.path
             else { return }
-            controller.pause()
-            controller.seekToSeconds(time)
+            performSeekWhenReady(request, clearsPendingRequest: false)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .lapianBaoPausePreviewRequest)) { _ in
+        .onChange(of: pendingSeekRequest) { _, _ in
+            consumePendingSeekRequestIfNeeded()
+        }
+        .onReceive(AppEventBus.pausePreviewRequestPublisher) { _ in
             controller.pause()
             stopExportAudioClipPlayback()
         }
+    }
+
+    func consumePendingSeekRequestIfNeeded() {
+        guard
+            let request = pendingSeekRequest,
+            request.path == libraryStore.selectedVideo?.url.path
+        else { return }
+        performSeekWhenReady(request, clearsPendingRequest: true)
+    }
+
+    func performSeekWhenReady(_ request: AppEventBus.SeekRequest, clearsPendingRequest: Bool) {
+        pendingSeekTask?.cancel()
+        pendingSeekTask = Task { @MainActor in
+            for attempt in 0 ..< 8 {
+                guard !Task.isCancelled else { return }
+                guard request.path == libraryStore.selectedVideo?.url.path else { return }
+
+                if controller.currentVideoPath == request.path,
+                   (controller.effectiveDuration ?? 0) > 0 {
+                    controller.pause()
+                    controller.seekToSeconds(request.time)
+                    clearPendingSeekRequestIfNeeded(request, clearsPendingRequest: clearsPendingRequest)
+                    return
+                }
+
+                if attempt == 0 {
+                    await Task.yield()
+                } else {
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                }
+            }
+
+            guard !Task.isCancelled, request.path == libraryStore.selectedVideo?.url.path else { return }
+            controller.pause()
+            controller.seekToSeconds(request.time)
+            clearPendingSeekRequestIfNeeded(request, clearsPendingRequest: clearsPendingRequest)
+        }
+    }
+
+    func clearPendingSeekRequestIfNeeded(
+        _ request: AppEventBus.SeekRequest,
+        clearsPendingRequest: Bool
+    ) {
+        guard clearsPendingRequest, pendingSeekRequest == request else { return }
+        pendingSeekRequest = nil
     }
 
     var collapsedPreviewTimelineStackHeight: CGFloat {

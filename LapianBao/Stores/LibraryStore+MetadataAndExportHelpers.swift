@@ -14,15 +14,20 @@ import ImageIO
 import UniformTypeIdentifiers
 
 extension LibraryStore {
-    func loadMetadataIfNeeded(for video: VideoItem, priority: TaskPriority = .utility) {
+    func loadMetadataIfNeeded(
+        for video: VideoItem,
+        priority: TaskPriority = .utility,
+        allowThumbnailGeneration: Bool = false
+    ) {
         let path = video.url.path
-        guard videos.contains(where: { $0.url.path == path }) else { return }
-        guard needsVideoRenderState(for: path) else { return }
+        guard containsVideoPath(path) else { return }
+        hydrateCachedThumbnailImageIfNeeded(for: path)
+        guard needsVideoMetadataWork(for: path, allowThumbnailGeneration: allowThumbnailGeneration) else { return }
         removeQueuedMetadataLoad(for: path)
         guard !thumbnailLoadingPaths.contains(path) else { return }
 
         let generation = thumbnailLoadGeneration
-        let shouldGenerateThumbnail = !thumbnailGenerationFailedPaths.contains(path)
+        let shouldGenerateThumbnail = allowThumbnailGeneration && needsGeneratedVideoThumbnail(for: path)
         thumbnailLoadingPaths.insert(path)
         let task = Task.detached(priority: priority) { [weak self, video, shouldGenerateThumbnail] in
             let path = video.url.path
@@ -39,7 +44,7 @@ extension LibraryStore {
                 guard let self,
                       self.thumbnailLoadGeneration == generation,
                       self.thumbnailLoadingPaths.contains(path),
-                      self.videos.contains(where: { $0.url.path == path })
+                      self.containsVideoPath(path)
                 else { return }
                 self.applyVideoMetadata(
                     videoMetadata,
@@ -51,14 +56,20 @@ extension LibraryStore {
         thumbnailWorkerTasks.append(task)
     }
 
-    func queueMetadataLoadIfNeeded(for video: VideoItem) {
+    func queueMetadataLoadIfNeeded(
+        for video: VideoItem,
+        allowThumbnailGeneration: Bool = false
+    ) {
         let path = video.url.path
-        guard videos.contains(where: { $0.url.path == path }) else { return }
-        guard needsVideoRenderState(for: path) else { return }
+        guard containsVideoPath(path) else { return }
+        noteTransientMediaAccess(for: path)
+        noteThumbnailImageAccess(for: path)
+        enqueueCachedThumbnailImageHydrationIfNeeded(for: path)
+        guard needsVideoMetadataWork(for: path, allowThumbnailGeneration: allowThumbnailGeneration) else { return }
         guard !thumbnailLoadingPaths.contains(path) else { return }
         guard !queuedMetadataVideoPaths.contains(path) else { return }
 
-        queuedMetadataVideos.append(video)
+        queuedMetadataVideos.append((video: video, allowThumbnailGeneration: allowThumbnailGeneration))
         queuedMetadataVideoPaths.insert(path)
         startQueuedMetadataWorkerIfNeeded()
     }
@@ -67,17 +78,117 @@ extension LibraryStore {
         metadataByVideoPath[path] == nil || playbackSupportByVideoPath[path] == nil
     }
 
-    func needsVideoThumbnail(for path: String) -> Bool {
-        thumbnailImageByVideoPath[path] == nil && !thumbnailGenerationFailedPaths.contains(path)
+    func needsGeneratedVideoThumbnail(for path: String) -> Bool {
+        thumbnailDataByVideoPath[path] == nil
+            && thumbnailImageByVideoPath[path] == nil
+            && !thumbnailGenerationFailedPaths.contains(path)
     }
 
-    func needsVideoRenderState(for path: String) -> Bool {
-        needsVideoMetadata(for: path) || needsVideoThumbnail(for: path)
+    func needsVideoMetadataWork(for path: String) -> Bool {
+        needsVideoMetadata(for: path) || needsGeneratedVideoThumbnail(for: path)
+    }
+
+    func needsVideoMetadataWork(for path: String, allowThumbnailGeneration: Bool) -> Bool {
+        needsVideoMetadata(for: path) || (allowThumbnailGeneration && needsGeneratedVideoThumbnail(for: path))
+    }
+
+    func hydrateCachedThumbnailImageIfNeeded(for path: String) {
+        guard thumbnailImageByVideoPath[path] == nil,
+              let data = thumbnailDataByVideoPath[path],
+              let image = Self.decodedThumbnailImage(from: data)
+        else { return }
+
+        thumbnailImageByVideoPath[path] = image
+        noteThumbnailImageAccess(for: path)
+        thumbnailGenerationFailedPaths.remove(path)
+        trimDecodedThumbnailImageCacheIfNeeded()
+        scheduleMetadataDisplayRefresh()
+    }
+
+    func enqueueCachedThumbnailImageHydrationIfNeeded(for path: String) {
+        guard thumbnailImageByVideoPath[path] == nil,
+              let data = thumbnailDataByVideoPath[path],
+              !thumbnailGenerationFailedPaths.contains(path),
+              !pendingCachedThumbnailHydrationPaths.contains(path)
+        else { return }
+
+        pendingCachedThumbnailHydrationEntries.append((path: path, data: data))
+        pendingCachedThumbnailHydrationPaths.insert(path)
+        startCachedThumbnailHydrationWorkerIfNeeded()
+    }
+
+    func startCachedThumbnailHydrationWorkerIfNeeded() {
+        guard cachedThumbnailHydrationTask == nil else { return }
+        guard !pendingCachedThumbnailHydrationEntries.isEmpty else { return }
+
+        let generation = thumbnailLoadGeneration
+        cachedThumbnailHydrationTask = Task.detached(priority: .utility) { [weak self] in
+            try? await Task.sleep(nanoseconds: 45_000_000)
+
+            while !Task.isCancelled {
+                let entries = await MainActor.run { [weak self] in
+                    self?.nextCachedThumbnailHydrationBatch(generation: generation, limit: 8) ?? []
+                }
+                guard !entries.isEmpty else { break }
+
+                let decoded = entries.compactMap { entry -> (path: String, image: NSImage)? in
+                    guard let image = Self.decodedThumbnailImage(from: entry.data) else { return nil }
+                    return (entry.path, image)
+                }
+
+                if !decoded.isEmpty {
+                    await MainActor.run { [weak self] in
+                        self?.applyCachedThumbnailImageBatch(decoded, generation: generation)
+                    }
+                }
+
+                try? await Task.sleep(nanoseconds: 28_000_000)
+            }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard self.thumbnailLoadGeneration == generation else {
+                    self.cachedThumbnailHydrationTask = nil
+                    return
+                }
+                self.cachedThumbnailHydrationTask = nil
+                if !self.pendingCachedThumbnailHydrationEntries.isEmpty {
+                    self.startCachedThumbnailHydrationWorkerIfNeeded()
+                }
+            }
+        }
+    }
+
+    func nextCachedThumbnailHydrationBatch(
+        generation: Int,
+        limit: Int
+    ) -> [(path: String, data: Data)] {
+        guard thumbnailLoadGeneration == generation else {
+            pendingCachedThumbnailHydrationEntries.removeAll()
+            pendingCachedThumbnailHydrationPaths.removeAll()
+            return []
+        }
+
+        var batch: [(path: String, data: Data)] = []
+        batch.reserveCapacity(limit)
+
+        while !pendingCachedThumbnailHydrationEntries.isEmpty, batch.count < limit {
+            guard let entry = pendingCachedThumbnailHydrationEntries.popLast() else { break }
+            pendingCachedThumbnailHydrationPaths.remove(entry.path)
+            guard containsVideoPath(entry.path),
+                  thumbnailImageByVideoPath[entry.path] == nil,
+                  thumbnailDataByVideoPath[entry.path] != nil,
+                  !thumbnailGenerationFailedPaths.contains(entry.path)
+            else { continue }
+            batch.append(entry)
+        }
+
+        return batch
     }
 
     func removeQueuedMetadataLoad(for path: String) {
         guard queuedMetadataVideoPaths.remove(path) != nil else { return }
-        queuedMetadataVideos.removeAll { $0.url.path == path }
+        queuedMetadataVideos.removeAll { $0.video.url.path == path }
     }
 
     func startQueuedMetadataWorkerIfNeeded() {
@@ -87,15 +198,17 @@ extension LibraryStore {
         let generation = thumbnailLoadGeneration
         queuedMetadataWorkerTask = Task.detached(priority: .utility) { [weak self] in
             while !Task.isCancelled {
-                guard let video = await MainActor.run(body: { [weak self] in
+                guard let queuedVideo = await MainActor.run(body: { [weak self] in
                     self?.nextQueuedMetadataVideo(generation: generation)
                 }) else {
                     break
                 }
 
+                let video = queuedVideo.video
                 let path = video.url.path
                 let shouldGenerateThumbnail = await MainActor.run { [weak self] in
-                    !(self?.thumbnailGenerationFailedPaths.contains(path) ?? false)
+                    guard queuedVideo.allowThumbnailGeneration else { return false }
+                    return self?.needsGeneratedVideoThumbnail(for: path) ?? false
                 }
                 async let metadata = Self.makeVideoMetadata(
                     for: video.url,
@@ -110,7 +223,7 @@ extension LibraryStore {
                     guard let self,
                           self.thumbnailLoadGeneration == generation,
                           self.thumbnailLoadingPaths.contains(path),
-                          self.videos.contains(where: { $0.url.path == path })
+                          self.containsVideoPath(path)
                     else { return }
                     self.applyVideoMetadata(
                         videoMetadata,
@@ -130,34 +243,47 @@ extension LibraryStore {
         }
     }
 
-    func nextQueuedMetadataVideo(generation: Int) -> VideoItem? {
+    func nextQueuedMetadataVideo(generation: Int) -> (video: VideoItem, allowThumbnailGeneration: Bool)? {
         guard thumbnailLoadGeneration == generation else {
             queuedMetadataVideos.removeAll()
             queuedMetadataVideoPaths.removeAll()
             return nil
         }
 
-        while let video = queuedMetadataVideos.popLast() {
+        while let queuedVideo = queuedMetadataVideos.popLast() {
+            let video = queuedVideo.video
             let path = video.url.path
             queuedMetadataVideoPaths.remove(path)
-            guard videos.contains(where: { $0.url.path == path }) else { continue }
-            guard needsVideoRenderState(for: path) else { continue }
+            guard containsVideoPath(path) else { continue }
+            enqueueCachedThumbnailImageHydrationIfNeeded(for: path)
+            guard needsVideoMetadataWork(
+                for: path,
+                allowThumbnailGeneration: queuedVideo.allowThumbnailGeneration
+            ) else { continue }
             guard !thumbnailLoadingPaths.contains(path) else { continue }
 
             thumbnailLoadingPaths.insert(path)
-            return video
+            return queuedVideo
         }
 
         return nil
     }
 
-    func loadThumbnails(for videos: [VideoItem], workerCount: Int = 3) {
+    func loadThumbnails(
+        for videos: [VideoItem],
+        workerCount: Int = 3,
+        allowThumbnailGeneration: Bool = false
+    ) {
         thumbnailWorkerTasks.forEach { $0.cancel() }
         thumbnailWorkerTasks.removeAll()
         queuedMetadataWorkerTask?.cancel()
         queuedMetadataWorkerTask = nil
         queuedMetadataVideos.removeAll()
         queuedMetadataVideoPaths.removeAll()
+        cachedThumbnailHydrationTask?.cancel()
+        cachedThumbnailHydrationTask = nil
+        pendingCachedThumbnailHydrationEntries.removeAll()
+        pendingCachedThumbnailHydrationPaths.removeAll()
         metadataRefreshTask?.cancel()
         metadataRefreshTask = nil
         metadataDisplayRefreshTask?.cancel()
@@ -188,6 +314,7 @@ extension LibraryStore {
         objectWillChange.send()
         thumbnailDataByVideoPath = preservedThumbnailData
         thumbnailImageByVideoPath = preservedThumbnailImages
+        thumbnailImageAccessTickByPath = thumbnailImageAccessTickByPath.filter { libraryPaths.contains($0.key) }
         durationByVideoPath = preservedDurations
         playbackSupportByVideoPath = preservedPlaybackSupport
         waveformSamplesByVideoPath.removeAll()
@@ -198,8 +325,14 @@ extension LibraryStore {
         sceneCutProgressesByVideoPath.removeAll()
         sceneThumbnailVersionsByVideoPath.removeAll()
         sceneDetectionProgress.removeAll()
+        sceneDetectionErrorByVideoPath.removeAll()
 
-        let videosToLoad = videos.filter { needsVideoRenderState(for: $0.url.path) }
+        let videosToLoad = videos.filter {
+            needsVideoMetadataWork(
+                for: $0.url.path,
+                allowThumbnailGeneration: allowThumbnailGeneration
+            )
+        }
 
         guard !videosToLoad.isEmpty, workerCount > 0 else { return }
         let generation = thumbnailLoadGeneration
@@ -212,7 +345,8 @@ extension LibraryStore {
                     guard let video = await queue.next() else { break }
                     let path = video.url.path
                     let shouldGenerateThumbnail = await MainActor.run { [weak self] in
-                        !(self?.thumbnailGenerationFailedPaths.contains(path) ?? false)
+                        guard allowThumbnailGeneration else { return false }
+                        return self?.needsGeneratedVideoThumbnail(for: path) ?? false
                     }
                     async let metadata = Self.makeVideoMetadata(
                         for: video.url,
@@ -240,7 +374,12 @@ extension LibraryStore {
         }
     }
 
-    func scheduleDeferredMetadataLoad(for videos: [VideoItem], after delay: TimeInterval, workerCount: Int) {
+    func scheduleDeferredMetadataLoad(
+        for videos: [VideoItem],
+        after delay: TimeInterval,
+        workerCount: Int,
+        allowThumbnailGeneration: Bool = false
+    ) {
         guard !videos.isEmpty, workerCount > 0 else { return }
         let generation = thumbnailLoadGeneration
         let delayNanoseconds = UInt64(max(0, delay) * 1_000_000_000)
@@ -257,7 +396,10 @@ extension LibraryStore {
                 let queued = videos.filter { video in
                     let path = video.url.path
                     guard livePaths.contains(path) else { return false }
-                    guard self.needsVideoRenderState(for: path) else { return false }
+                    guard self.needsVideoMetadataWork(
+                        for: path,
+                        allowThumbnailGeneration: allowThumbnailGeneration
+                    ) else { return false }
                     return !self.thumbnailLoadingPaths.contains(path) && !self.queuedMetadataVideoPaths.contains(path)
                 }
                 self.thumbnailLoadingPaths.formUnion(queued.map { $0.url.path })
@@ -275,7 +417,8 @@ extension LibraryStore {
                             guard let video = await queue.next() else { break }
                             let path = video.url.path
                             let shouldGenerateThumbnail = await MainActor.run { [weak self] in
-                                !(self?.thumbnailGenerationFailedPaths.contains(path) ?? false)
+                                guard allowThumbnailGeneration else { return false }
+                                return self?.needsGeneratedVideoThumbnail(for: path) ?? false
                             }
                             async let metadata = Self.makeVideoMetadata(
                                 for: video.url,
@@ -290,7 +433,7 @@ extension LibraryStore {
                                 guard let self,
                                       self.thumbnailLoadGeneration == generation,
                                       self.thumbnailLoadingPaths.contains(path),
-                                      self.videos.contains(where: { $0.url.path == path })
+                                      self.containsVideoPath(path)
                                 else { return }
                                 self.applyVideoMetadata(
                                     videoMetadata,
@@ -307,8 +450,178 @@ extension LibraryStore {
         thumbnailWorkerTasks.append(task)
     }
 
+    func scheduleCachedThumbnailImageHydration(
+        for videos: [VideoItem],
+        after delay: TimeInterval,
+        batchSize: Int = 12
+    ) {
+        let entries: [(path: String, data: Data)] = videos.compactMap { video in
+            let path = video.url.path
+            guard thumbnailImageByVideoPath[path] == nil,
+                  let data = thumbnailDataByVideoPath[path],
+                  !thumbnailGenerationFailedPaths.contains(path)
+            else { return nil }
+            return (path, data)
+        }
+        guard !entries.isEmpty else { return }
+
+        let generation = thumbnailLoadGeneration
+        let delayNanoseconds = UInt64(max(0, delay) * 1_000_000_000)
+        let batchSize = max(1, batchSize)
+
+        let task = Task.detached(priority: .utility) { [weak self, entries] in
+            if delayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+                guard !Task.isCancelled else { return }
+            }
+
+            var batch: [(path: String, image: NSImage)] = []
+            for entry in entries {
+                guard !Task.isCancelled else { return }
+                guard let image = Self.decodedThumbnailImage(from: entry.data) else { continue }
+                batch.append((entry.path, image))
+
+                if batch.count >= batchSize {
+                    let readyBatch = batch
+                    batch.removeAll(keepingCapacity: true)
+                    await MainActor.run { [weak self] in
+                        self?.applyCachedThumbnailImageBatch(readyBatch, generation: generation)
+                    }
+                    try? await Task.sleep(nanoseconds: 28_000_000)
+                }
+            }
+
+            guard !batch.isEmpty else { return }
+            let finalBatch = batch
+            await MainActor.run { [weak self] in
+                self?.applyCachedThumbnailImageBatch(finalBatch, generation: generation)
+            }
+        }
+
+        thumbnailWorkerTasks.append(task)
+    }
+
+    func scheduleCachedThumbnailDataRestore(in libraryURL: URL, after delay: TimeInterval) {
+        let generation = thumbnailLoadGeneration
+        let libraryPath = libraryURL.path
+        let delayNanoseconds = UInt64(max(0, delay) * 1_000_000_000)
+
+        let task = Task.detached(priority: .utility) { [weak self] in
+            if delayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+                guard !Task.isCancelled else { return }
+            }
+
+            guard let restored = Self.loadCachedVideoOrganization(
+                in: libraryURL,
+                includeThumbnailData: true
+            ), !restored.thumbnailDataByPath.isEmpty else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.thumbnailLoadGeneration == generation,
+                      self.libraryURL?.path == libraryPath
+                else { return }
+
+                self.applyCachedThumbnailData(restored.thumbnailDataByPath, generation: generation)
+                let hydrationVideos = self.filteredVideos.isEmpty ? self.videos : self.filteredVideos
+                self.scheduleCachedThumbnailImageHydration(
+                    for: Array(hydrationVideos.prefix(Self.launchCachedThumbnailHydrationLimit)),
+                    after: 0,
+                    batchSize: 8
+                )
+            }
+        }
+
+        thumbnailWorkerTasks.append(task)
+    }
+
+    func prewarmCachedThumbnailImages(for videos: [VideoItem]) {
+        var seenPaths = Set<String>()
+        let uniqueVideos = videos.filter { seenPaths.insert($0.url.path).inserted }
+        guard !uniqueVideos.isEmpty else { return }
+
+        scheduleCachedThumbnailImageHydration(for: uniqueVideos, after: 0, batchSize: 10)
+
+        let missingDataPaths = Set(uniqueVideos.map(\.url.path).filter {
+            thumbnailDataByVideoPath[$0] == nil && thumbnailImageByVideoPath[$0] == nil
+        })
+        guard !missingDataPaths.isEmpty, let libraryURL else { return }
+
+        let generation = thumbnailLoadGeneration
+        let libraryPath = libraryURL.path
+        let task = Task.detached(priority: .utility) { [weak self, uniqueVideos, missingDataPaths] in
+            guard let restored = Self.loadCachedVideoOrganization(
+                in: libraryURL,
+                includeThumbnailData: true
+            ), !restored.thumbnailDataByPath.isEmpty else { return }
+
+            let requestedData = restored.thumbnailDataByPath.filter { missingDataPaths.contains($0.key) }
+            guard !requestedData.isEmpty else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.thumbnailLoadGeneration == generation,
+                      self.libraryURL?.path == libraryPath
+                else { return }
+
+                self.applyCachedThumbnailData(requestedData, generation: generation)
+                self.scheduleCachedThumbnailImageHydration(for: uniqueVideos, after: 0, batchSize: 10)
+            }
+        }
+
+        thumbnailWorkerTasks.append(task)
+    }
+
+    func applyCachedThumbnailData(_ dataByPath: [String: Data], generation: Int) {
+        guard thumbnailLoadGeneration == generation else { return }
+
+        var didUpdate = false
+        for (path, data) in dataByPath {
+            guard containsVideoPath(path) else { continue }
+            if thumbnailDataByVideoPath[path] == nil {
+                thumbnailDataByVideoPath[path] = data
+                didUpdate = true
+            }
+            thumbnailGenerationFailedPaths.remove(path)
+        }
+
+        if didUpdate {
+            scheduleMetadataDisplayRefresh()
+        }
+    }
+
+    func applyCachedThumbnailImageBatch(
+        _ batch: [(path: String, image: NSImage)],
+        generation: Int
+    ) {
+        guard thumbnailLoadGeneration == generation else { return }
+        var didUpdate = false
+
+        for item in batch {
+            guard containsVideoPath(item.path),
+                  thumbnailImageByVideoPath[item.path] == nil,
+                  thumbnailDataByVideoPath[item.path] != nil
+            else { continue }
+            thumbnailImageByVideoPath[item.path] = item.image
+            noteThumbnailImageAccess(for: item.path)
+            didUpdate = true
+        }
+
+        if didUpdate {
+            trimDecodedThumbnailImageCacheIfNeeded()
+            scheduleMetadataDisplayRefresh()
+        }
+    }
+
     func applyVideoMetadata(
-        _ videoMetadata: (thumbnailData: Data?, thumbnailImage: NSImage?, duration: Double?, metadata: VideoMetadata),
+        _ videoMetadata: (
+            thumbnailData: Data?,
+            thumbnailImage: NSImage?,
+            duration: Double?,
+            metadata: VideoMetadata,
+            thumbnailGenerationAttempted: Bool
+        ),
         playbackSupport: VideoPlaybackSupport,
         for path: String
     ) {
@@ -316,10 +629,11 @@ extension LibraryStore {
             thumbnailDataByVideoPath[path] = data
             if let image = videoMetadata.thumbnailImage ?? Self.decodedThumbnailImage(from: data) {
                 thumbnailImageByVideoPath[path] = image
+                noteThumbnailImageAccess(for: path)
             }
             thumbnailGenerationFailedPaths.remove(path)
             updateSceneStripImages(for: path)
-        } else {
+        } else if videoMetadata.thumbnailGenerationAttempted {
             thumbnailGenerationFailedPaths.insert(path)
         }
 
@@ -336,6 +650,7 @@ extension LibraryStore {
         metadataByVideoPath[path] = videoMetadata.metadata
         playbackSupportByVideoPath[path] = playbackSupport
         thumbnailLoadingPaths.remove(path)
+        trimDecodedThumbnailImageCacheIfNeeded()
 
         if sortOption.dependsOnMetadata {
             scheduleMetadataDependentRefresh()
@@ -343,6 +658,32 @@ extension LibraryStore {
 
         scheduleMetadataDisplayRefresh()
         scheduleCurrentVideoLibrarySnapshotSave(after: 2.0)
+    }
+
+    func containsVideoPath(_ path: String) -> Bool {
+        videoPathSet.contains(path)
+    }
+
+    func noteThumbnailImageAccess(for path: String) {
+        thumbnailImageAccessTick += 1
+        thumbnailImageAccessTickByPath[path] = thumbnailImageAccessTick
+    }
+
+    func trimDecodedThumbnailImageCacheIfNeeded() {
+        let limit = Self.maxDecodedLibraryThumbnailImages
+        guard thumbnailImageByVideoPath.count > limit else { return }
+
+        let overflow = thumbnailImageByVideoPath.count - limit
+        let pathsToRemove = thumbnailImageByVideoPath.keys
+            .sorted {
+                thumbnailImageAccessTickByPath[$0, default: 0] < thumbnailImageAccessTickByPath[$1, default: 0]
+            }
+            .prefix(overflow)
+
+        for path in pathsToRemove {
+            thumbnailImageByVideoPath.removeValue(forKey: path)
+            thumbnailImageAccessTickByPath.removeValue(forKey: path)
+        }
     }
 
     func scheduleMetadataDisplayRefresh() {
@@ -413,7 +754,13 @@ extension LibraryStore {
     nonisolated static func makeVideoMetadata(
         for url: URL,
         shouldGenerateThumbnail: Bool = true
-    ) async -> (thumbnailData: Data?, thumbnailImage: NSImage?, duration: Double?, metadata: VideoMetadata) {
+    ) async -> (
+        thumbnailData: Data?,
+        thumbnailImage: NSImage?,
+        duration: Double?,
+        metadata: VideoMetadata,
+        thumbnailGenerationAttempted: Bool
+    ) {
         await Task.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
             async let duration = durationSeconds(for: asset)
@@ -437,14 +784,17 @@ extension LibraryStore {
                 )
             }
 
-            guard shouldGenerateThumbnail,
-                  specs.pixelWidth != nil,
+            guard shouldGenerateThumbnail else {
+                return (nil, nil, durationValue, metadata(with: durationValue), false)
+            }
+
+            guard specs.pixelWidth != nil,
                   specs.pixelHeight != nil,
                   let durationValue,
                   durationValue.isFinite,
                   durationValue > 0
             else {
-                return (nil, nil, durationValue, metadata(with: durationValue))
+                return (nil, nil, durationValue, metadata(with: durationValue), true)
             }
 
             let generator = AVAssetImageGenerator(asset: asset)
@@ -463,11 +813,17 @@ extension LibraryStore {
                 }
 
                 if candidate.score > 0.18 {
-                    return (candidate.data, candidate.image, durationValue, metadata(with: durationValue))
+                    return (candidate.data, candidate.image, durationValue, metadata(with: durationValue), true)
                 }
             }
 
-            return (bestCandidate?.data, bestCandidate?.image, durationValue, metadata(with: durationValue))
+            return (
+                bestCandidate?.data,
+                bestCandidate?.image,
+                durationValue,
+                metadata(with: durationValue),
+                true
+            )
         }.value
     }
 
@@ -496,6 +852,66 @@ extension LibraryStore {
         guard let duration = try? await asset.load(.duration) else { return nil }
         let seconds = CMTimeGetSeconds(duration)
         return seconds.isFinite && seconds > 0 ? seconds : nil
+    }
+
+    nonisolated static func musicGenreTags(for asset: AVURLAsset, title: String) async -> [String] {
+        let formats = (try? await asset.load(.availableMetadataFormats)) ?? []
+        var rawTags: [String] = []
+
+        for format in formats {
+            guard let items = try? await asset.loadMetadata(for: format) else { continue }
+            for item in items {
+                guard let text = await musicGenreText(from: item) else { continue }
+                rawTags.append(contentsOf: splitMusicGenreText(text))
+            }
+        }
+
+        return MusicRecognitionItem.cleanedGenreTags(rawTags, title: title)
+    }
+
+    nonisolated static func musicGenreText(from item: AVMetadataItem) async -> String? {
+        let keyText: String
+        if let key = item.key as? String {
+            keyText = key
+        } else if let key = item.key {
+            keyText = String(describing: key)
+        } else {
+            keyText = ""
+        }
+
+        let searchableKey = [
+            item.identifier?.rawValue ?? "",
+            item.commonKey?.rawValue ?? "",
+            keyText
+        ]
+        .joined(separator: " ")
+        .lowercased()
+
+        guard searchableKey.contains("genre")
+            || searchableKey.contains("contenttype")
+            || searchableKey.contains("tcon")
+        else {
+            return nil
+        }
+
+        if let stringValue = try? await item.load(.stringValue) {
+            return stringValue
+        }
+        if let dataValue = try? await item.load(.dataValue),
+           let stringValue = String(data: dataValue, encoding: .utf8) {
+            return stringValue
+        }
+        if let value = try? await item.load(.value) {
+            return String(describing: value)
+        }
+        return nil
+    }
+
+    nonisolated static func splitMusicGenreText(_ text: String) -> [String] {
+        text
+            .components(separatedBy: CharacterSet(charactersIn: ",，/、;；|"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     nonisolated static func videoSpecs(for asset: AVURLAsset) async -> (frameRate: Double?, pixelWidth: Int?, pixelHeight: Int?) {
@@ -804,6 +1220,79 @@ extension LibraryStore {
         return folder
     }
 
+    func imageExportURL(for frame: SampledFrame) -> URL? {
+        imageExportURLs(for: frame).first ?? restoreImageExportFileIfNeeded(for: frame)
+    }
+
+    func imageExportURLs(for frame: SampledFrame) -> [URL] {
+        let video = VideoItem(url: URL(fileURLWithPath: frame.videoPath))
+        let folder = imageExportDestination(for: video)
+        return imageExportURLs(in: folder, baseName: imageExportBaseName(for: frame))
+    }
+
+    func restoreImageExportFileIfNeeded(for frame: SampledFrame) -> URL? {
+        let video = VideoItem(url: URL(fileURLWithPath: frame.videoPath))
+        let folder = imageExportDestination(for: video)
+        let url = folder.appendingPathComponent("\(imageExportBaseName(for: frame)).jpg")
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+
+        do {
+            try frame.thumbnailData.write(to: url, options: .atomic)
+            return url
+        } catch {
+            NSLog("LapianBao failed to restore image export from thumbnail data: %@ %@", url.path, String(describing: error))
+            return nil
+        }
+    }
+
+    func imageExportBaseName(for frame: SampledFrame) -> String {
+        "\(Self.compactFileStem(frame.videoName, maxLength: 96))_\(Self.fileTimecode(frame.time))"
+    }
+
+    func imageExportURLs(in folder: URL, baseName: String) -> [URL] {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return urls
+            .filter { url in
+                let stem = url.deletingPathExtension().lastPathComponent
+                let ext = url.pathExtension.lowercased()
+                return Self.imageExportFileExtensions.contains(ext) && (stem == baseName || stem.hasPrefix("\(baseName)-"))
+            }
+            .sorted { lhs, rhs in
+                let leftDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return leftDate > rightDate
+            }
+    }
+
+    nonisolated static var imageExportFileExtensions: Set<String> {
+        ["jpg", "jpeg", "png", "heic", "tif", "tiff", "webp"]
+    }
+
+    nonisolated static func generatedImageExportBaseName(for url: URL) -> String? {
+        let stem = url.deletingPathExtension().lastPathComponent
+        let pattern = #"^(.+_[0-9]{2}-[0-9]{2}(?:-[0-9]{2})?)(?:-[0-9]+)?$"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(
+                in: stem,
+                range: NSRange(stem.startIndex..<stem.endIndex, in: stem)
+            ),
+            let range = Range(match.range(at: 1), in: stem)
+        else {
+            return nil
+        }
+        return String(stem[range])
+    }
+
     nonisolated static func uniqueExportURL(in folder: URL, baseName: String, preferredExtension: String) -> URL {
         let cleanExtension = preferredExtension.trimmingCharacters(in: CharacterSet(charactersIn: "."))
         let fileExtension = cleanExtension.isEmpty ? "jpg" : cleanExtension
@@ -842,38 +1331,159 @@ extension LibraryStore {
         try? markdown.write(to: folder.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
     }
 
-    nonisolated static func exportAudioClipFile(video: VideoItem, videoName: String, start: Double, end: Double, libraryURL: URL?) async -> URL? {
-        await Task.detached(priority: .utility) {
-            guard let libraryURL else { return nil }
-            let folder = mediaFolder(in: libraryURL, named: soundEffectExportFolderName)
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    nonisolated enum AudioClipExportError: LocalizedError {
+        case libraryMissing
+        case noAudioTrack
+        case exporterUnavailable
+        case emptyOutput
+        case ffmpegMissing
+        case ffmpegFailed(String)
+        case avFoundationFailed(String)
 
-            let outputURL = folder.appendingPathComponent("\(safeFileStem(videoName))_\(fileTimecode(start))-\(fileTimecode(end)).m4a")
-            try? FileManager.default.removeItem(at: outputURL)
+        var errorDescription: String? {
+            switch self {
+            case .libraryMissing:
+                return "请先打开一个素材库文件夹"
+            case .noAudioTrack:
+                return "这个视频没有可导出的音轨"
+            case .exporterUnavailable:
+                return "系统音频导出器不可用"
+            case .emptyOutput:
+                return "声音文件导出为空"
+            case .ffmpegMissing:
+                return "系统导出失败，且找不到 ffmpeg"
+            case let .ffmpegFailed(message):
+                return message.isEmpty ? "ffmpeg 导出声音失败" : message
+            case let .avFoundationFailed(message):
+                return message.isEmpty ? "系统导出声音失败" : message
+            }
+        }
+    }
+
+    nonisolated static func exportAudioClipFile(video: VideoItem, videoName: String, start: Double, end: Double, libraryURL: URL?) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            guard let libraryURL else { throw AudioClipExportError.libraryMissing }
+            let folder = mediaFolder(in: libraryURL, named: soundEffectExportFolderName)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+            let baseName = "\(compactFileStem(videoName, maxLength: 96))_\(fileTimecode(start))-\(fileTimecode(end))"
+            let outputURL = uniqueExportURL(in: folder, baseName: baseName, preferredExtension: "m4a")
 
             let asset = AVURLAsset(url: video.url)
-            guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else { return nil }
-            session.timeRange = CMTimeRange(
-                start: CMTime(seconds: start, preferredTimescale: 600),
-                end: CMTime(seconds: end, preferredTimescale: 600)
-            )
+            let audioTracks = try? await asset.loadTracks(withMediaType: .audio)
+            guard audioTracks?.isEmpty == false else { throw AudioClipExportError.noAudioTrack }
 
             do {
-                try await session.export(to: outputURL, as: .m4a)
+                try await exportAudioClipWithAVFoundation(asset: asset, outputURL: outputURL, start: start, end: end)
                 return outputURL
+            } catch let exportError as AudioClipExportError {
+                try? FileManager.default.removeItem(at: outputURL)
+                switch exportError {
+                case .exporterUnavailable, .emptyOutput, .avFoundationFailed:
+                    break
+                default:
+                    throw exportError
+                }
             } catch {
-                return nil
+                try? FileManager.default.removeItem(at: outputURL)
             }
+
+            try exportAudioClipWithFFmpeg(videoURL: video.url, outputURL: outputURL, start: start, end: end)
+            return outputURL
         }.value
+    }
+
+    nonisolated static func exportAudioClipWithAVFoundation(
+        asset: AVURLAsset,
+        outputURL: URL,
+        start: Double,
+        end: Double
+    ) async throws {
+        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
+            throw AudioClipExportError.exporterUnavailable
+        }
+        session.timeRange = CMTimeRange(
+            start: CMTime(seconds: max(0, start), preferredTimescale: 600),
+            duration: CMTime(seconds: max(0.01, end - start), preferredTimescale: 600)
+        )
+
+        do {
+            try await session.export(to: outputURL, as: .m4a)
+        } catch {
+            throw AudioClipExportError.avFoundationFailed(error.localizedDescription)
+        }
+        guard audioExportFileIsUsable(outputURL) else {
+            throw AudioClipExportError.emptyOutput
+        }
+    }
+
+    nonisolated static func exportAudioClipWithFFmpeg(
+        videoURL: URL,
+        outputURL: URL,
+        start: Double,
+        end: Double
+    ) throws {
+        guard let ffmpegURL = ffmpegExecutableURL() else {
+            throw AudioClipExportError.ffmpegMissing
+        }
+
+        let duration = max(0.01, end - start)
+        let result = ExternalProcessRunner.run(
+            executableURL: ffmpegURL,
+            arguments: [
+                "-y",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-i", videoURL.path,
+                "-ss", String(format: "%.3f", max(0, start)),
+                "-t", String(format: "%.3f", duration),
+                "-vn",
+                "-map", "0:a:0",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                outputURL.path
+            ],
+            qualityOfService: .utility
+        )
+
+        guard result.succeeded else {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw AudioClipExportError.ffmpegFailed(
+                result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        guard audioExportFileIsUsable(outputURL) else {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw AudioClipExportError.emptyOutput
+        }
+    }
+
+    nonisolated static func audioExportFileIsUsable(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return (values?.fileSize ?? 0) > 0
+    }
+
+    nonisolated static func ffmpegExecutableURL() -> URL? {
+        let paths = [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg"
+        ]
+        return paths
+            .map(URL.init(fileURLWithPath:))
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
     nonisolated static func runWhisperTranscription(
         video: VideoItem,
         videoName: String,
         libraryURL: URL?,
-        progressCallback: (@Sendable (Double, String) -> Void)? = nil
+        progressCallback: (@Sendable (Double, String) -> Void)? = nil,
+        processRegistry: ToolProcessRegistry? = nil
     ) async throws -> [TranscriptSegment] {
-        try await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) {
             progressCallback?(0.01, "准备字幕分析")
             let scriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/transcribe_with_whisper.sh"
             guard FileManager.default.isExecutableFile(atPath: scriptPath) else {
@@ -919,8 +1529,11 @@ extension LibraryStore {
                     }
                 }
             }
+            try Task.checkCancellation()
             try process.run()
+            processRegistry?.set(process)
             process.waitUntilExit()
+            processRegistry?.set(nil)
             outputPipe.fileHandleForReading.readabilityHandler = nil
             let remainingOutput = outputPipe.fileHandleForReading.readDataToEndOfFile()
             if !remainingOutput.isEmpty {
@@ -932,6 +1545,7 @@ extension LibraryStore {
                 }
             }
 
+            try Task.checkCancellation()
             guard process.terminationStatus == 0 else {
                 let logData = (try? Data(contentsOf: logURL)) ?? Data()
                 let fullMessage = String(data: logData, encoding: .utf8) ?? "本地转写失败"
@@ -946,7 +1560,14 @@ extension LibraryStore {
             let cleanedSegments = cleanTranscriptSegments(segments)
             progressCallback?(1.0, "字幕分析完成")
             return cleanedSegments
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+            processRegistry?.cancelRunningProcess()
+        }
     }
 
     nonisolated struct WhisperProgressUpdate: Sendable {

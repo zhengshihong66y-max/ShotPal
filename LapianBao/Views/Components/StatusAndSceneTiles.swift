@@ -30,58 +30,13 @@ struct AppEmptyState: View {
     var fillsWidth = true
 
     var body: some View {
-        Group {
-            if style == .inline {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(textAlignment)
-                    .lineLimit(2)
-                    .frame(
-                        maxWidth: fillsWidth ? .infinity : nil,
-                        minHeight: minHeight,
-                        alignment: alignment
-                    )
-            } else {
-                VStack(spacing: spacing) {
-                    if let systemImage {
-                        Image(systemName: systemImage)
-                            .font(.system(size: iconSize, weight: .medium))
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    Text(title)
-                        .font(titleFont)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(textAlignment)
-
-                    if let description {
-                        Text(description)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(textAlignment)
-                            .lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, minHeight: minHeight ?? defaultMinHeight)
-                .padding(padding)
-                .background {
-                    if showsBackground {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(.white.opacity(backgroundOpacity))
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            }
-        }
-    }
-
-    private var spacing: CGFloat {
-        style == .large ? 10 : 7
-    }
-
-    private var iconSize: CGFloat {
-        style == .large ? 34 : 18
+        Text(title)
+            .font(titleFont)
+            .foregroundStyle(style == .inline ? .tertiary : .secondary)
+            .multilineTextAlignment(.center)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, minHeight: minHeight ?? defaultMinHeight, alignment: .center)
     }
 
     private var titleFont: Font {
@@ -89,19 +44,14 @@ struct AppEmptyState: View {
     }
 
     private var defaultMinHeight: CGFloat {
-        style == .large ? 136 : 82
-    }
-
-    private var padding: CGFloat {
-        style == .large ? 12 : 7
-    }
-
-    private var cornerRadius: CGFloat {
-        style == .large ? 8 : 7
-    }
-
-    private var backgroundOpacity: Double {
-        style == .large ? 0.04 : 0.055
+        switch style {
+        case .large:
+            return 136
+        case .compact:
+            return 82
+        case .inline:
+            return 24
+        }
     }
 }
 
@@ -146,7 +96,7 @@ struct GenerationProgressRow: View {
 
                 if showPercent, let normalizedProgress {
                     Text(progressPercentText(normalizedProgress))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .font(Design.numericCaption2(weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -245,9 +195,15 @@ struct SceneCutTile: View {
     var isScreenshot = false
     var isSelected = false
     var isActive = false
+    var activeProgress: Double?
     let onTap: () -> Void
-    var onCollect: (() -> Void)?
+    var tags: [String] = []
+    var suggestedTags: [String] = []
+    var onAddTag: ((String) -> Void)?
+    var onRemoveTag: ((String) -> Void)?
+    var onShowInFinder: (() -> Void)?
     var onDelete: (() -> Void)?
+    var showsUnavailableFileActions = false
     var dragItemProvider: (() -> NSItemProvider)?
 
     @State private var isHovered = false
@@ -256,51 +212,46 @@ struct SceneCutTile: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: onTap) {
-                ZStack(alignment: .bottomTrailing) {
-                    if let thumbnailImage {
-                        Image(nsImage: thumbnailImage)
-                            .resizable()
-                            .interpolation(.medium)
-                            .scaledToFill()
-                    } else {
-                        Color.white.opacity(0.08)
-                    }
+                GeometryReader { proxy in
+                    ZStack(alignment: .bottomTrailing) {
+                        thumbnailContent
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .clipped()
 
-                    CardTimeBadge(text: timeLabel, placeholder: timeLabel)
-                        .padding(.trailing, CardTimeBadge.edgeInset)
-                        .padding(.bottom, CardTimeBadge.verticalInset)
+                        if isActive, let activeProgress {
+                            activeProgressOverlay(activeProgress)
+                        }
 
-                    if isScreenshot {
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Design.screenshotFrameAccent)
-                            .padding(6)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        CardTimeBadge(text: timeLabel, placeholder: timeLabel)
+                            .padding(.trailing, CardTimeBadge.edgeInset)
+                            .padding(.bottom, CardTimeBadge.verticalInset)
+
+                        if isScreenshot {
+                            CaptureFrameBadge()
+                                .padding(.leading, 7)
+                                .padding(.bottom, 7)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        }
                     }
                 }
-                .aspectRatio(thumbnailAspectRatio, contentMode: .fit)
+                .aspectRatio(16 / 9, contentMode: .fit)
                 .clipShape(tileShape)
                 .overlay {
-                    tileShape
-                        .strokeBorder(borderColor, lineWidth: borderWidth)
+                    if borderWidth > 0 {
+                        tileShape
+                            .strokeBorder(borderColor, lineWidth: borderWidth)
+                    }
                 }
             }
             .buttonStyle(.plain)
 
-            if let onCollect, !isScreenshot, !isExported {
-                collectButton(onCollect: onCollect)
-                    .opacity(isHovered ? 1 : 0)
-                    .allowsHitTesting(isHovered)
-                    .animation(.easeInOut(duration: 0.12), value: isHovered)
-                    .padding(6)
-            }
-
-            if isScreenshot, let onDelete {
-                moreButton(onDelete: onDelete)
+            if canShowMoreMenu {
+                moreButton
                     .opacity(isHovered || isMorePresented ? 1 : 0)
                     .allowsHitTesting(isHovered || isMorePresented)
                     .animation(.easeInOut(duration: 0.12), value: isHovered)
-                    .padding(6)
+                    .padding(.top, CardTimeBadge.verticalInset)
+                    .padding(.trailing, CardTimeBadge.edgeInset)
             }
         }
         .onHover { hovering in
@@ -312,78 +263,148 @@ struct SceneCutTile: View {
         .fullResolutionImageDrag(dragItemProvider)
     }
 
-    private var thumbnailAspectRatio: CGFloat {
-        guard let size = thumbnailImage?.size,
-              size.width > 0,
-              size.height > 0
-        else { return 16 / 9 }
-        return size.width / size.height
+    @ViewBuilder
+    private var thumbnailContent: some View {
+        if let thumbnailImage {
+            Image(nsImage: thumbnailImage)
+                .resizable()
+                .interpolation(.medium)
+                .scaledToFill()
+        } else {
+            Color.white.opacity(0.08)
+        }
+    }
+
+    private var canShowMoreMenu: Bool {
+        onAddTag != nil
+            || onRemoveTag != nil
+            || onShowInFinder != nil
+            || onDelete != nil
+            || showsUnavailableFileActions
     }
 
     private var tileShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
     }
 
-    private var overlayControlShape: some Shape {
-        RoundedRectangle(cornerRadius: Design.innerRadius, style: .continuous)
-    }
-
-    private func collectButton(onCollect: @escaping () -> Void) -> some View {
-        Button(action: onCollect) {
-            floatingExportButtonIcon(
-                systemImage: "plus",
-                size: 24,
-                iconSize: 12
-            )
-        }
-        .buttonStyle(.plain)
-        .help("加入画面收藏")
-    }
-
-    private func moreButton(onDelete: @escaping () -> Void) -> some View {
+    private var moreButton: some View {
         Button {
             isMorePresented.toggle()
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(.black.opacity(0.48))
-                .clipShape(overlayControlShape)
-                .overlay {
-                    overlayControlShape
-                        .stroke(.white.opacity(0.12), lineWidth: 0.7)
-                }
-                .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
-                .contentShape(Rectangle())
+            CardOverlayMoreIcon()
         }
         .buttonStyle(.plain)
+        .frame(width: CardOverlayMoreIcon.size, height: CardOverlayMoreIcon.size)
         .help("更多")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
-            Button(role: .destructive) {
-                onDelete()
-                isMorePresented = false
-            } label: {
-                Label("删除截图", systemImage: "trash")
-                    .frame(minWidth: 96, alignment: .leading)
-            }
-            .buttonStyle(.borderless)
-            .padding(10)
+            morePopover
+                .transaction { $0.animation = nil }
         }
+    }
+
+    private var morePopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if onAddTag != nil || !tags.isEmpty || !suggestedTags.isEmpty {
+                TagEditorSection(
+                    domain: .frame,
+                    tags: tags,
+                    suggestedTags: suggestedTags,
+                    onAdd: onAddTag,
+                    onRemove: onRemoveTag
+                )
+                .padding(14)
+            }
+
+            if onShowInFinder != nil || onDelete != nil || showsUnavailableFileActions {
+                if onAddTag != nil || !tags.isEmpty || !suggestedTags.isEmpty {
+                    Divider()
+                }
+
+                actionSection
+            }
+        }
+        .frame(minWidth: 220)
+    }
+
+    private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if onShowInFinder != nil || showsUnavailableFileActions {
+                let isEnabled = onShowInFinder != nil
+
+                Button {
+                    guard let onShowInFinder else { return }
+                    isMorePresented = false
+                    onShowInFinder()
+                } label: {
+                    Label("在访达中显示", systemImage: "folder")
+                        .foregroundStyle(sceneActionForeground(isEnabled: isEnabled))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+
+            if onDelete != nil || showsUnavailableFileActions {
+                let isEnabled = onDelete != nil
+
+                Button {
+                    guard let onDelete else { return }
+                    isMorePresented = false
+                    onDelete()
+                } label: {
+                    Label(isScreenshot ? "删除截图" : "删除图片", systemImage: "trash")
+                        .foregroundStyle(sceneActionForeground(isEnabled: isEnabled, destructive: true))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func sceneActionForeground(isEnabled: Bool, destructive: Bool = false) -> Color {
+        guard isEnabled else { return .white.opacity(0.34) }
+        return destructive ? .red : .white.opacity(0.88)
+    }
+
+    private func activeProgressOverlay(_ progress: Double) -> some View {
+        GeometryReader { proxy in
+            let clamped = min(1, max(0, progress))
+            let playheadWidth: CGFloat = 2
+            let playheadX = min(max(0, proxy.size.width - playheadWidth), max(0, proxy.size.width * clamped - playheadWidth / 2))
+
+            ZStack(alignment: .leading) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(width: proxy.size.width * clamped)
+
+                Rectangle()
+                    .fill(Design.timelinePlayheadAccent)
+                    .frame(width: playheadWidth)
+                    .offset(x: playheadX)
+                    .shadow(color: .black.opacity(0.35), radius: 1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+        .clipShape(tileShape)
+        .allowsHitTesting(false)
     }
 
     private var borderColor: Color {
         if isActive { return Design.currentFrameAccent.opacity(0.98) }
-        if isSelected { return .white.opacity(0.46) }
-        if isScreenshot { return Design.screenshotFrameAccent.opacity(0.92) }
-        if isExported { return .white.opacity(0.18) }
-        return .white.opacity(0.10)
+        return .clear
     }
 
     private var borderWidth: CGFloat {
         if isActive { return 2 }
-        if isSelected { return 1.2 }
-        return isExported ? 1.7 : 1
+        return 0
     }
 }
 

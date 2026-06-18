@@ -1,6 +1,6 @@
 # 拉片宝 AI 接手手册
 
-最后更新：2026-05-31
+最后更新：2026-06-10
 
 本文是拉片宝项目的唯一权威 Markdown。后续 AI 或开发者接手时，先读本文，再按需读源码。本文同时记录产品结构、工程结构、设计原则、已经定下来的 UI 数值和可恢复的设计基线。
 
@@ -24,6 +24,10 @@
 - 如果启动后只有进程没有窗口，先判断是不是 pre-main 问题：`sample` 只有 `_dyld_start`、`vmmap -summary` 显示 `Process exists but has not started -- it is launched-suspended`、物理内存约 `96K`，都说明 App 代码尚未运行。此时优先检查 Xcode 用户断点、旧 `debugserver` / `lldb`、LaunchServices / Xcode 启动状态或签名/隔离属性，不要先改 SwiftUI 或素材库扫描逻辑。
 - Xcode 用户断点会让 App 在窗口创建前被挂起。`Tools/check_launch_window.sh` 会扫描 `Breakpoints_v2.xcbkptlist`，只要存在 `shouldBeEnabled = "Yes"` 就失败；启动验收前必须禁用这些断点。
 - 不要在项目源码里新增 SwiftUI `#Preview`。本项目以真实 App 冷启动检查为准，避免重新引入 Preview macro/plugin server 或 JIT 注入路径。
+- 不要把全窗口遮罩背景写成 `Button { Color... }` 或 `Button(action: close...) { Color... }`。macOS SwiftUI 会把它变成巨型可访问性/命中测试按钮，吞掉弹窗和主界面的点击。遮罩背景必须用非控件视图：`Color.black.opacity(...).ignoresSafeArea().contentShape(Rectangle()).onTapGesture { ... }.accessibilityHidden(true)`，真正的面板内容再用 `zIndex` 放在上面。
+- `LapianBaoApp.swift` 的 App 级预览键盘监听只能监听 `.keyDown` 和 `.keyUp`。不要在这里加 `.leftMouseDown`、`.rightMouseDown` 或其它全局鼠标监听，也不要在 App 级鼠标按下路径里调用 `window.makeFirstResponder(nil)`；鼠标焦点恢复只能留在局部桥接视图如 `PreviewKeyboardHandler` 中。
+- 如果出现“整个 App 无法点击”，先用 `pgrep -fl LapianBao` 确认没有多个 `LapianBao` 实例或旧调试窗口叠在一起，再查 SwiftUI 遮罩层和 AppKit 事件监听。
+- 每轮较大改动前先确认 `python3 Tools/regression_checks.py` 和 `xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -destination 'platform=macOS' build` 的当前基线；如果工作区已有大量未提交改动，先做可恢复 checkpoint，再继续拆分。
 
 ## 3. 当前产品结构
 
@@ -47,7 +51,7 @@
 
 对应源码是 `AppWorkspace.allCases`。`content` 工作区的实现仍在代码里，当前不作为 rail 入口展示。
 
-Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选中图标保持低透明度。图标需要以各自的 `railIconOffset` 和 `railIconSize` 做光学修正，并保持和红黄绿窗口按钮共用同一条左缘视觉基线。
+Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选中图标保持低透明度。图标先使用全局 `railIconAlignmentOffsetX` 对齐红黄绿窗口按钮左缘，再以各自的 `railIconOffset` 和 `railIconSize` 做光学修正；不要通过移动窗口按钮或素材区 inset 来补 rail 图标对齐。
 
 ### 3.2 素材区
 
@@ -71,7 +75,7 @@ Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选
 
 `ContentWorkspaceView` 仍保留在代码中，用于内容节点时间线和本地文本模型整理，当前不是 rail 可见入口。
 
-工作区之间跳转时通过 `jumpToVideo(path:time:)` 选中视频，并发出 `.lapianBaoSeekRequest` 通知，让主页播放器跳到对应时间点。
+工作区之间跳转时通过 `jumpToVideo(path:time:)` 选中视频，并经由 `AppEventBus` 发出 seek 请求，让主页播放器跳到对应时间点。
 
 ## 4. 核心文件地图
 
@@ -149,7 +153,7 @@ Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选
 - `LibraryStore+RemoteDownloadTypes.swift` 和 `LibraryStore+RemoteDownload.swift`：远程下载共用类型和统一下载入口。
 - `LibraryStore+RemoteTranscoding.swift`：VP9/AV1/VP8 转 H.264 的兼容处理。
 - `LibraryStore+XiaohongshuDownload.swift`：小红书原生解析和下载。
-- `LibraryStore+DownloaderSelfCheck.swift`：yt-dlp、ffmpeg、外部服务自检和自动修复。
+- `LibraryStore+DownloaderSelfCheck.swift`：yt-dlp 最新版检查、应用托管下载器安全替换和自动修复。
 - `LibraryStore+YTDLPDownload.swift`：yt-dlp 下载、探测、进度解析和缩略图抓取。
 - `LibraryStore+CobaltDownload.swift`：cobalt.tools 备用下载和导入文件名清洗。
 - `LibraryStore+MetadataAndExportHelpers.swift`：元数据、缩略图、图片/音频导出辅助。
@@ -182,6 +186,54 @@ Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选
 - `Views/Settings/`：设置工作区。
 - `Views/Components/`：标签、空状态、场景 tile、进度和卡片辅助组件。
 - `Views/Shared/`：拖拽、面板背景、分隔线光标等跨页面 helper。
+
+## 4.5 架构护栏和拆分路线
+
+当前架构优化的目标不是一次性大重写，而是把容易复发的问题变成可检查边界。后续 AI 或开发者改动时，优先保持现有行为和数据格式，再逐步移动职责。
+
+### 4.5.1 当前硬边界
+
+- `README.md` 是唯一权威 Markdown。不要另建平行架构说明；新增规则先写回本文，再按需让 `Tools/regression_checks.py` 检查。
+- `LibraryStore.swift` 只能保留状态壳、共享常量、轻量 helper 和门面入口。新增下载、转码、解析、持久化、导入、场景、字幕、音乐逻辑时，优先放到已有 `Stores/LibraryStore+*.swift` 边界里。
+- `ContentView.swift` 只能保留主布局壳、全局 overlay、workspace 切换和跨工作区跳转。复杂导入面板、筛选、资产列表、播放行、分析视图都应该继续拆在 `Views/*` 子目录。
+- `LapianBaoApp.swift` 只做 AppDelegate/lifecycle 桥接，不接业务逻辑。启动顺序归 `AppStartupCoordinator`，窗口归 `AppWindowManager`，启动可诊断标记归 `StartupDiagnostics`。
+- 点击命中边界是硬规则：全屏遮罩背景不能是 `Button`，App 级事件监听不能接管鼠标按下事件；新增 overlay 或 AppKit 桥接时必须确认不会生成覆盖全窗的 `AXButton` 或提前改写 first responder。
+- `Views/` 不直接启动外部进程，不直接读写项目 JSON，不直接枚举素材库目录。View 可以发起用户意图，但执行必须落到 Store 或后续独立 service。
+- 外部副作用要收敛：`Process()`、`UserDefaults.standard`、`NotificationCenter.default`、项目隐藏 JSON 读写都必须有明确 owner。短命令执行当前 owner 是 `ExternalProcessRunner.swift`；项目隐藏 JSON 路径和基础读写当前 owner 是 `ProjectRepository.swift`；`UserDefaults.standard` 当前唯一 owner 是 `AppSettings.swift`；SwiftUI `@AppStorage` 的 key 也必须来自 `AppSettings.Key`；自定义 `lapianBao*` App 事件当前唯一 owner 是 `AppEventBus.swift`。新增使用点前先看 `Tools/regression_checks.py` 是否允许。
+
+### 4.5.2 自动检查边界
+
+`Tools/regression_checks.py` 是轻量架构护栏，不替代真实测试。它当前检查：
+
+- 启动、窗口、快捷键、场景识别、音乐识别、字幕导出和外部服务自检等已踩坑规则。
+- 核心文件体量上限，防止 `LibraryStore.swift`、`ContentView.swift`、`LapianBaoApp.swift`、`PreviewController.swift` 和大 View/Store 文件继续无声膨胀。
+- 短命令 `Process()` 必须走 `ExternalProcessRunner`；少量直接 `Process()` 只允许暂留在需要流式进度、可取消下载或代理进程的已知边界。
+- `UserDefaults.standard` 只能出现在 `AppSettings.swift`；`@AppStorage` 必须使用 `AppSettings.Key.*`，不要重新散落裸字符串 key。
+- 自定义 `lapianBao*` 通知只能出现在 `AppEventBus.swift`；其他 `NotificationCenter.default` 使用点只能保留在 AppKit 窗口观察或局部 `AVPlayerItemDidPlayToEndTime` 观察边界。
+- `.lapianbao*.json` 和 `.lapianbaotags.json` 这类项目隐藏 JSON 文件名只能出现在 `ProjectRepository.swift`，其他模块通过 repository 取 URL 或调用读写 helper。
+- 交互命中检查会拦截 App 级鼠标事件监听、AppDelegate 中的 `makeFirstResponder(nil)` 鼠标焦点重置，以及导入遮罩退回全窗口 `Button` 的写法。
+
+每次架构拆分后，同步更新本文和 `Tools/regression_checks.py`。如果脚本误拦，需要先确认是不是职责边界真的变了，再调整白名单。
+
+### 4.5.3 推荐拆分顺序
+
+第一阶段只抽副作用，不改 UI 和数据结构：
+
+1. `AppSettings`：集中 `UserDefaults` key、默认值、读写和迁移。当前已完成第一轮收拢，后续新增偏好项继续先加到 `AppSettings.Key`。
+2. `AppEventBus`：集中 `.lapianBaoSeekRequest`、`.lapianBaoPausePreviewRequest`、`.lapianBaoMusicPreviewStarted` 等通知。当前已完成第一轮收拢，后续新增 App 级事件继续先加到 `AppEventBus`。
+3. `ExternalProcessRunner`：集中短命令 `Process` 启动、输出读取、取消、超时和错误描述。当前已完成第一轮收拢；下载/转码进度流和反向播放代理仍保留在原边界，后续按行为测试逐个迁移。
+4. `ProjectRepository`：集中 `.lapianbao_project.json`、`.lapianbaotags.json`、`.lapianbao_sources.json`、`.lapianbao_scene_cuts.json`、waveform/video/resource cache 和 IG/XHS 导入基线等项目隐藏 JSON 路径与基础读写。当前已完成第一轮收拢，网络 API 响应解析仍留在对应 feature。
+5. `ToolLocator`：集中 ffmpeg、yt-dlp、Python、whisper、TransNet、音乐识别脚本路径查找。
+
+第二阶段再把 `LibraryStore` 退成门面：
+
+- `VideoLibraryFeature`：素材扫描、标签、排序、视频删除、素材库授权。
+- `RemoteImportFeature`：远程导入队列、平台识别、下载、任务状态。
+- `TimelineMediaFeature`：波形、帧带、批注、截图、声音片段。
+- `SceneDetectionFeature`：TransNetV2、场景缓存。
+- `TranscriptFeature`：Whisper 转写、字幕导出、内容节点时间线。
+- `MusicFeature`：音乐识别、音乐下载、本地音乐/音频资产、波形。
+- `AssetExportFeature`：图片、音频、字幕、音乐导出目录和索引。
 
 ## 5. 数据保存与文件约定
 
@@ -235,7 +287,7 @@ Rail 选中态不再使用外部包围高亮；图标本身变为白色，未选
 
 - 主页时间线显示均匀帧带或场景代表帧带。
 - 可以截图当前帧，保存为 `SampledFrame(kind: .screenshot)`。
-- 场景识别优先使用 TransNetV2，失败时有本地画面变化检测回退。
+- 场景识别使用 TransNetV2。
 - 场景网格可显示切点代表帧，点击回到原视频时间。
 - 画面工作区可查看已收集图片、亮度直方图、色卡，并用本机 Ollama 视觉模型分析。
 
@@ -354,9 +406,10 @@ static let railWidth: CGFloat = 56
 static let railIconInset: CGFloat = 8
 static let railButtonHeight: CGFloat = 34
 static let railIconBoxSize: CGFloat = 24
+static let railIconAlignmentOffsetX: CGFloat = -2.5
 static let railButtonVisualOffsetX: CGFloat = 3.5
 static let railSelectionGuideX: CGFloat = railIconInset + railButtonVisualOffsetX
-static let railIconVisualGuideX: CGFloat = 37
+static let railIconVisualGuideX: CGFloat = (railWidth - railIconBoxSize) / 2
 static let libraryContentInset: CGFloat = 14
 static let libraryToolbarElementGap: CGFloat = 8
 static let libraryToolbarVisualGap: CGFloat = 14
@@ -367,22 +420,24 @@ static let libraryToolbarButtonGap: CGFloat = libraryToolbarElementGap
 static let libraryToolbarSearchMinWidth: CGFloat = 80
 static let libraryToolbarSearchWidth: CGFloat = 131
 static let libraryToolbarSearchHeight: CGFloat = 26
-static let libraryDateDividerTopInset: CGFloat = 3
-static let libraryDateDividerBottomInset: CGFloat = 17
+static let libraryDateDividerTopInset: CGFloat = 10
+static let libraryDateDividerBottomInset: CGFloat = 10
+static let libraryHeaderDateDividerTopInset: CGFloat = 3
+static let libraryHeaderDateDividerBottomInset: CGFloat = 17
 static let previewHeaderTagRowHeight: CGFloat = 12
 static let previewHeaderTopInset: CGFloat = libraryToolbarVisualGap
 static let previewHeaderTitleTagGap: CGFloat = 8
 static let previewHeaderBottomInset: CGFloat = 0
 static let previewHeaderTitleLineHeight: CGFloat = 22
 static let previewHeaderHeight: CGFloat = previewHeaderTopInset + previewHeaderTitleLineHeight + previewHeaderTitleTagGap + previewHeaderTagRowHeight + previewHeaderBottomInset
-static let trafficLightSize: CGFloat = 14
-static let trafficLightGap: CGFloat = 7
+static let trafficLightSize: CGFloat = 12
+static let trafficLightGap: CGFloat = 5
 static let trafficLightClusterWidth: CGFloat = trafficLightSize * 3 + trafficLightGap * 2
 static let libraryToolbarTop: CGFloat = libraryToolbarVisualGap
 static let railTopChromeHeight: CGFloat = libraryToolbarTop + libraryToolbarHeight
 static let trafficLightGuideX: CGFloat = railIconVisualGuideX
 static let trafficLightGuideY: CGFloat = libraryToolbarTop + (libraryToolbarHeight - trafficLightSize) / 2
-static let libraryToolbarLeadingInset: CGFloat = 26.5
+static let libraryToolbarLeadingInset: CGFloat = libraryContentInset
 static let libraryToolbarTrailingInset: CGFloat = libraryContentInset
 static let settingsRailWidth: CGFloat = max(railWidth, trafficLightGuideX + trafficLightClusterWidth)
 static let timelineLaneHeight: CGFloat = 100
@@ -407,15 +462,16 @@ static let previewExportPanelPadding: CGFloat = 10
 
 - `libraryToolbarTop = 14`。
 - `railTopChromeHeight = 40`，来自 `14 + 26`。
-- `libraryContentInset = 14`，素材网格左右内边距和素材工具栏右内边距共用同一基线。
+- `libraryContentInset = 14`，素材网格左右内边距和素材工具栏左右内边距共用同一基线；不要为了窗口按钮位置改动它。
 - `libraryToolbarElementGap = 8`，顶部工具条中搜索框和图标按钮之间共用的视觉间距。
-- 主页工具条左 padding 使用 `libraryToolbarLeadingInset = 26.5`，右 padding 使用 `libraryToolbarTrailingInset = 14`；搜索框为弹性宽度，最右排序按钮槽位右缘和素材卡片右边线共线。
-- 日期分割线使用 `libraryDateDividerTopInset = 3` 和 `libraryDateDividerBottomInset = 17`，总高度不变，只把两侧风格线抬到左侧主页图标可见上沿和右侧视频预览框上沿同一条 y 线。
-- `trafficLightGuideX = 37`，来自 `railIconVisualGuideX`，让红黄绿按钮左缘和左侧 rail 图标的实际视觉左缘对齐；搜索框不跟随该值继续右移，避免绿点到搜索框的间距被拉大。
-- `trafficLightGuideY = 20`，来自 `14 + (26 - 14) / 2`，让放大的窗口按钮与顶部工具条垂直居中。
-- `trafficLightClusterWidth = 56`，来自 `14 * 3 + 7 * 2`。
+- 主页、画面、声音、音乐等媒体工作区的左上角工具条统一使用 `libraryToolbarLeadingInset = libraryContentInset = 14` 和 `libraryToolbarTrailingInset = 14`；搜索框左缘、下方内容卡片/条目左边线共线，最右侧工具按钮槽位右缘和下方内容卡片/条目右边线共线。
+- 日期分割器默认使用 `libraryDateDividerTopInset = 10` 和 `libraryDateDividerBottomInset = 10`，让分组之间的线条上下留白对称；列表最上方那条日期分割器单独使用 `libraryHeaderDateDividerTopInset = 3` 和 `libraryHeaderDateDividerBottomInset = 17`，保留头部基准线位置。
+- `trafficLightGuideX = 16`，来自 `railIconVisualGuideX = (56 - 24) / 2`，让红黄绿按钮左缘和侧边栏图标盒子的左缘共线；搜索框仍跟随素材区 `14pt` inset，避免素材区被窗口按钮带偏。
+- `trafficLightGuideY = 21`，来自 `14 + (26 - 12) / 2`，让窗口按钮与顶部工具条垂直居中。
+- `trafficLightClusterWidth = 46`，来自 `12 * 3 + 5 * 2`；窗口按钮组右缘 `16 + 46 = 62`，到搜索框左缘 `56 + 14 = 70` 正好为 `8pt`。
+- `railIconAlignmentOffsetX = -2.5`，只移动侧边栏图标的绘制位置，不改变 rail 宽度、按钮点击区和窗口按钮位置；用于让侧边栏图标视觉左缘贴近红黄绿按钮左缘。
 - `railSelectionGuideX = 11.5`，保留为 rail 的基础光学校正基线；当前红黄绿按钮改用 `railIconVisualGuideX` 对齐侧栏图标实际左缘。
-- `settingsRailWidth = 93`，来自 `max(56, 37 + 56)`。
+- `settingsRailWidth = 62`，来自 `max(56, 16 + 46)`。
 - `previewHeaderHeight = 56`，来自 `14 + 22 + 8 + 12 + 0`。
 - `timelineLaneVisualGap = 7`，来自 `(100 - 24 * 3) / 4`。
 - `timelineLaneContentHeight = 86`，来自 `100 - 7 * 2`。
@@ -608,7 +664,7 @@ libraryToolbarIconTint = Color.white.opacity(0.72)
 - 网络平台下载能力受 `yt-dlp`、平台风控和网络状态影响。
 - 本地模型能力依赖 Ollama 和模型是否已安装。
 - 反向播放代理需要 ffmpeg，且生成代理可能耗时。
-- 场景识别依赖 TransNetV2 环境，失败时才走本地回退。
+- 场景识别依赖 TransNetV2 环境。
 
 ## 11. 本阶段反复问题复盘
 

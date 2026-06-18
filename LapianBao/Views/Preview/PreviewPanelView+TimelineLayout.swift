@@ -65,8 +65,217 @@ extension PreviewPanelView {
         .frame(height: 38)
     }
 
+    func timelineTransportBar(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
+        HStack(spacing: 0) {
+            timelineTransportTimecode(clock: clock)
+                .layoutPriority(1)
+
+            Spacer(minLength: transportSectionSpacing)
+
+            timelineTransportPlaybackControls()
+                .fixedSize(horizontal: true, vertical: false)
+
+            Spacer(minLength: transportSectionSpacing)
+
+            timelineTransportFunctionControls(for: video)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    var transportSectionSpacing: CGFloat { 24 }
+    var transportButtonSpacing: CGFloat { 22 }
+    var transportFunctionButtonSpacing: CGFloat { 18 }
+    var transportButtonSize: CGFloat { 22 }
+
+    func timelineTransportTimecode(clock: PlaybackClockSnapshot) -> some View {
+        Text("\(timelineFrameTimecode(clock.elapsed)) / \(timelineFrameTimecode(controller.duration))")
+            .font(Design.numericFont(size: 15, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.88))
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .frame(height: transportButtonSize, alignment: .leading)
+    }
+
+    func timelineTransportPlaybackControls() -> some View {
+        let isPlaybackHighlighted = activeTransportShortcutFeedback == .playback
+
+        return HStack(spacing: transportButtonSpacing) {
+            TimelineShuttleButton(
+                direction: .backward,
+                size: transportButtonSize,
+                isHighlighted: activeTransportShortcutFeedback == .backward,
+                help: "J 后退一帧；按住连续后退",
+                step: {
+                    flashTransportShortcutFeedback(.backward)
+                    controller.stepFrame(by: -1)
+                },
+                startShuttle: { startKeyboardShuttle(direction: -1) },
+                stopShuttle: { stopKeyboardShuttle() }
+            )
+
+            Button {
+                togglePreviewPlayback()
+                flashTransportShortcutFeedback(.playback)
+            } label: {
+                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white.opacity(isPlaybackHighlighted ? 0.96 : 0.76))
+                    .frame(width: transportButtonSize, height: transportButtonSize)
+                    .contentShape(Rectangle())
+                    .shadow(color: .white.opacity(isPlaybackHighlighted ? 0.32 : 0), radius: 5)
+                    .animation(.easeOut(duration: 0.08), value: isPlaybackHighlighted)
+            }
+            .buttonStyle(.plain)
+            .help(controller.isPlaying ? "暂停" : "播放")
+
+            TimelineShuttleButton(
+                direction: .forward,
+                size: transportButtonSize,
+                isHighlighted: activeTransportShortcutFeedback == .forward,
+                help: "L 前进一帧；按住连续前进",
+                step: {
+                    flashTransportShortcutFeedback(.forward)
+                    controller.stepFrame(by: 1)
+                },
+                startShuttle: { startKeyboardShuttle(direction: 1) },
+                stopShuttle: { stopKeyboardShuttle() }
+            )
+        }
+    }
+
+    func timelineTransportFunctionControls(for video: VideoItem) -> some View {
+        HStack(spacing: transportFunctionButtonSpacing) {
+            timelineTransportIconButton(
+                icon: previewTabIcon(.frames),
+                progress: frameTimelineRecognitionProgress(for: video),
+                isActive: expandedPreviewTab == .frames || activeTransportShortcutFeedback == .framesTimeline,
+                help: expandedPreviewTab == .frames ? "收起画面时间线" : "展开画面时间线"
+            ) {
+                toggleExpanded(.frames)
+                flashTransportShortcutFeedback(.framesTimeline)
+            }
+
+            timelineTransportIconButton(
+                icon: "camera.fill",
+                isActive: activeTransportShortcutFeedback == .screenshot,
+                help: "截取当前帧"
+            ) {
+                libraryStore.captureCurrentFrame(video: video, time: controller.elapsed)
+                flashTransportShortcutFeedback(.screenshot)
+            }
+
+            timelineTransportIconButton(
+                icon: previewTabIcon(.content),
+                progress: contentTimelineRecognitionProgress(for: video),
+                isActive: expandedPreviewTab == .audio || activeTransportShortcutFeedback == .contentTimeline,
+                help: expandedPreviewTab == .audio ? "收起内容时间线" : "展开内容时间线"
+            ) {
+                toggleExpanded(.audio)
+                flashTransportShortcutFeedback(.contentTimeline)
+            }
+
+            timelineTransportSelectionButton(
+                isActive: audioInPoint != nil || activeTransportShortcutFeedback == .io,
+                help: audioSelectionButtonHelp
+            ) {
+                setNextAudioSelectionPoint()
+                flashTransportShortcutFeedback(.io)
+            }
+
+            timelineTransportIconButton(
+                icon: "text.bubble.fill",
+                isActive: isAnnotationPopoverPresented || activeTransportShortcutFeedback == .annotation,
+                help: "添加批注"
+            ) {
+                beginTimelineAnnotation()
+                flashTransportShortcutFeedback(.annotation)
+            }
+        }
+    }
+
+    func timelineTransportIconButton(
+        icon: String,
+        progress: Double? = nil,
+        isActive: Bool = false,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        let isShowingProgress = progress != nil
+        let isHighlighted = isActive || isShowingProgress
+
+        return Button(action: action) {
+            Group {
+                if let progress {
+                    Text(progressPercentText(progress))
+                        .font(Design.numericFont(size: 9.5, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.54)
+                        .monospacedDigit()
+                        .transition(.opacity)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .transition(.opacity)
+                }
+            }
+            .foregroundStyle(isHighlighted ? .white.opacity(0.94) : .white.opacity(0.62))
+            .frame(width: transportButtonSize, height: transportButtonSize)
+            .contentShape(Rectangle())
+            .shadow(color: .white.opacity(isHighlighted ? 0.28 : 0), radius: 4)
+            .animation(.easeOut(duration: 0.08), value: isHighlighted)
+            .animation(.easeOut(duration: 0.12), value: isShowingProgress)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    func frameTimelineRecognitionProgress(for video: VideoItem) -> Double? {
+        guard let progress = libraryStore.sceneDetectionProgress[video.url.path] else { return nil }
+        return normalizedProgressFraction(progress)
+    }
+
+    func contentTimelineRecognitionProgress(for video: VideoItem) -> Double? {
+        guard case let .running(message) = libraryStore.transcriptStatusByVideoPath[video.url.path] else {
+            return nil
+        }
+        return activityProgressValue(from: message) ?? 0
+    }
+
+    func timelineTransportSelectionButton(
+        isActive: Bool = false,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            TimelineRangeSelectionIcon(isActive: isActive)
+                .frame(width: transportButtonSize, height: transportButtonSize)
+                .contentShape(Rectangle())
+                .shadow(color: .white.opacity(isActive ? 0.28 : 0), radius: 4)
+                .animation(.easeOut(duration: 0.08), value: isActive)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    func timelineFrameTimecode(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "--:--:--" }
+        let fps = max(1, Int(controller.frameRate.rounded()))
+        let totalFrames = max(0, Int((seconds * Double(fps)).rounded(.down)))
+        let frame = totalFrames % fps
+        let totalSeconds = totalFrames / fps
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let secs = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d:%02d", hours, minutes, secs, frame)
+        }
+        return String(format: "%02d:%02d:%02d", minutes, secs, frame)
+    }
+
     func videoTagStrip(for video: VideoItem) -> some View {
-        let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
+        let tags = libraryStore.videoTags(for: video)
 
         return ScrollView(.horizontal) {
             HStack(spacing: 4) {
@@ -85,29 +294,21 @@ extension PreviewPanelView {
         Button {
             isVideoTagPopoverPresented = true
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "plus")
-                    .font(.system(size: 8, weight: .bold))
-                    .frame(width: 9, height: Design.previewHeaderTagRowHeight)
-
-                if isVideoTagAddHovered {
-                    Text("添加标签")
-                        .font(.system(size: 9, weight: .semibold))
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
-                }
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, isVideoTagAddHovered ? 5 : 2)
-            .frame(width: isVideoTagAddHovered ? 58 : 14, height: Design.previewHeaderTagRowHeight)
-            .background(.white.opacity(isVideoTagAddHovered ? 0.11 : 0.07))
-            .clipShape(Capsule())
-            .contentShape(Capsule())
+            CenteredPlusGlyph(size: 7.4, thickness: 1.25)
+                .foregroundStyle(.secondary)
+                .frame(
+                    width: Design.previewHeaderTagRowHeight,
+                    height: Design.previewHeaderTagRowHeight,
+                    alignment: .center
+                )
+                .background(.white.opacity(0.07))
+                .clipShape(Circle())
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.16)) {
-                isVideoTagAddHovered = hovering
-            }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
         }
         .help("添加标签")
         .popover(isPresented: $isVideoTagPopoverPresented, arrowEdge: .bottom) {
@@ -116,39 +317,21 @@ extension PreviewPanelView {
     }
 
     func videoTagPopover(for video: VideoItem) -> some View {
-        let tags = libraryStore.tagsByVideoPath[video.url.path, default: []]
+        let tags = libraryStore.videoTags(for: video)
 
-        return VStack(alignment: .leading, spacing: 10) {
-            TagSuggestionGrid(currentTags: tags, suggestedTags: libraryStore.allTags) { tag in
+        return TagEditorSection(
+            domain: .video,
+            tags: tags,
+            suggestedTags: libraryStore.videoTagSuggestions(for: video),
+            chipSize: .compact,
+            onAdd: { tag in
                 libraryStore.addTag(tag, to: video)
+            },
+            onRemove: { tag in
+                libraryStore.removeTag(tag, from: video)
             }
-
-            HStack(spacing: 8) {
-                TextField("添加标签", text: $draftVideoTag)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 160)
-                    .onSubmit {
-                        addDraftVideoTag(to: video)
-                    }
-
-                Button {
-                    addDraftVideoTag(to: video)
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .disabled(draftVideoTag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
+        )
         .padding(12)
-        .frame(width: 260)
-    }
-
-    func addDraftVideoTag(to video: VideoItem) {
-        let tag = draftVideoTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tag.isEmpty else { return }
-        libraryStore.addTag(tag, to: video)
-        draftVideoTag = ""
-        isVideoTagPopoverPresented = false
     }
 
     func timelineStackContainer(
@@ -158,9 +341,26 @@ extension PreviewPanelView {
     ) -> some View {
         let isExpanded = expandedPreviewTab != nil
         let height = isExpanded ? expandedHeight : collapsedHeight
+        let laneAreaHeight = max(
+            previewTimelineLaneHeight,
+            height - previewTimelineTransportHeight - timelineLaneGap
+        )
 
-        return PlaybackClockDrivenView(clock: controller.clock) { clock in
-            compositeTimelineStack(for: video, expandedHeight: height, clock: clock)
+        return PlaybackClockDrivenView(
+            clock: controller.clock,
+            duration: controller.duration,
+            playbackRate: controller.playbackRate,
+            isPlaying: controller.isPlaying
+        ) { clock in
+            VStack(spacing: timelineLaneGap) {
+                timelineTransportBar(for: video, clock: clock)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: previewTimelineTransportHeight)
+
+                compositeTimelineStack(for: video, expandedHeight: laneAreaHeight, clock: clock)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: laneAreaHeight, alignment: .bottom)
+            }
         }
             .frame(maxWidth: .infinity)
             .frame(height: height, alignment: .top)
@@ -194,13 +394,37 @@ extension PreviewPanelView {
 
     var timelineLaneGap: CGFloat { 8 }
 
+    var previewTimelineVisibleTabs: [PreviewTab] {
+        [.frames, .audio]
+    }
+
+    var previewTimelineTransportHeight: CGFloat { 22 }
+
+    var previewTimelineLaneStackTopInset: CGFloat {
+        previewTimelineTransportHeight + timelineLaneGap
+    }
+
+    var previewTimelineLaneHeight: CGFloat {
+        let available = collapsedPreviewTimelineStackHeight - previewTimelineTransportHeight - timelineLaneGap * 2
+        return max(112, available / 2)
+    }
+
+    var previewTimelineLaneContentHeight: CGFloat {
+        timelineLaneContentHeight(for: previewTimelineLaneHeight)
+    }
+
     var timelineLaneOrder: [PreviewTab] {
-        guard let expandedPreviewTab else { return PreviewTab.allCases }
+        guard let expandedPreviewTab else { return previewTimelineVisibleTabs }
+        guard previewTimelineVisibleTabs.contains(expandedPreviewTab) else { return previewTimelineVisibleTabs }
         return [expandedPreviewTab]
     }
 
+    func timelineLaneContentHeight(for laneHeight: CGFloat) -> CGFloat {
+        max(Design.timelineLaneContentHeight, laneHeight - Design.timelineLaneVisualGap * 2)
+    }
+
     func expandedTimelineDetailHeight(for stackHeight: CGFloat) -> CGFloat {
-        max(120, stackHeight - Design.timelineLaneHeight - 16)
+        max(120, stackHeight - 16)
     }
 
     @ViewBuilder
@@ -291,10 +515,10 @@ extension PreviewPanelView {
 
     func annotationMarkerPoint(in size: CGSize) -> CGPoint {
         let tab = visibleAnnotationSourceTab()
-        let laneHeight = Design.timelineLaneHeight
-        let laneOrigin = expandedPreviewTab == nil
+        let laneHeight = previewTimelineLaneHeight
+        let laneOrigin = previewTimelineLaneStackTopInset + (expandedPreviewTab == nil
             ? CGFloat(timelineIndex(for: tab)) * (laneHeight + timelineLaneGap)
-            : 0
+            : 0)
         let contentFrame = timelineContentFrame(in: size, laneOrigin: laneOrigin, laneHeight: laneHeight)
         let progress = min(1, max(0, annotationEditorAnchor.progress))
         let x: CGFloat
@@ -321,18 +545,17 @@ extension PreviewPanelView {
         if let expandedPreviewTab, expandedPreviewTab != annotationEditorAnchor.sourceTab {
             return expandedPreviewTab
         }
+        if annotationEditorAnchor.sourceTab == .content {
+            return .audio
+        }
         return annotationEditorAnchor.sourceTab
     }
 
     func timelineContentFrame(in size: CGSize, laneOrigin: CGFloat, laneHeight: CGFloat) -> CGRect {
         let horizontalPadding: CGFloat = 8
-        let headerSpacing: CGFloat = 8
-        let minX = horizontalPadding + Design.timelineLaneButtonSize + headerSpacing
+        let minX = horizontalPadding
         let maxX = max(minX + 1, size.width - horizontalPadding)
-        let sideButtonCount: CGFloat = 3
-        let sideButtonsHeight = Design.timelineLaneButtonSize * sideButtonCount
-        let visualGap = max(Design.timelineLaneVisualGap, (laneHeight - sideButtonsHeight) / (sideButtonCount + 1))
-        let contentHeight = max(Design.timelineLaneContentHeight, laneHeight - visualGap * 2)
+        let contentHeight = timelineLaneContentHeight(for: laneHeight)
         let minY = laneOrigin + max(0, (laneHeight - contentHeight) / 2)
 
         return CGRect(x: minX, y: minY, width: maxX - minX, height: contentHeight)
@@ -365,7 +588,7 @@ extension PreviewPanelView {
         switch tab {
         case .frames: return 0
         case .audio: return 1
-        case .content: return 2
+        case .content: return 1
         }
     }
 
@@ -376,7 +599,13 @@ extension PreviewPanelView {
         detailHeight: CGFloat,
         clock: PlaybackClockSnapshot
     ) -> some View {
-        timelineLaneForTab(tab, for: video, detailHeight: detailHeight, clock: clock)
+        timelineLaneForTab(
+            tab,
+            for: video,
+            detailHeight: detailHeight,
+            regularLaneHeight: previewTimelineLaneHeight,
+            clock: clock
+        )
             .frame(height: timelineSlotHeight(for: tab, detailHeight: detailHeight), alignment: .top)
             .clipped()
             .zIndex(timelineLaneZIndex(for: tab))
@@ -385,14 +614,14 @@ extension PreviewPanelView {
 
     func timelineSlotHeight(for tab: PreviewTab, detailHeight: CGFloat) -> CGFloat {
         if expandedPreviewTab == tab {
-            return Design.timelineLaneHeight + detailHeight + 16
+            return detailHeight + 16
         }
 
         if expandedPreviewTab != nil {
             return Design.collapsedTimelineLaneHeight
         }
 
-        return Design.timelineLaneHeight
+        return previewTimelineLaneHeight
     }
 
     var timelineFadeAnimation: Animation {
@@ -409,7 +638,7 @@ extension PreviewPanelView {
 
     func timelineLaneZIndex(for tab: PreviewTab) -> Double {
         if expandedPreviewTab == tab { return 10 }
-        return Double(PreviewTab.allCases.count - timelineIndex(for: tab))
+        return Double(previewTimelineVisibleTabs.count - timelineIndex(for: tab))
     }
 
     func timelineLaneTransition(for tab: PreviewTab) -> AnyTransition {
@@ -449,70 +678,35 @@ extension PreviewPanelView {
         case .frames:
             timelineLane(
                 tab: .frames,
-                icon: previewTabIcon(.frames),
-                accent: previewTabAccent(.frames),
                 detailHeight: detailHeight,
                 regularLaneHeight: regularLaneHeight,
-                actions: {
-                    trackHeaderButton(icon: "camera.fill", help: "截取当前帧") {
-                        libraryStore.captureCurrentFrame(video: video, time: controller.elapsed)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    trackHeaderButton(icon: "text.bubble.fill", help: "添加批注") {
-                        beginAnnotation(.frame, sourceTab: .frames)
-                    }
-                },
                 content: {
                     frameTimeline(for: video, clock: clock)
                 },
                 detail: {
-                    timelineDetailContent(.frames, for: video)
+                    frameTimelineDetailContent(
+                        for: video,
+                        activeProgressTick: sceneGridProgressTick(clock.elapsed)
+                    )
                 }
             )
         case .audio:
             timelineLane(
                 tab: .audio,
-                icon: previewTabIcon(.audio),
-                accent: previewTabAccent(.audio),
                 detailHeight: detailHeight,
                 regularLaneHeight: regularLaneHeight,
-                actions: {
-                    audioSelectionActionButton(for: video)
-
-                    Spacer(minLength: 0)
-
-                    trackHeaderButton(icon: "text.bubble.fill", help: "添加声音批注") {
-                        beginAnnotation(.audio, sourceTab: .audio)
-                    }
-                },
                 content: {
                     audioTimeline(for: video, clock: clock)
                 },
                 detail: {
-                    audioTimelineDetailContent(for: video)
+                    contentTimelineDetailContent(for: video)
                 }
             )
         case .content:
             timelineLane(
                 tab: .content,
-                icon: previewTabIcon(.content),
-                accent: previewTabAccent(.content),
                 detailHeight: detailHeight,
                 regularLaneHeight: regularLaneHeight,
-                actions: {
-                    trackHeaderButton(icon: "square.and.arrow.up", help: "导出字幕") {
-                        exportCurrentTranscript(for: video)
-                    }
-                    .disabled(libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []].isEmpty)
-
-                    Spacer(minLength: 0)
-
-                    trackHeaderButton(icon: "text.bubble.fill", help: "添加内容批注") {
-                        beginAnnotation(.content, sourceTab: .content)
-                    }
-                },
                 content: {
                     contentTimeline(for: video, clock: clock)
                 },
@@ -531,22 +725,15 @@ extension PreviewPanelView {
         }
     }
 
-    func previewTabAccent(_ tab: PreviewTab) -> Color {
-        switch tab {
-        case .frames: return Design.captureFrameAccent
-        case .audio: return Design.annotationAccent
-        case .content: return Design.annotationAccent
-        }
+    func sceneGridProgressTick(_ elapsed: Double) -> Double {
+        guard elapsed.isFinite else { return 0 }
+        return (elapsed * 12).rounded() / 12
     }
 
-
-    func timelineLane<Content: View, Actions: View, Detail: View>(
+    func timelineLane<Content: View, Detail: View>(
         tab: PreviewTab,
-        icon: String,
-        accent: Color,
         detailHeight: CGFloat = Design.expandedTimelineDetailHeight,
         regularLaneHeight: CGFloat? = nil,
-        @ViewBuilder actions: () -> Actions,
         @ViewBuilder content: () -> Content,
         @ViewBuilder detail: () -> Detail
     ) -> some View {
@@ -555,23 +742,20 @@ extension PreviewPanelView {
         let laneHeight = isCollapsed ? Design.collapsedTimelineLaneHeight : (regularLaneHeight ?? Design.timelineLaneHeight)
 
         return VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 8) {
-                trackHeader(tab: tab, icon: icon, accent: accent, isExpanded: isExpanded, isCollapsed: isCollapsed, actions: actions)
+            if !isExpanded {
+                ZStack {
+                    if !isCollapsed {
+                        let contentHeight = timelineLaneContentHeight(for: laneHeight)
 
-                if !isCollapsed {
-                    let sideButtonCount: CGFloat = 3
-                    let sideButtonsHeight = Design.timelineLaneButtonSize * sideButtonCount
-                    let visualGap = max(Design.timelineLaneVisualGap, (laneHeight - sideButtonsHeight) / (sideButtonCount + 1))
-                    let contentHeight = max(Design.timelineLaneContentHeight, laneHeight - visualGap * 2)
-
-                    content()
-                        .frame(maxWidth: .infinity)
-                        .frame(height: contentHeight)
-                        .frame(maxHeight: .infinity, alignment: .center)
+                        content()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: contentHeight)
+                            .frame(maxHeight: .infinity, alignment: .center)
+                    }
                 }
+                .frame(height: laneHeight)
+                .padding(.horizontal, 8)
             }
-            .frame(height: laneHeight)
-            .padding(.horizontal, 8)
 
             if isExpanded {
                 ZStack {
@@ -584,8 +768,7 @@ extension PreviewPanelView {
                 .frame(maxWidth: .infinity)
                 .frame(height: detailHeight)
                 .padding(.horizontal, 8)
-                .padding(.top, 0)
-                .padding(.bottom, 8)
+                .padding(.vertical, 8)
                 .clipped()
                 .allowsHitTesting(visibleTimelineDetailTab == tab)
                 .animation(timelineDetailAnimation, value: visibleTimelineDetailTab)
@@ -597,55 +780,6 @@ extension PreviewPanelView {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(.white.opacity(isExpanded ? 0.11 : 0.07), lineWidth: 0.7)
         }
-    }
-
-    func trackHeader<Actions: View>(
-        tab: PreviewTab,
-        icon: String,
-        accent: Color,
-        isExpanded: Bool,
-        isCollapsed: Bool,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-
-            Button {
-                toggleExpanded(tab)
-            } label: {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: Design.timelineLaneButtonSize, height: Design.timelineLaneButtonSize)
-                    .scaleEffect(isExpanded ? 1.08 : 1)
-                    .background {
-                        if isExpanded {
-                            Circle()
-                                .fill(.white.opacity(0.10))
-                                .transition(.opacity.combined(with: .scale(scale: 0.86)))
-                        }
-                    }
-            }
-            .buttonStyle(.plain)
-            .help(isExpanded ? "收起\(tab.rawValue)" : "展开\(tab.rawValue)")
-
-            if !isCollapsed {
-                Spacer(minLength: 0)
-
-                actions()
-                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .center)))
-            }
-
-            Spacer(minLength: 0)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.82))
-        .frame(width: Design.timelineLaneButtonSize)
-        .frame(maxHeight: .infinity)
-    }
-
-    var audioSelectionButtonTitle: String {
-        if audioInPoint == nil || audioOutPoint != nil { return "I" }
-        return "O"
     }
 
     var audioSelectionButtonHelp: String {
@@ -690,48 +824,50 @@ extension PreviewPanelView {
         isExportPanelPresented = true
     }
 
+    func beginTimelineAnnotation() {
+        switch expandedPreviewTab ?? activePreviewTab {
+        case .frames:
+            beginAnnotation(.frame, sourceTab: .frames)
+        case .audio, .content:
+            beginAnnotation(.content, sourceTab: .audio)
+        }
+    }
+
     var displayedAudioOutPoint: Double? {
         if let audioOutPoint { return audioOutPoint }
         guard audioInPoint != nil else { return nil }
         return controller.elapsed
     }
 
-    func trackHeaderButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 10.5, weight: .semibold))
-                .frame(width: Design.timelineLaneButtonSize, height: Design.timelineLaneButtonSize)
-        }
-        .help(help)
-    }
-
-    func trackHeaderTextButton(_ text: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(text)
-                .font(.caption2.weight(.bold).monospaced())
-                .frame(width: Design.timelineLaneButtonSize, height: Design.timelineLaneButtonSize)
-        }
-        .help(help)
-    }
-
-    @ViewBuilder
-    func audioSelectionActionButton(for video: VideoItem) -> some View {
-        if audioInPoint != nil, audioOutPoint != nil {
-            trackHeaderButton(icon: "square.and.arrow.up", help: "导出选区音频") {
-                exportCurrentAudioSelection(for: video)
-            }
-            .disabled(libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
-        } else {
-            trackHeaderTextButton(audioSelectionButtonTitle, help: audioSelectionButtonHelp) {
-                setNextAudioSelectionPoint()
-            }
-        }
-    }
-
 
     func toggleExpanded(_ tab: PreviewTab) {
-        let nextExpandedTab: PreviewTab? = expandedPreviewTab == tab ? nil : tab
+        if expandedPreviewTab == tab {
+            applyExpandedTimeline(nil, activeTab: tab)
+            return
+        }
 
+        if tab == .frames,
+           let video = libraryStore.selectedVideo,
+           shouldDelayFrameTimelineExpansion(for: video) {
+            pendingTimelineExpansionTab = .frames
+            pendingTimelineExpansionVideoPath = video.url.path
+            libraryStore.detectSceneCuts(for: video)
+            return
+        }
+
+        if tab == .audio,
+           let video = libraryStore.selectedVideo,
+           shouldDelayContentTimelineExpansion(for: video) {
+            pendingTimelineExpansionTab = .audio
+            pendingTimelineExpansionVideoPath = video.url.path
+            startContentRecognitionIfNeeded(for: video)
+            return
+        }
+
+        applyExpandedTimeline(tab, activeTab: tab)
+    }
+
+    func applyExpandedTimeline(_ nextExpandedTab: PreviewTab?, activeTab tab: PreviewTab) {
         withAnimation(timelineFadeAnimation) {
             activePreviewTab = tab
             expandedPreviewTab = nextExpandedTab
@@ -745,5 +881,190 @@ extension PreviewPanelView {
         if nextExpandedTab != nil {
             startRecognitionForVisibleTimelineIfNeeded(tab: tab)
         }
+    }
+
+    func shouldDelayFrameTimelineExpansion(for video: VideoItem) -> Bool {
+        let path = video.url.path
+        libraryStore.loadCachedSceneCuts(for: video)
+        return libraryStore.sceneCutsByVideoPath[path] == nil
+    }
+
+    func shouldDelayContentTimelineExpansion(for video: VideoItem) -> Bool {
+        let path = video.url.path
+        if !libraryStore.transcriptSegmentsByVideoPath[path, default: []].isEmpty {
+            return false
+        }
+        if case .failed = libraryStore.transcriptStatusByVideoPath[path] {
+            return false
+        }
+        if case .completed = libraryStore.transcriptStatusByVideoPath[path] {
+            return false
+        }
+        return true
+    }
+
+    func completePendingTimelineExpansionIfReady() {
+        guard
+            let pendingTab = pendingTimelineExpansionTab,
+            let pendingPath = pendingTimelineExpansionVideoPath,
+            let video = libraryStore.selectedVideo,
+            video.url.path == pendingPath
+        else { return }
+
+        switch pendingTab {
+        case .frames:
+            guard
+                libraryStore.sceneDetectionProgress[pendingPath] == nil,
+                libraryStore.sceneCutsByVideoPath[pendingPath] != nil
+            else { return }
+        case .audio:
+            if !libraryStore.transcriptSegmentsByVideoPath[pendingPath, default: []].isEmpty {
+                break
+            }
+            if case .failed = libraryStore.transcriptStatusByVideoPath[pendingPath] {
+                return
+            }
+            guard !timelineTranscriptRecognitionIsRunning(for: pendingPath) else { return }
+        case .content:
+            return
+        }
+
+        pendingTimelineExpansionTab = nil
+        pendingTimelineExpansionVideoPath = nil
+        applyExpandedTimeline(pendingTab, activeTab: pendingTab)
+    }
+
+    func timelineTranscriptRecognitionIsRunning(for path: String) -> Bool {
+        if case .running = libraryStore.transcriptStatusByVideoPath[path] {
+            return true
+        }
+        return false
+    }
+}
+
+private struct TimelineRangeSelectionIcon: View {
+    let isActive: Bool
+
+    var body: some View {
+        let color = Color.white.opacity(isActive ? 0.94 : 0.62)
+
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            let rectWidth = side * 0.66
+            let rectHeight = side * 0.46
+            let handleWidth = max(1.4, side * 0.07)
+            let handleHeight = side * 0.66
+
+            ZStack {
+                RoundedRectangle(cornerRadius: side * 0.08, style: .continuous)
+                    .stroke(
+                        color,
+                        style: StrokeStyle(
+                            lineWidth: max(1.2, side * 0.07),
+                            dash: [side * 0.14, side * 0.09],
+                            dashPhase: side * 0.02
+                        )
+                    )
+                    .frame(width: rectWidth, height: rectHeight)
+
+                Capsule()
+                    .fill(color)
+                    .frame(width: handleWidth, height: handleHeight)
+                    .offset(x: -rectWidth / 2)
+
+                Capsule()
+                    .fill(color)
+                    .frame(width: handleWidth, height: handleHeight)
+                    .offset(x: rectWidth / 2)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct TimelineShuttleButton: View {
+    enum Direction {
+        case backward
+        case forward
+    }
+
+    let direction: Direction
+    let size: CGFloat
+    let isHighlighted: Bool
+    let help: String
+    let step: () -> Void
+    let startShuttle: () -> Void
+    let stopShuttle: () -> Void
+
+    @State private var isPressing = false
+    @State private var didStartShuttle = false
+    @State private var holdTask: Task<Void, Never>?
+
+    var body: some View {
+        let isActive = isPressing || isHighlighted
+
+        Image(systemName: icon)
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(.white.opacity(isActive ? 0.96 : 0.62))
+            .frame(width: size, height: size)
+            .contentShape(Rectangle())
+            .shadow(color: .white.opacity(isActive ? 0.32 : 0), radius: 5)
+            .animation(.easeOut(duration: 0.08), value: isActive)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        beginPressIfNeeded()
+                    }
+                    .onEnded { _ in
+                        endPress()
+                    }
+            )
+            .onDisappear {
+                cancelHold()
+                if didStartShuttle {
+                    stopShuttle()
+                }
+                isPressing = false
+                didStartShuttle = false
+            }
+            .help(help)
+            .accessibilityLabel(Text(help))
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private var icon: String {
+        switch direction {
+        case .backward: return "backward.fill"
+        case .forward: return "forward.fill"
+        }
+    }
+
+    private func beginPressIfNeeded() {
+        guard !isPressing else { return }
+        isPressing = true
+        didStartShuttle = false
+        holdTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled, isPressing else { return }
+            didStartShuttle = true
+            startShuttle()
+        }
+    }
+
+    private func endPress() {
+        cancelHold()
+        if didStartShuttle {
+            stopShuttle()
+        } else {
+            step()
+        }
+        isPressing = false
+        didStartShuttle = false
+    }
+
+    private func cancelHold() {
+        holdTask?.cancel()
+        holdTask = nil
     }
 }

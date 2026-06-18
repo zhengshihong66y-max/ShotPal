@@ -14,7 +14,6 @@ import UniformTypeIdentifiers
 
 extension ContentView {
     func videoTile(_ video: VideoItem) -> some View {
-        let path = video.url.path
         let isSelected = libraryStore.selectedVideo == video
 
         return LibraryVideoTile(
@@ -23,9 +22,8 @@ extension ContentView {
             thumbnailImage: thumbnailImage(for: video),
             durationText: durationTextIfReady(for: video),
             sourcePlatform: sourcePlatformName(for: video),
-            tags: libraryStore.tagsByVideoPath[path, default: []],
-            suggestedTags: libraryStore.allTags,
-            analysisItems: analysisMenuItems(for: video),
+            tags: libraryStore.videoTags(for: video),
+            suggestedTags: libraryStore.videoTagSuggestions(for: video),
             isSelected: isSelected,
             onSelect: {
                 libraryStore.selectVideo(video, autoplay: true)
@@ -36,12 +34,6 @@ extension ContentView {
             onRemoveTag: { tag in
                 libraryStore.removeTag(tag, from: video)
             },
-            onRunAnalysis: { kind in
-                runAnalysis(kind, for: video)
-            },
-            onDeleteAnalysis: { kind in
-                deleteAnalysis(kind, for: video)
-            },
             onDelete: {
                 libraryStore.removeVideo(video)
             },
@@ -49,7 +41,7 @@ extension ContentView {
         )
         .equatable()
         .onAppear {
-            libraryStore.loadMetadataIfNeeded(for: video, priority: .userInitiated)
+            libraryStore.queueMetadataLoadIfNeeded(for: video, allowThumbnailGeneration: true)
         }
     }
 
@@ -69,6 +61,7 @@ extension ContentView {
         let sceneCutCount = libraryStore.sceneRecognitionCutCount(for: video)
         let hasSceneRecognitionResult = sceneCutCount != nil
         let sceneProgress = libraryStore.sceneDetectionProgress[path]
+        let sceneError = libraryStore.sceneDetectionErrorByVideoPath[path]
         let musics = libraryStore.musicsByVideoPath[path, default: []]
         let musicStatus = libraryStore.musicDetectionStatusByVideoPath[path] ?? .idle
 
@@ -88,10 +81,10 @@ extension ContentView {
                 title: "画面",
                 icon: "rectangle.on.rectangle",
                 detail: sceneCutCount.map { "\($0) 个剪辑点" } ?? "暂无场景",
-                status: sceneProgress.map { "分析中 \(progressPercentText($0))" } ?? (hasSceneRecognitionResult ? "已完成" : "空闲"),
-                tone: sceneProgress == nil ? (hasSceneRecognitionResult ? .completed : .idle) : .running,
-                canRun: sceneProgress == nil && !hasSceneRecognitionResult,
-                canDelete: hasSceneRecognitionResult || sceneProgress != nil
+                status: sceneProgress.map { "分析中 \(progressPercentText($0))" } ?? (sceneError == nil ? (hasSceneRecognitionResult ? "已完成" : "空闲") : "失败"),
+                tone: sceneProgress == nil ? (sceneError == nil ? (hasSceneRecognitionResult ? .completed : .idle) : .failed) : .running,
+                canRun: sceneProgress == nil,
+                canDelete: hasSceneRecognitionResult || sceneProgress != nil || sceneError != nil
             ),
             VideoAnalysisMenuItem(
                 kind: .music,
@@ -111,7 +104,7 @@ extension ContentView {
         case .transcript:
             libraryStore.transcribe(video: video)
         case .scene:
-            libraryStore.detectSceneCuts(for: video)
+            libraryStore.detectSceneCuts(for: video, force: true)
         case .music:
             libraryStore.detectMusic(for: video)
         }

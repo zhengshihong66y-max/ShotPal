@@ -16,6 +16,7 @@ final class AppStartupCoordinator {
     private let chooseFolderAction: Selector
     private let installPreviewKeyboardMonitor: () -> Void
     private var didCompleteLaunchSetup = false
+    private let libraryRestoreDelay: TimeInterval = 0.75
 
     init(
         libraryStore: LibraryStore,
@@ -45,12 +46,7 @@ final class AppStartupCoordinator {
         StartupDiagnostics.mark(.keyboardMonitorInstalled)
         windowManager.activateApplication()
 
-        libraryStore.prewarmSavedCollectionCookieCache()
-        StartupDiagnostics.mark(.savedCollectionPrewarmScheduled)
-        libraryStore.startDailyExternalServiceSelfCheckIfNeeded()
-        StartupDiagnostics.mark(.externalSelfCheckStarted)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + libraryRestoreDelay) { [weak self] in
             StartupDiagnostics.mark(.libraryRestoreStarted)
             self?.libraryStore.loadLastLibraryForLaunch()
         }

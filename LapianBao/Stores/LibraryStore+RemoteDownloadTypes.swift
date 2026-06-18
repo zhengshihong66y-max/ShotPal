@@ -28,6 +28,8 @@ extension LibraryStore {
         var playlistUploaderID: String?
         var artist: String?
         var albumArtist: String?
+        var thumbnail: String?
+        var thumbnails: [YTDLPThumbnail]?
         var ext: String?
         var vcodec: String?
         var duration: Double?
@@ -37,7 +39,7 @@ extension LibraryStore {
 
         enum CodingKeys: String, CodingKey {
             case id, title, description, uploader, channel, creator, artist
-            case ext, vcodec, duration, formats
+            case ext, vcodec, duration, formats, thumbnail, thumbnails
             case uploaderID = "uploader_id"
             case channelID = "channel_id"
             case playlistUploader = "playlist_uploader"
@@ -54,18 +56,30 @@ extension LibraryStore {
                 creator,
                 playlistUploader,
                 artist,
-                albumArtist,
-                uploaderID,
-                channelID,
-                playlistUploaderID
+                albumArtist
             ]
-            .compactMap { normalizedImportTag($0 ?? "") }
+            .compactMap { normalizedSourceAuthorName($0 ?? "") }
             .first
         }
 
         var expectedDownloadPartCount: Int? {
             guard let count = requestedFormats?.count, count > 0 else { return nil }
             return min(max(count, 1), 3)
+        }
+
+        var bestThumbnailURL: URL? {
+            var candidates: [String] = []
+            if let thumbnail {
+                candidates.append(thumbnail)
+            }
+            candidates += Array((thumbnails ?? []).compactMap(\.url).reversed())
+            return candidates
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .compactMap(URL.init(string:))
+                .first { url in
+                    guard let scheme = url.scheme?.lowercased() else { return false }
+                    return scheme == "http" || scheme == "https"
+                }
         }
 
         var isLikelyVideo: Bool {
@@ -97,6 +111,10 @@ extension LibraryStore {
         enum CodingKeys: String, CodingKey {
             case formatID = "format_id"
         }
+    }
+
+    nonisolated struct YTDLPThumbnail: Decodable {
+        var url: String?
     }
 
     nonisolated struct YTDLPPlaylistEntry: Decodable {
@@ -150,6 +168,18 @@ extension LibraryStore {
         var url: URL
         var authorName: String?
         var sourceTitle: String? = nil
+    }
+
+    nonisolated struct RemoteImportCandidateMetadata: Sendable {
+        var title: String?
+        var authorName: String?
+        var thumbnailData: Data?
+
+        var hasAnyValue: Bool {
+            title?.isEmpty == false
+                || authorName?.isEmpty == false
+                || thumbnailData != nil
+        }
     }
 
     nonisolated final class YTDLPProgressTracker: @unchecked Sendable {

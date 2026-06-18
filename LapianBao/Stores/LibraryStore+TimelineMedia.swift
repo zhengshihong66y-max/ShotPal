@@ -13,12 +13,14 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension LibraryStore {
-    func toggleSidebar() {
-        isSidebarVisible.toggle()
+    nonisolated struct MusicLookupMetadata: Sendable {
+        var tags: [String]
+        var duration: Double
     }
 
     func loadWaveform(for video: VideoItem) {
         let path = video.url.path
+        noteTransientMediaAccess(for: path)
         guard waveformTasks[path] == nil else { return }
         if let samples = waveformSamplesByVideoPath[path], samples.count >= Self.waveformSampleCount {
             return
@@ -28,14 +30,59 @@ extension LibraryStore {
             let samples = await Self.makeWaveformSamples(for: video.url, sampleCount: Self.waveformSampleCount) ?? []
             guard !Task.isCancelled else { return }
 
+            self?.noteTransientMediaAccess(for: path)
             self?.waveformSamplesByVideoPath[path] = samples
             self?.waveformTasks[path] = nil
+            PerformanceDiagnostics.mark("waveform ready", path: path)
         }
     }
 
-    func prepareAudioClipWaveformsIfNeeded() {
-        for clip in audioClips {
-            loadAudioClipWaveformIfNeeded(clip)
+    func seedMusicFileDurations(from assets: [LocalMusicAsset]) {
+        var durations = musicFileDurationsByPath
+        var didChange = false
+        for asset in assets where asset.duration.isFinite && asset.duration > 0 {
+            let key = Self.normalizedLocalFilePath(asset.filePath)
+            if durations[key] != asset.duration {
+                durations[key] = asset.duration
+                didChange = true
+            }
+        }
+        if didChange {
+            musicFileDurationsByPath = durations
+        }
+    }
+
+    func ensureMusicFileDurationIfNeeded(filePath: String, knownDuration: Double? = nil) {
+        let key = Self.normalizedLocalFilePath(filePath)
+
+        if let knownDuration, knownDuration.isFinite, knownDuration > 0 {
+            if musicFileDurationsByPath[key] != knownDuration {
+                musicFileDurationsByPath[key] = knownDuration
+            }
+            return
+        }
+
+        if let duration = musicFileDurationsByPath[key], duration.isFinite, duration > 0 {
+            return
+        }
+        guard musicFileDurationTasks[key] == nil,
+              FileManager.default.fileExists(atPath: filePath)
+        else { return }
+
+        let fileURL = URL(fileURLWithPath: filePath)
+        musicFileDurationTasks[key] = Task.detached(priority: .utility) { [weak self, key, fileURL] in
+            let asset = AVURLAsset(url: fileURL)
+            let duration = await Self.durationSeconds(for: asset) ?? 0
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.musicFileDurationTasks[key] = nil
+                guard duration.isFinite, duration > 0,
+                      FileManager.default.fileExists(atPath: fileURL.path)
+                else { return }
+                self.musicFileDurationsByPath[key] = duration
+            }
         }
     }
 
@@ -50,31 +97,6 @@ extension LibraryStore {
 
         pendingAudioClipWaveformIDs.append(clip.id)
         pendingAudioClipWaveformIDSet.insert(clip.id)
-        startQueuedAudioClipWaveforms()
-    }
-
-    func prioritizeAudioClipWaveforms(_ clips: [AudioClipItem]) {
-        var seen = Set<UUID>()
-        let candidateIDs = clips.compactMap { clip -> UUID? in
-            guard seen.insert(clip.id).inserted,
-                  !hasCurrentAudioClipWaveform(clip),
-                  audioClipWaveformTasks[clip.id] == nil
-            else { return nil }
-            return clip.id
-        }
-        guard !candidateIDs.isEmpty else { return }
-
-        let candidateIDSet = Set(candidateIDs)
-        pendingAudioClipWaveformIDs.removeAll { id in
-            if candidateIDSet.contains(id) {
-                pendingAudioClipWaveformIDSet.remove(id)
-                return true
-            }
-            return false
-        }
-
-        pendingAudioClipWaveformIDs.insert(contentsOf: candidateIDs, at: 0)
-        pendingAudioClipWaveformIDSet.formUnion(candidateIDs)
         startQueuedAudioClipWaveforms()
     }
 
@@ -162,6 +184,58 @@ extension LibraryStore {
                         self.scheduleLocalWaveformCacheSave()
                     }
                 }
+            }
+        }
+    }
+
+    func ensureLocalMusicWaveformIfNeeded(_ asset: LocalMusicAsset) {
+        let path = asset.filePath
+        if localMusicWaveformSamplesByPath[path]?.count == Self.localMusicWaveformSampleCount {
+            return
+        }
+        guard localMusicWaveformTasks[path] == nil,
+              FileManager.default.fileExists(atPath: path)
+        else { return }
+
+        let fileURL = URL(fileURLWithPath: path)
+        let libraryURL = libraryURL
+        let fileSize = asset.fileSize
+        let modifiedAt = asset.modifiedAt
+
+        localMusicWaveformTasks[path] = Task.detached(priority: .utility) { [weak self, fileURL, path, libraryURL, fileSize, modifiedAt] in
+            let samples = await Self.makeWaveformSamples(
+                for: fileURL,
+                sampleCount: Self.localMusicWaveformSampleCount
+            ) ?? []
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.localMusicWaveformTasks[path] = nil
+
+                guard let currentAsset = self.localMusicAssets.first(where: { $0.filePath == path }),
+                      currentAsset.fileSize == fileSize,
+                      currentAsset.modifiedAt == modifiedAt
+                else { return }
+
+                self.localMusicWaveformSamplesByPath[path] = samples
+                guard samples.count == Self.localMusicWaveformSampleCount,
+                      let libraryURL,
+                      self.libraryURL?.path == libraryURL.path
+                else { return }
+
+                let relativePath = Self.libraryRelativePath(for: fileURL, base: libraryURL)
+                let key = Self.localWaveformCacheKey(kind: "music", relativePath: relativePath)
+                self.localWaveformCacheByKey[key] = LocalWaveformCacheEntry(
+                    kind: "music",
+                    relativePath: relativePath,
+                    fileIdentity: Self.localWaveformFileIdentity(for: fileURL),
+                    fileSize: fileSize,
+                    modificationTime: Self.localWaveformModificationTime(modifiedAt),
+                    sampleCount: Self.localMusicWaveformSampleCount,
+                    samples: samples
+                )
+                self.scheduleLocalWaveformCacheSave()
             }
         }
     }
@@ -256,7 +330,7 @@ extension LibraryStore {
     }
 
     nonisolated static func localWaveformCacheURL(in libraryURL: URL) -> URL {
-        libraryURL.appendingPathComponent(".lapianbao_waveforms.json")
+        ProjectRepository.localWaveformsURL(in: libraryURL)
     }
 
     nonisolated static func localWaveformCacheKey(kind: String, relativePath: String) -> String {
@@ -332,8 +406,7 @@ extension LibraryStore {
     nonisolated static func loadLocalWaveformCache(in libraryURL: URL) -> [String: LocalWaveformCacheEntry] {
         let url = localWaveformCacheURL(in: libraryURL)
         guard
-            let data = try? Data(contentsOf: url),
-            let cache = try? JSONDecoder().decode(LocalWaveformCacheFile.self, from: data),
+            let cache = ProjectRepository.readJSON(LocalWaveformCacheFile.self, from: url),
             cache.version == localWaveformCacheVersion
         else { return [:] }
 
@@ -359,10 +432,11 @@ extension LibraryStore {
             generatedAt: Date(),
             entries: entries
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(cache) else { return }
-        try? data.write(to: localWaveformCacheURL(in: libraryURL), options: .atomic)
+        try? ProjectRepository.writeJSON(
+            cache,
+            to: localWaveformCacheURL(in: libraryURL),
+            encoder: ProjectRepository.prettySortedEncoder
+        )
     }
 
     nonisolated static func isValidLocalWaveformCacheEntry(
@@ -407,16 +481,57 @@ extension LibraryStore {
 
     func loadFrameStrip(for video: VideoItem) {
         let path = video.url.path
-        guard frameStripByVideoPath[path] == nil, frameStripTasks[path] == nil else { return }
+        noteTransientMediaAccess(for: path)
+        if let frames = frameStripByVideoPath[path], !frames.isEmpty,
+           let images = frameStripImagesByVideoPath[path], !images.isEmpty {
+            return
+        }
+        guard frameStripTasks[path] == nil else { return }
 
         frameStripTasks[path] = Task { [weak self] in
             let frames = await Self.makeFrameStrip(for: video.url)
             guard !Task.isCancelled else { return }
 
-            self?.frameStripByVideoPath[path] = frames
-            self?.frameStripImagesByVideoPath[path] = frames.compactMap { NSImage(data: $0) }
-            self?.updateSceneStripImages(for: path)
-            self?.frameStripTasks[path] = nil
+            guard let self else { return }
+            self.noteTransientMediaAccess(for: path)
+            self.frameStripTasks[path] = nil
+
+            guard !frames.isEmpty else {
+                self.finishEmptyFrameStripLoad(for: video, path: path, reason: "empty")
+                return
+            }
+
+            let images = frames.compactMap { NSImage(data: $0) }
+            guard !images.isEmpty else {
+                self.finishEmptyFrameStripLoad(for: video, path: path, reason: "decode-empty")
+                return
+            }
+
+            self.frameStripEmptyRetryCountsByPath.removeValue(forKey: path)
+            self.frameStripByVideoPath[path] = frames
+            self.frameStripImagesByVideoPath[path] = images
+            self.updateSceneStripImages(for: path)
+            PerformanceDiagnostics.mark("frame strip ready", path: path)
+        }
+    }
+
+    func finishEmptyFrameStripLoad(for video: VideoItem, path: String, reason: String) {
+        frameStripByVideoPath.removeValue(forKey: path)
+        frameStripImagesByVideoPath.removeValue(forKey: path)
+        updateSceneStripImages(for: path)
+        PerformanceDiagnostics.mark("frame strip \(reason)", path: path)
+
+        let retryCount = frameStripEmptyRetryCountsByPath[path, default: 0]
+        guard retryCount < Self.frameStripEmptyRetryLimit else { return }
+        frameStripEmptyRetryCountsByPath[path] = retryCount + 1
+        scheduleFrameStripRetry(for: video, delay: Self.frameStripEmptyRetryDelay * Double(retryCount + 1))
+    }
+
+    func scheduleFrameStripRetry(for video: VideoItem, delay: TimeInterval) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.loadFrameStrip(for: video)
         }
     }
 
@@ -459,35 +574,68 @@ extension LibraryStore {
         return await frameTask.value
     }
 
-    func detectSceneCuts(for video: VideoItem) {
+    func detectSceneCuts(for video: VideoItem, force: Bool = false) {
         let path = video.url.path
-        loadCachedSceneCuts(for: video)
+        if !force {
+            loadCachedSceneCuts(for: video)
+        }
         guard
-            sceneCutsByVideoPath[path] == nil,
             sceneDetectionTasks[path] == nil,
             sceneDetectionProgress[path] == nil
         else { return }
+        guard force || sceneCutsByVideoPath[path] == nil else { return }
 
+        if force {
+            sceneThumbnailHydrationTasks[path]?.cancel()
+            sceneThumbnailHydrationTasks[path] = nil
+            sceneThumbnailHydrationNeeded.remove(path)
+        }
+
+        sceneDetectionErrorByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress[path] = 0.0
 
         sceneDetectionTasks[path] = Task { [weak self] in
-            let cuts = await Self.performSceneDetection(for: video.url) { progress in
-                Task { @MainActor in
-                    self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
+            do {
+                let cuts = try await Self.performSceneDetection(for: video.url) { progress in
+                    Task { @MainActor in
+                        self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
+                    }
                 }
-            }
 
-            guard !Task.isCancelled else {
+                guard !Task.isCancelled else {
+                    self?.sceneDetectionProgress[path] = nil
+                    self?.sceneDetectionTasks[path] = nil
+                    return
+                }
+
+                self?.finishSceneDetection(for: video, cuts: cuts)
+                self?.sceneDetectionProgress[path] = nil
+                self?.sceneDetectionTasks[path] = nil
+            } catch is CancellationError {
+                self?.sceneDetectionProgress[path] = nil
+                self?.sceneDetectionTasks[path] = nil
+            } catch {
+                self?.sceneDetectionErrorByVideoPath[path] = Self.sceneDetectionErrorMessage(error)
                 self?.sceneDetectionProgress[path] = nil
                 self?.sceneDetectionTasks[path] = nil
                 return
             }
-
-            self?.setSceneCuts(cuts, for: path)
-            self?.storeSceneCutCache(for: video, cuts: cuts)
-            self?.sceneDetectionProgress[path] = nil
-            self?.sceneDetectionTasks[path] = nil
         }
+    }
+
+    nonisolated static func sceneDetectionErrorMessage(_ error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let message = localizedError.errorDescription {
+            return message
+        }
+        return error.localizedDescription
+    }
+
+    func finishSceneDetection(for video: VideoItem, cuts: [SceneCut]) {
+        let path = video.url.path
+        sceneDetectionErrorByVideoPath.removeValue(forKey: path)
+        setSceneCuts(cuts, for: path)
+        storeSceneCutCache(for: video, cuts: cuts)
     }
 
     func deleteSceneRecognition(for video: VideoItem) {
@@ -502,22 +650,8 @@ extension LibraryStore {
         sceneCutProgressesByVideoPath.removeValue(forKey: path)
         sceneThumbnailVersionsByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress.removeValue(forKey: path)
+        sceneDetectionErrorByVideoPath.removeValue(forKey: path)
         sceneCutCache.removeValue(forKey: relativeVideoPath(for: video.url))
-        saveSceneCutCache()
-    }
-
-    func deleteAllSceneRecognitions() {
-        sceneDetectionTasks.values.forEach { $0.cancel() }
-        sceneDetectionTasks.removeAll()
-        sceneThumbnailHydrationTasks.values.forEach { $0.cancel() }
-        sceneThumbnailHydrationTasks.removeAll()
-        sceneThumbnailHydrationNeeded.removeAll()
-        sceneCutsByVideoPath.removeAll()
-        sceneStripImagesByVideoPath.removeAll()
-        sceneCutProgressesByVideoPath.removeAll()
-        sceneThumbnailVersionsByVideoPath.removeAll()
-        sceneDetectionProgress.removeAll()
-        sceneCutCache.removeAll()
         saveSceneCutCache()
     }
 
@@ -551,23 +685,37 @@ extension LibraryStore {
                     self.sceneBatchJob.status = .running
                     self.sceneBatchJob.currentVideoPath = path
                     self.sceneBatchJob.currentVideoName = video.name
+                    self.sceneDetectionErrorByVideoPath.removeValue(forKey: path)
                     self.sceneDetectionProgress[path] = 0
                     self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
                 }
 
-                let cuts = await Self.performSceneDetection(for: video.url) { [weak self] progress in
-                    Task { @MainActor [weak self] in
-                        self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
-                        self?.updateSceneBatchProgress(completed: completed, currentProgress: progress)
+                do {
+                    let cuts = try await Self.performSceneDetection(for: video.url) { [weak self] progress in
+                        Task { @MainActor [weak self] in
+                            self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
+                            self?.updateSceneBatchProgress(completed: completed, currentProgress: progress)
+                        }
                     }
-                }
 
-                completed += 1
-                await MainActor.run {
-                    self.setSceneCuts(cuts, for: path)
-                    self.storeSceneCutCache(for: video, cuts: cuts)
-                    self.sceneDetectionProgress[path] = nil
-                    self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
+                    completed += 1
+                    await MainActor.run {
+                        self.finishSceneDetection(for: video, cuts: cuts)
+                        self.sceneDetectionProgress[path] = nil
+                        self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
+                    }
+                } catch is CancellationError {
+                    await MainActor.run {
+                        self.sceneDetectionProgress[path] = nil
+                    }
+                    break
+                } catch {
+                    completed += 1
+                    await MainActor.run {
+                        self.sceneDetectionErrorByVideoPath[path] = Self.sceneDetectionErrorMessage(error)
+                        self.sceneDetectionProgress[path] = nil
+                        self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
+                    }
                 }
             }
 
@@ -583,22 +731,10 @@ extension LibraryStore {
         }
     }
 
-    func pauseSceneBatch() {
-        isSceneBatchPaused = true
-        if sceneBatchTask != nil { sceneBatchJob.status = .paused }
-    }
-
     func resumeSceneBatch() {
         guard sceneBatchTask != nil else { return }
         isSceneBatchPaused = false
         sceneBatchJob.status = .running
-    }
-
-    func cancelSceneBatch() {
-        sceneBatchTask?.cancel()
-        sceneBatchTask = nil
-        isSceneBatchPaused = false
-        sceneBatchJob = TranscriptBatchJob()
     }
 
     func updateSceneBatchProgress(completed: Int, currentProgress: Double) {
@@ -609,6 +745,7 @@ extension LibraryStore {
 
     func loadCachedSceneCuts(for video: VideoItem) {
         let path = video.url.path
+        noteTransientMediaAccess(for: path)
         guard
             sceneCutsByVideoPath[path] == nil,
             sceneDetectionTasks[path] == nil,
@@ -622,6 +759,7 @@ extension LibraryStore {
 
     func hydrateSceneThumbnailsIfNeeded(for video: VideoItem) {
         let path = video.url.path
+        noteTransientMediaAccess(for: path)
         guard
             sceneThumbnailHydrationNeeded.contains(path),
             sceneThumbnailHydrationTasks[path] == nil,
@@ -735,14 +873,32 @@ extension LibraryStore {
         return payloads
     }
 
-    static func scenePlaceholderImage() -> NSImage {
-        let size = NSSize(width: 200, height: 113)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor(calibratedWhite: 0.16, alpha: 1).setFill()
-        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
-        image.unlockFocus()
-        return image
+    nonisolated static func scenePlaceholderImage() -> NSImage {
+        let width = 200
+        let height = 113
+        let size = NSSize(width: width, height: height)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return NSImage(size: size)
+        }
+
+        context.setFillColor(CGColor(gray: 0.16, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        guard let image = context.makeImage() else {
+            return NSImage(size: size)
+        }
+        return NSImage(cgImage: image, size: size)
     }
 
     func setSceneCuts(
@@ -750,8 +906,11 @@ extension LibraryStore {
         for path: String,
         needsThumbnailHydration: Bool = false
     ) {
+        noteTransientMediaAccess(for: path)
+        sceneDetectionErrorByVideoPath.removeValue(forKey: path)
         sceneCutsByVideoPath[path] = cuts
-        if needsThumbnailHydration {
+        let shouldHydrateThumbnails = needsThumbnailHydration || cuts.contains { $0.isPlaceholder }
+        if shouldHydrateThumbnails {
             sceneThumbnailHydrationNeeded.insert(path)
         } else {
             sceneThumbnailHydrationNeeded.remove(path)
@@ -767,6 +926,7 @@ extension LibraryStore {
         } else {
             sceneCutProgressesByVideoPath.removeValue(forKey: path)
         }
+        PerformanceDiagnostics.mark("scene cuts set", path: path)
     }
 
     func updateSceneStripImages(for path: String) {
@@ -854,19 +1014,58 @@ extension LibraryStore {
         saveProjectData()
     }
 
-    func deleteSampledFrame(_ frame: SampledFrame) {
+    @discardableResult
+    func deleteSampledFrame(_ frame: SampledFrame) -> Bool {
+        let fileURLs = imageExportURLsToDelete(for: frame, excludingFrameIDs: [frame.id])
+        for url in fileURLs {
+            guard trashLibraryFileIfPresent(url, context: "sampled frame export") else { return false }
+        }
+
         sampledFrames.removeAll { $0.id == frame.id }
         writeFrameIndex()
         saveProjectData()
+        return true
     }
 
-    func deleteAudioClip(_ clip: AudioClipItem) {
+    @discardableResult
+    func deleteAudioClip(_ clip: AudioClipItem) -> Bool {
+        guard trashLibraryFileIfPresent(audioClipFileURL(for: clip), context: "audio clip export") else { return false }
+
         audioClipWaveformTasks[clip.id]?.cancel()
         audioClipWaveformTasks[clip.id] = nil
         pendingAudioClipWaveformIDSet.remove(clip.id)
         pendingAudioClipWaveformIDs.removeAll { $0 == clip.id }
         audioClips.removeAll { $0.id == clip.id }
         saveProjectData()
+        return true
+    }
+
+    @discardableResult
+    func trashLibraryFileIfPresent(_ url: URL?, context: String) -> Bool {
+        guard let url else { return true }
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return true }
+
+        do {
+            try fileManager.trashItem(at: url, resultingItemURL: nil)
+            return true
+        } catch {
+            NSLog("LapianBao failed to move %@ to Trash: %@ %@", context, url.path, String(describing: error))
+            return false
+        }
+    }
+
+    func imageExportURLsToDelete(for frame: SampledFrame, excludingFrameIDs excludedFrameIDs: Set<UUID>) -> [URL] {
+        let baseName = imageExportBaseName(for: frame)
+        let matchingURLs = imageExportURLs(for: frame)
+        guard !matchingURLs.isEmpty else { return [] }
+
+        let remainingRecordCount = sampledFrames.filter {
+            !excludedFrameIDs.contains($0.id) && imageExportBaseName(for: $0) == baseName
+        }.count
+        guard matchingURLs.count > remainingRecordCount else { return [] }
+
+        return Array(matchingURLs.prefix(matchingURLs.count - remainingRecordCount))
     }
 
     func addFrameTag(_ rawTag: String, to frame: SampledFrame) {
@@ -879,6 +1078,20 @@ extension LibraryStore {
         updateFrameTags(frame) { tags in
             tags.removeAll { $0 == tag }
         }
+    }
+
+    @discardableResult
+    func removeFrameTagOrDeleteIfEmpty(_ tag: String, from frame: SampledFrame) -> Bool {
+        let currentFrame = sampledFrame(id: frame.id) ?? frame
+        guard currentFrame.tags.contains(tag) else { return false }
+
+        let remainingTags = currentFrame.tags.filter { $0 != tag }
+        guard remainingTags.isEmpty else {
+            removeFrameTag(tag, from: currentFrame)
+            return false
+        }
+
+        return deleteSampledFrame(currentFrame)
     }
 
     func addAudioTag(_ rawTag: String, to clip: AudioClipItem) {
@@ -905,7 +1118,40 @@ extension LibraryStore {
         }
     }
 
-    func enrichMusicTagsIfNeeded() {
+    func addLocalAudioTag(_ rawTag: String, to asset: LocalAudioAsset) {
+        updateLocalAudioTags(asset) { tags in
+            appendTag(rawTag, to: &tags)
+        }
+    }
+
+    func removeLocalAudioTag(_ tag: String, from asset: LocalAudioAsset) {
+        updateLocalAudioTags(asset) { tags in
+            tags.removeAll { $0 == tag }
+        }
+    }
+
+    func addLocalMusicTag(_ rawTag: String, to asset: LocalMusicAsset) {
+        updateLocalMusicTags(asset) { tags in
+            appendTag(rawTag, to: &tags)
+        }
+    }
+
+    func removeLocalMusicTag(_ tag: String, from asset: LocalMusicAsset) {
+        updateLocalMusicTags(asset) { tags in
+            tags.removeAll { $0 == tag }
+        }
+    }
+
+    func enrichMusicTagsIfNeeded(includeLocalAssets: Bool = true) {
+        sanitizeMusicTagsIfNeeded()
+
+        enrichRecognizedMusicTagsIfNeeded()
+        if includeLocalAssets {
+            enrichLocalMusicAssetTagsIfNeeded()
+        }
+    }
+
+    func enrichRecognizedMusicTagsIfNeeded() {
         let candidates = musicsByVideoPath.flatMap { path, songs in
             songs.map { (path: path, song: $0) }
         }
@@ -915,13 +1161,185 @@ extension LibraryStore {
             guard musicTagEnrichmentTasks[key] == nil else { continue }
 
             musicTagEnrichmentTasks[key] = Task { [weak self] in
-                let tags = await Self.lookupMusicTags(title: candidate.song.title, artist: candidate.song.artist)
+                let metadata = await Self.lookupMusicMetadata(title: candidate.song.title, artist: candidate.song.artist)
                 await MainActor.run {
                     defer { self?.musicTagEnrichmentTasks[key] = nil }
-                    guard !tags.isEmpty else { return }
-                    self?.mergeMusicTags(tags, into: candidate.song, in: candidate.path)
+                    guard !metadata.tags.isEmpty || metadata.duration > 0 else { return }
+                    self?.mergeMusicMetadata(metadata, into: candidate.song, in: candidate.path)
                 }
             }
+        }
+    }
+
+    func enrichLocalMusicAssetTagsIfNeeded() {
+        for asset in localMusicAssets {
+            guard let seed = localMusicEnrichmentSeed(for: asset),
+                  shouldEnrichLocalMusicAsset(asset, seed: seed)
+            else { continue }
+
+            let key = localMusicTagEnrichmentKey(for: asset, title: seed.title, artist: seed.artist)
+            guard musicTagEnrichmentTasks[key] == nil else { continue }
+
+            musicTagEnrichmentTasks[key] = Task { [weak self] in
+                let metadata = await Self.lookupMusicMetadata(title: seed.title, artist: seed.artist)
+                await MainActor.run {
+                    defer { self?.musicTagEnrichmentTasks[key] = nil }
+                    guard !metadata.tags.isEmpty || metadata.duration > 0 else { return }
+                    self?.mergeLocalMusicMetadata(
+                        metadata,
+                        into: asset,
+                        title: seed.title,
+                        artist: seed.artist
+                    )
+                }
+            }
+        }
+    }
+
+    func localMusicEnrichmentSeed(
+        for asset: LocalMusicAsset
+    ) -> (title: String, artist: String, tags: [String])? {
+        if let song = musicsByVideoPath[asset.filePath, default: []].first(where: Self.hasRecognizedTitleAndArtist)
+            ?? musicsByVideoPath[asset.filePath, default: []].first(where: {
+                !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) {
+            return (
+                song.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                song.artist.trimmingCharacters(in: .whitespacesAndNewlines),
+                song.tags
+            )
+        }
+
+        let normalizedPath = Self.normalizedLocalFilePath(asset.filePath)
+        if let job = musicDownloadJobs.last(where: { job in
+            guard let filePath = job.filePath,
+                  Self.normalizedLocalFilePath(filePath) == normalizedPath
+            else { return false }
+            return completedMusicDownloadFileURL(for: job) != nil || FileManager.default.fileExists(atPath: filePath)
+        }),
+           let song = Self.musicRecognitionItem(fromSongKey: job.songKey, tags: asset.tags) {
+            return (
+                song.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                song.artist.trimmingCharacters(in: .whitespacesAndNewlines),
+                song.tags
+            )
+        }
+
+        let title = asset.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        return (title, "", asset.tags)
+    }
+
+    func shouldEnrichLocalMusicAsset(
+        _ asset: LocalMusicAsset,
+        seed: (title: String, artist: String, tags: [String])
+    ) -> Bool {
+        guard !seed.title.isEmpty || !seed.artist.isEmpty else { return false }
+        let existingGenreTags = MusicRecognitionItem.cleanedMusicTags(
+            asset.tags + seed.tags,
+            title: seed.title,
+            artist: seed.artist
+        )
+        return existingGenreTags.isEmpty ||
+            MusicRecognitionItem.hasOnlyFallbackMusicTag(existingGenreTags) ||
+            MusicRecognitionItem.hasOnlyDefaultMusicGenreTag(existingGenreTags) ||
+            asset.duration <= 0
+    }
+
+    func localMusicTagEnrichmentKey(for asset: LocalMusicAsset, title: String, artist: String) -> String {
+        "\(asset.filePath)|local|\(title)|\(artist)"
+    }
+
+    func mergeMusicMetadata(
+        _ metadata: MusicLookupMetadata,
+        into song: MusicRecognitionItem,
+        in videoPath: String
+    ) {
+        guard var songs = musicsByVideoPath[videoPath],
+              let index = songs.firstIndex(where: { Self.musicItemsMatch($0, song) })
+        else { return }
+
+        var updated = songs[index]
+        if !metadata.tags.isEmpty {
+            updated.tags = MusicRecognitionItem.cleanedMusicTags(
+                updated.tags + metadata.tags,
+                title: updated.title,
+                artist: updated.artist
+            )
+        }
+        if updated.duration <= 0, metadata.duration.isFinite, metadata.duration > 0 {
+            updated.duration = metadata.duration
+        }
+
+        guard updated != songs[index] else { return }
+        songs[index] = updated
+        musicsByVideoPath[videoPath] = songs
+        saveProjectData()
+    }
+
+    func mergeLocalMusicMetadata(
+        _ metadata: MusicLookupMetadata,
+        into asset: LocalMusicAsset,
+        title: String,
+        artist: String
+    ) {
+        var didSaveProjectData = false
+
+        if let index = localMusicAssets.firstIndex(where: { $0.filePath == asset.filePath }) {
+            var updatedAssets = localMusicAssets
+            var updated = updatedAssets[index]
+
+            if !metadata.tags.isEmpty {
+                updated.tags = MusicRecognitionItem.cleanedMusicTags(
+                    updated.tags + metadata.tags,
+                    title: title,
+                    artist: artist
+                )
+            }
+            if updated.duration <= 0, metadata.duration.isFinite, metadata.duration > 0 {
+                updated.duration = metadata.duration
+                musicFileDurationsByPath[Self.normalizedLocalFilePath(updated.filePath)] = metadata.duration
+            }
+
+            if updated != updatedAssets[index] {
+                updatedAssets[index] = updated
+                localMusicAssets = updatedAssets
+                persistLocalResourceAssetTags(path: updated.filePath, tags: updated.tags)
+                didSaveProjectData = true
+            }
+        }
+
+        guard var songs = musicsByVideoPath[asset.filePath] else {
+            if !didSaveProjectData {
+                saveProjectData()
+            }
+            return
+        }
+
+        var didUpdateSongs = false
+        for index in songs.indices where Self.musicItem(songs[index], matchesTitle: title, artist: artist) {
+            var updated = songs[index]
+            if !metadata.tags.isEmpty {
+                updated.tags = MusicRecognitionItem.cleanedMusicTags(
+                    updated.tags + metadata.tags,
+                    title: updated.title,
+                    artist: updated.artist
+                )
+            }
+            if updated.duration <= 0, metadata.duration.isFinite, metadata.duration > 0 {
+                updated.duration = metadata.duration
+            }
+            if updated != songs[index] {
+                songs[index] = updated
+                didUpdateSongs = true
+            }
+        }
+
+        if didUpdateSongs {
+            musicsByVideoPath[asset.filePath] = songs
+            saveProjectData()
+        } else if !didSaveProjectData {
+            saveProjectData()
         }
     }
 
@@ -949,21 +1367,134 @@ extension LibraryStore {
 
         var tags = songs[index].tags
         mutate(&tags)
-        songs[index].tags = tags.sorted()
+        songs[index].tags = MusicRecognitionItem.cleanedMusicTags(
+            tags,
+            title: songs[index].title,
+            artist: songs[index].artist
+        )
         musicsByVideoPath[videoPath] = songs
         saveProjectData()
     }
 
-    func mergeMusicTags(_ newTags: [String], into song: MusicRecognitionItem, in videoPath: String) {
-        updateMusicTags(song, in: videoPath) { tags in
-            tags = MusicRecognitionItem.cleanedTags(tags + newTags)
+    func updateLocalAudioTags(_ asset: LocalAudioAsset, mutate: (inout [String]) -> Void) {
+        guard let index = localAudioAssets.firstIndex(where: { $0.filePath == asset.filePath }) else { return }
+        var updatedAssets = localAudioAssets
+        var tags = updatedAssets[index].tags
+        mutate(&tags)
+        updatedAssets[index].tags = Self.cleanedResourceTags(tags)
+        guard updatedAssets[index].tags != localAudioAssets[index].tags else { return }
+        localAudioAssets = updatedAssets
+        persistLocalResourceAssetTags(path: asset.filePath, tags: updatedAssets[index].tags)
+    }
+
+    func updateLocalMusicTags(_ asset: LocalMusicAsset, mutate: (inout [String]) -> Void) {
+        guard let index = localMusicAssets.firstIndex(where: { $0.filePath == asset.filePath }) else { return }
+        var updatedAssets = localMusicAssets
+        var tags = updatedAssets[index].tags
+        mutate(&tags)
+        updatedAssets[index].tags = MusicRecognitionItem.cleanedMusicTags(
+            tags,
+            title: updatedAssets[index].title
+        )
+        guard updatedAssets[index].tags != localMusicAssets[index].tags else { return }
+        localMusicAssets = updatedAssets
+        persistLocalResourceAssetTags(path: asset.filePath, tags: updatedAssets[index].tags)
+    }
+
+    func persistLocalResourceAssetTags(path: String, tags: [String]) {
+        guard let libraryURL else {
+            saveProjectData()
+            return
         }
+
+        let relativePath = Self.libraryRelativePath(for: URL(fileURLWithPath: path), base: libraryURL)
+        var assetTags = Self.loadResourceAssetTags(in: libraryURL)
+        if tags.isEmpty {
+            assetTags.removeValue(forKey: relativePath)
+        } else {
+            assetTags[relativePath] = tags
+        }
+        Self.saveResourceAssetTags(assetTags, in: libraryURL)
+
+        let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets)
+        Self.saveCachedResourceLibrarySnapshot(snapshot, in: libraryURL)
+        Task.detached(priority: .background) {
+            ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio)
+        }
+        saveProjectData()
     }
 
     func shouldEnrichMusicTags(_ song: MusicRecognitionItem) -> Bool {
-        !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !song.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && song.displayTags.count <= 1
+        let displayTags = song.displayTags
+        return !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (
+                displayTags.isEmpty ||
+                MusicRecognitionItem.hasOnlyFallbackMusicTag(displayTags) ||
+                MusicRecognitionItem.hasOnlyDefaultMusicGenreTag(displayTags) ||
+                song.duration <= 0
+            )
+    }
+
+    func sanitizeMusicTagsIfNeeded() {
+        var didChange = false
+        var didChangeLocalMusicAssets = false
+        var updatedMusics = musicsByVideoPath
+        var updatedLocalMusicAssets = localMusicAssets
+
+        for (path, songs) in musicsByVideoPath {
+            let cleanedSongs = songs.map { song -> MusicRecognitionItem in
+                var cleanedSong = song
+                cleanedSong.tags = MusicRecognitionItem.cleanedMusicTags(
+                    song.tags,
+                    title: song.title,
+                    artist: song.artist
+                )
+                return cleanedSong
+            }
+
+            if cleanedSongs != songs {
+                updatedMusics[path] = cleanedSongs
+                didChange = true
+            }
+        }
+
+        for index in updatedLocalMusicAssets.indices {
+            let cleanedTags = MusicRecognitionItem.cleanedMusicTags(
+                updatedLocalMusicAssets[index].tags,
+                title: updatedLocalMusicAssets[index].title
+            )
+            if updatedLocalMusicAssets[index].tags != cleanedTags {
+                updatedLocalMusicAssets[index].tags = cleanedTags
+                didChange = true
+                didChangeLocalMusicAssets = true
+            }
+        }
+
+        guard didChange else { return }
+        musicsByVideoPath = updatedMusics
+        localMusicAssets = updatedLocalMusicAssets
+        if didChangeLocalMusicAssets, let libraryURL {
+            var assetTags = Self.loadResourceAssetTags(in: libraryURL)
+            for asset in updatedLocalMusicAssets {
+                let relativePath = Self.libraryRelativePath(
+                    for: URL(fileURLWithPath: asset.filePath),
+                    base: libraryURL
+                )
+                if asset.tags.isEmpty {
+                    assetTags.removeValue(forKey: relativePath)
+                } else {
+                    assetTags[relativePath] = asset.tags
+                }
+            }
+            Self.saveResourceAssetTags(assetTags, in: libraryURL)
+
+            let snapshot = ResourceLibrarySnapshot(music: updatedLocalMusicAssets, audio: localAudioAssets)
+            Self.saveCachedResourceLibrarySnapshot(snapshot, in: libraryURL)
+            Task.detached(priority: .background) {
+                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio)
+            }
+        }
+        saveProjectData()
     }
 
     func musicTagEnrichmentKey(for song: MusicRecognitionItem, in videoPath: String) -> String {
@@ -990,9 +1521,18 @@ extension LibraryStore {
         _ song: MusicRecognitionItem,
         preservingTagsFrom existingSongs: [MusicRecognitionItem]
     ) -> MusicRecognitionItem {
-        guard let existing = existingSongs.first(where: { sameRecognizedSong($0, song) }) else { return song }
         var updated = song
-        updated.tags = Array(Set(song.tags + existing.tags)).sorted()
+        if let existing = existingSongs.first(where: { sameRecognizedSong($0, song) }) {
+            updated.tags = song.tags + existing.tags
+            if updated.duration <= 0, existing.duration.isFinite, existing.duration > 0 {
+                updated.duration = existing.duration
+            }
+        }
+        updated.tags = MusicRecognitionItem.cleanedMusicTags(
+            updated.tags,
+            title: updated.title,
+            artist: updated.artist
+        )
         return updated
     }
 
@@ -1005,11 +1545,34 @@ extension LibraryStore {
             ) == .orderedSame
     }
 
+    nonisolated static func hasRecognizedTitleAndArtist(_ song: MusicRecognitionItem) -> Bool {
+        !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !song.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    nonisolated static func musicItem(
+        _ song: MusicRecognitionItem,
+        matchesTitle title: String,
+        artist: String
+    ) -> Bool {
+        let expectedTitle = normalizedSearch(title)
+        guard !expectedTitle.isEmpty, normalizedSearch(song.title) == expectedTitle else {
+            return false
+        }
+
+        let expectedArtist = normalizedSearch(artist)
+        return expectedArtist.isEmpty || normalizedSearch(song.artist) == expectedArtist
+    }
+
     nonisolated static func lookupMusicTags(title: String, artist: String) async -> [String] {
+        await lookupMusicMetadata(title: title, artist: artist).tags
+    }
+
+    nonisolated static func lookupMusicMetadata(title: String, artist: String) async -> MusicLookupMetadata {
         let query = "\(artist) \(title)".trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty,
               var components = URLComponents(string: "https://itunes.apple.com/search")
-        else { return [] }
+        else { return MusicLookupMetadata(tags: [], duration: 0) }
 
         components.queryItems = [
             URLQueryItem(name: "term", value: query),
@@ -1017,7 +1580,7 @@ extension LibraryStore {
             URLQueryItem(name: "entity", value: "song"),
             URLQueryItem(name: "limit", value: "5")
         ]
-        guard let url = components.url else { return [] }
+        guard let url = components.url else { return MusicLookupMetadata(tags: [], duration: 0) }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
@@ -1025,15 +1588,25 @@ extension LibraryStore {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
-                  (200..<300).contains(httpResponse.statusCode) else { return [] }
+                  (200..<300).contains(httpResponse.statusCode) else {
+                return MusicLookupMetadata(tags: [], duration: 0)
+            }
             let decoded = try JSONDecoder().decode(ITunesSearchResponse.self, from: data)
-            guard let result = decoded.results.first(where: { $0.kind == "song" }) else { return [] }
-            return MusicRecognitionItem.cleanedTags([
-                result.artistName ?? artist,
-                result.primaryGenreName ?? ""
-            ])
+            guard let result = decoded.results.first(where: { $0.kind == "song" }) else {
+                return MusicLookupMetadata(tags: [], duration: 0)
+            }
+            let tags = MusicRecognitionItem.cleanedGenreTags(
+                [result.primaryGenreName ?? ""],
+                title: title,
+                artist: result.artistName ?? artist
+            )
+            let duration = (result.trackTimeMillis ?? 0) / 1000
+            return MusicLookupMetadata(
+                tags: tags,
+                duration: duration.isFinite && duration > 0 ? duration : 0
+            )
         } catch {
-            return []
+            return MusicLookupMetadata(tags: [], duration: 0)
         }
     }
 

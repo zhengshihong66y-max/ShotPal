@@ -107,36 +107,25 @@ extension LibraryStore {
             }
             arguments += ["-movflags", "+faststart", tmpURL.path]
 
-            let process = Process()
-            process.executableURL = ffmpegURL
-            process.environment = downloaderProcessEnvironment()
-            process.arguments = arguments
-            let errorPipe = Pipe()
-            let errorCollector = PipeDataCollector()
-            process.standardError = errorPipe
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                errorCollector.append(handle.availableData)
+            let result = ExternalProcessRunner.run(
+                executableURL: ffmpegURL,
+                arguments: arguments,
+                environment: downloaderProcessEnvironment()
+            )
+
+            if result.terminationStatus == nil, !result.didTimeOut {
+                throw RemoteImportError.downloaderFailed("无法启动 ffmpeg 合并 Instagram 轮播：\(result.errorText)")
             }
 
-            do {
-                try process.run()
-            } catch {
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-                throw RemoteImportError.downloaderFailed("无法启动 ffmpeg 合并 Instagram 轮播：\(error.localizedDescription)")
-            }
-            process.waitUntilExit()
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
-
-            guard process.terminationStatus == 0,
+            guard result.succeeded,
                   FileManager.default.fileExists(atPath: tmpURL.path)
             else {
-                let message = String(data: errorCollector.data, encoding: .utf8)?
+                let message = result.errorText
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 try? FileManager.default.removeItem(at: tmpURL)
                 throw RemoteImportError.downloaderFailed(
-                    message?.isEmpty == false
-                        ? "Instagram 轮播合并失败：\(message!)"
+                    !message.isEmpty
+                        ? "Instagram 轮播合并失败：\(message)"
                         : "Instagram 轮播合并失败"
                 )
             }
@@ -153,27 +142,22 @@ extension LibraryStore {
             throw RemoteImportError.downloaderFailed("未找到 ffprobe，无法检查 Instagram 轮播视频")
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ffprobePath)
-        process.arguments = [
-            "-v", "error",
-            "-show_entries", "stream=codec_type,width,height,r_frame_rate",
-            "-of", "json",
-            url.path
-        ]
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        guard (try? process.run()) != nil else {
+        let result = ExternalProcessRunner.run(
+            executableURL: URL(fileURLWithPath: ffprobePath),
+            arguments: [
+                "-v", "error",
+                "-show_entries", "stream=codec_type,width,height,r_frame_rate",
+                "-of", "json",
+                url.path
+            ]
+        )
+        guard result.terminationStatus != nil else {
             throw RemoteImportError.downloaderFailed("无法启动 ffprobe 检查 Instagram 轮播视频")
         }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
+        guard result.succeeded else {
             throw RemoteImportError.downloaderFailed("无法读取 Instagram 轮播视频参数")
         }
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let response = try JSONDecoder().decode(FFProbeStreamsResponse.self, from: data)
+        let response = try JSONDecoder().decode(FFProbeStreamsResponse.self, from: result.outputData)
         guard let video = response.streams.first(where: { $0.codecType == "video" }),
               let width = video.width,
               let height = video.height,
@@ -206,34 +190,19 @@ extension LibraryStore {
             guard FileManager.default.isExecutableFile(atPath: ffprobePath) else { return nil }
 
             // 用 ffprobe 探测视频流编码
-            let probeProcess = Process()
-            probeProcess.executableURL = URL(fileURLWithPath: ffprobePath)
-            probeProcess.arguments = [
-                "-v", "quiet",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                url.path
-            ]
-            let probePipe = Pipe()
-            let probeErrorPipe = Pipe()
-            probeProcess.standardOutput = probePipe
-            probeProcess.standardError = probeErrorPipe
-            probeErrorPipe.fileHandleForReading.readabilityHandler = { handle in
-                _ = handle.availableData
-            }
+            let probeResult = ExternalProcessRunner.run(
+                executableURL: URL(fileURLWithPath: ffprobePath),
+                arguments: [
+                    "-v", "quiet",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_name",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    url.path
+                ]
+            )
+            guard probeResult.succeeded else { return nil }
 
-            guard (try? probeProcess.run()) != nil else {
-                probeErrorPipe.fileHandleForReading.readabilityHandler = nil
-                return nil
-            }
-            probeProcess.waitUntilExit()
-            probeErrorPipe.fileHandleForReading.readabilityHandler = nil
-
-            let codec = (String(
-                data: probePipe.fileHandleForReading.readDataToEndOfFile(),
-                encoding: .utf8
-            ) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let codec = probeResult.outputText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
             // macOS AVFoundation 在 MP4 容器中不支持 VP9 / AV1 / VP8
             let unsupported = ["vp9", "vp09", "av1", "av01", "vp8"]

@@ -16,231 +16,242 @@ struct MusicWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     let goHome: (String, Double) -> Void
 
-    @State private var searchText = ""
-    @State private var searchResults: [AppleMusicSearchResult] = []
-    @State private var isSearching = false
-    @State private var searchMessage: String?
-    @State private var selectedMusicFilters: Set<MusicFilterOption> = []
-    @State private var isMusicTagFilterBarPresented = false
-    @State private var isMusicMetadataFilterBarPresented = false
+    @StateObject private var viewModel = MusicWorkspaceViewModel()
+    @AppStorage(AppSettings.Key.musicSortOption) private var musicSortOptionRawValue = MusicSortOption.title.rawValue
+    @AppStorage(AppSettings.Key.musicSortDirection) private var musicSortDirectionRawValue = VideoSortDirection.ascending.rawValue
+
+    private func prepareMusicWorkspaceExternalServiceWork() {
+        libraryStore.prepareExternalServiceWork()
+    }
 
     var body: some View {
-        let recognizedAssets = musicAssets
-        let filteredRecognizedAssets = filteredRecognizedMusicAssets(from: recognizedAssets)
-        let filteredSearchItems = filteredSearchResults
-        let filterValues = musicFilterValues(from: recognizedAssets)
+        let projection = viewModel.projection
 
         VStack(alignment: .leading, spacing: 12) {
             musicHeader()
 
-            if isMusicTagFilterBarPresented || isMusicMetadataFilterBarPresented {
-                musicQuickFilterArea(filterValues: filterValues)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    searchSection(results: filteredSearchItems)
-                    recognizedMusicSection(allAssets: recognizedAssets, filteredAssets: filteredRecognizedAssets)
+            TopChromeBoundedContent {
+                if viewModel.isMusicTagFilterBarPresented {
+                    musicQuickFilterArea(
+                        filterValues: projection.filterValues,
+                        artistSongCounts: projection.musicFilterCounts[.artist, default: [:]],
+                        musicTagCounts: projection.musicFilterCounts[.tag, default: [:]]
+                    )
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .padding(.vertical, 2)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
+
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        recognizedMusicSection(
+                            allAssets: projection.recognizedAssets,
+                            allLocalGroups: projection.displayedLocalMusicGroups,
+                            filteredEntries: projection.filteredEntries
+                        )
+                        searchSection(results: projection.filteredSearchItems)
+                    }
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, Design.libraryContentInset)
+                    .padding(.bottom, 12)
+                }
+                .fadingVerticalScrollIndicators()
             }
-            .scrollIndicators(.hidden)
-            .background(HiddenScrollIndicators())
         }
         .padding(.top, Design.libraryToolbarTop)
         .padding(.bottom, 14)
         .background(Design.sidebarBg)
         .onAppear {
-            libraryStore.enrichMusicTagsIfNeeded()
-            libraryStore.prepareExternalServiceWork()
+            prepareMusicWorkspaceForDisplay()
         }
-        .task(id: searchText) {
+        .onDisappear {
+            viewModel.cancelTasks()
+        }
+        .onChange(of: libraryStore.videos) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .onChange(of: libraryStore.musicsByVideoPath) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .onChange(of: libraryStore.localMusicAssets) { _, _ in
+            scheduleMusicProjectionRefresh()
+            scheduleDeferredMusicWorkspaceMaintenance()
+        }
+        .onChange(of: libraryStore.musicDownloadJobs) { _, _ in
+            scheduleMusicProjectionRefresh()
+            if viewModel.completedMusicDownloadLibraryChanged(
+                jobs: libraryStore.musicDownloadJobs,
+                completedFileURL: completedMusicFileURL(for:)
+            ) {
+                scheduleDeferredMusicWorkspacePreparation()
+                scheduleDeferredMusicWorkspaceMaintenance()
+            }
+        }
+        .onChange(of: viewModel.searchText) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .onChange(of: viewModel.searchResults) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .onChange(of: viewModel.selectedMusicFilters) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .onChange(of: viewModel.isMusicTagFilterBarPresented) { _, isPresented in
+            if isPresented {
+                scheduleMusicProjectionRefresh()
+            }
+        }
+        .onChange(of: musicSortOptionRawValue) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .onChange(of: musicSortDirectionRawValue) { _, _ in
+            scheduleMusicProjectionRefresh()
+        }
+        .task(id: viewModel.searchText) {
             await runAppleMusicSearch()
         }
     }
 
-    private func musicHeader() -> some View {
-        HStack(spacing: Design.libraryToolbarButtonGap) {
-            LibraryToolbarSearchField(placeholder: "搜索音乐、标签", text: $searchText)
+    private func prepareMusicWorkspaceForDisplay() {
+        viewModel.rememberCompletedMusicDownloadLibraryState(
+            jobs: libraryStore.musicDownloadJobs,
+            completedFileURL: completedMusicFileURL(for:)
+        )
+        refreshMusicProjection()
+        scheduleDeferredMusicWorkspacePreparation()
+        scheduleDeferredMusicWorkspaceMaintenance()
+    }
 
-            musicTagFilterButton
-            musicMetadataFilterButton
-
-            if !selectedMusicFilters.isEmpty {
-                Button {
-                    selectedMusicFilters.removeAll()
-                } label: {
-                    toolbarIcon(systemName: "xmark.circle", size: 12)
-                }
-                .buttonStyle(.plain)
-                .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-                .contentShape(Rectangle())
-                .help("清除筛选")
-            }
+    private func scheduleDeferredMusicWorkspacePreparation() {
+        viewModel.scheduleDeferredPreparation {
+            libraryStore.syncCompletedMusicDownloadsIntoLocalAssets()
+            libraryStore.scanResourceLibrary(
+                refreshMode: .deferred,
+                loadCachedSnapshotSynchronously: false
+            )
+            scheduleMusicProjectionRefresh()
         }
-        .frame(minHeight: Design.libraryToolbarHeight)
-        .padding(.horizontal, 14)
+    }
+
+    private func scheduleDeferredMusicWorkspaceMaintenance() {
+        viewModel.scheduleDeferredMaintenance {
+            libraryStore.seedMusicFileDurations(from: libraryStore.localMusicAssets)
+        }
+    }
+
+    private func scheduleMusicProjectionRefresh() {
+        viewModel.scheduleProjectionRefresh {
+            makeMusicProjection()
+        }
+    }
+
+    private func refreshMusicProjection() {
+        viewModel.refreshProjection {
+            makeMusicProjection()
+        }
+    }
+
+    private func makeMusicProjection() -> MusicWorkspaceProjection {
+        makeMusicProjectionBuilder().makeProjection()
+    }
+
+    private func musicHeader() -> some View {
+        LibraryToolbar(placeholder: "", text: $viewModel.searchText, searchExpands: false) {
+            musicTagFilterButton
+            musicSortMenu
+        }
     }
 
     private var musicTagFilterButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                isMusicTagFilterBarPresented.toggle()
-            }
+            viewModel.isMusicTagFilterBarPresented.toggle()
         } label: {
             toolbarIcon(
                 systemName: selectedMusicTagFilterCount == 0 ? "tag" : "tag.fill",
                 size: 12,
-                tint: isMusicTagFilterBarPresented || selectedMusicTagFilterCount > 0
+                tint: viewModel.isMusicTagFilterBarPresented || selectedMusicTagFilterCount > 0
                     ? Design.neutralStrongAccent
                     : Design.libraryToolbarIconTint
             )
-                .background(isMusicTagFilterBarPresented ? Color.white.opacity(0.10) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(alignment: .topTrailing) {
                     if selectedMusicTagFilterCount > 0 {
-                        Text("\(selectedMusicTagFilterCount)")
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Design.neutralBadgeFill)
-                            .clipShape(Capsule())
-                        .offset(x: 4, y: -3)
+                        libraryToolbarBadge(selectedMusicTagFilterCount)
                     }
                 }
         }
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help("标签筛选")
+        .help("作者和类型筛选")
     }
 
-    private var musicMetadataFilterButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                isMusicMetadataFilterBarPresented.toggle()
+    private var musicSortMenu: some View {
+        Menu {
+            Section("排序方式") {
+                ForEach(MusicSortOption.allCases) { option in
+                    Button {
+                        let previousOption = selectedMusicSortOption
+                        musicSortOptionRawValue = option.rawValue
+                        if option == .addedDate, previousOption != .addedDate {
+                            musicSortDirectionRawValue = VideoSortDirection.descending.rawValue
+                        }
+                    } label: {
+                        Label(option.title, systemImage: selectedMusicSortOption == option ? "checkmark" : "")
+                    }
+                }
+            }
+
+            Section("方向") {
+                ForEach(VideoSortDirection.allCases) { direction in
+                    Button {
+                        musicSortDirectionRawValue = direction.rawValue
+                    } label: {
+                        Label(direction.title, systemImage: selectedMusicSortDirection == direction ? "checkmark" : direction.systemImage)
+                    }
+                }
             }
         } label: {
-            toolbarIcon(
-                systemName: "line.3.horizontal.decrease.circle",
-                size: 12,
-                tint: isMusicMetadataFilterBarPresented || selectedMusicMetadataFilterCount > 0
-                    ? Design.neutralStrongAccent
-                    : Design.libraryToolbarIconTint
-            )
-                .background(isMusicMetadataFilterBarPresented ? Color.white.opacity(0.10) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(alignment: .topTrailing) {
-                    if selectedMusicMetadataFilterCount > 0 {
-                        Text("\(selectedMusicMetadataFilterCount)")
-                            .font(.system(size: 8, weight: .bold))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Design.neutralBadgeFill)
-                            .clipShape(Capsule())
-                        .offset(x: 4, y: -3)
-                    }
-                }
+            libraryToolbarIcon(systemName: "arrow.up.arrow.down", size: 12, opticalOffsetX: 2)
         }
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .contentShape(Rectangle())
-        .help("标题和作者筛选")
+        .help("排序")
     }
 
-    private func musicQuickFilterArea(filterValues: [MusicFilterKind: [String]]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Label(musicQuickFilterTitle, systemImage: musicQuickFilterIcon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                if !selectedMusicFilters.isEmpty {
-                    Text("\(selectedMusicFilters.count)")
-                        .font(.caption2.monospacedDigit().weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.08))
-                        .clipShape(Capsule())
-                }
-
-                Spacer(minLength: 0)
-
-                Button {
-                    selectedMusicFilters.removeAll()
-                } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .disabled(selectedMusicFilters.isEmpty)
-                .help("显示全部音乐")
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        isMusicTagFilterBarPresented = false
-                        isMusicMetadataFilterBarPresented = false
-                    }
-                } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .help("收起筛选")
-            }
-
-            if isMusicTagFilterBarPresented {
-                musicQuickFilterChipRow(
-                    title: "标签",
-                    kind: .tag,
-                    values: filterValues[.tag, default: []],
-                    allSystemImage: "music.note.list"
-                )
-            }
-
-            if isMusicMetadataFilterBarPresented {
-                musicQuickFilterChipRow(
-                    title: "标题",
-                    kind: .title,
-                    values: filterValues[.title, default: []],
-                    allSystemImage: "music.note"
-                )
+    private func musicQuickFilterArea(
+        filterValues: [MusicFilterKind: [String]],
+        artistSongCounts: [String: Int],
+        musicTagCounts: [String: Int]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if viewModel.isMusicTagFilterBarPresented {
                 musicQuickFilterChipRow(
                     title: "作者",
                     kind: .artist,
                     values: filterValues[.artist, default: []],
-                    allSystemImage: "person"
+                    counts: artistSongCounts,
+                    allSystemImage: nil,
+                    emptyText: "暂无两首以上作者"
+                )
+                musicQuickFilterChipRow(
+                    title: "类型",
+                    kind: .tag,
+                    values: filterValues[.tag, default: []],
+                    counts: musicTagCounts,
+                    allSystemImage: "tag"
                 )
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Design.libraryContentInset)
         .padding(.vertical, 10)
-    }
-
-    private var musicQuickFilterTitle: String {
-        switch (isMusicTagFilterBarPresented, isMusicMetadataFilterBarPresented) {
-        case (true, true): return "音乐筛选"
-        case (true, false): return "音乐标签"
-        case (false, true): return "标题和作者"
-        case (false, false): return "音乐筛选"
-        }
-    }
-
-    private var musicQuickFilterIcon: String {
-        isMusicTagFilterBarPresented && !isMusicMetadataFilterBarPresented
-            ? "tag"
-            : "line.3.horizontal.decrease.circle"
     }
 
     private func musicQuickFilterChipRow(
         title: String,
         kind: MusicFilterKind,
         values: [String],
-        allSystemImage: String
+        counts: [String: Int] = [:],
+        allSystemImage: String?,
+        emptyText: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -248,27 +259,20 @@ struct MusicWorkspaceView: View {
                 .foregroundStyle(.tertiary)
 
             if values.isEmpty {
-                Text("暂无\(title)")
+                Text(emptyText ?? "暂无\(title)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .frame(minHeight: 28, alignment: .leading)
             } else {
                 WrappingFilterChipGroup {
-                    QuickFilterChoiceChip(
-                        title: "全部",
-                        systemImage: allSystemImage,
-                        isSelected: selectedMusicFilters.allSatisfy { $0.kind != kind }
-                    ) {
-                        selectedMusicFilters = selectedMusicFilters.filter { $0.kind != kind }
-                    }
-
                     ForEach(values, id: \.self) { value in
                         let option = MusicFilterOption(kind: kind, value: value)
                         QuickFilterChoiceChip(
                             title: value,
                             systemImage: kind == .tag ? nil : allSystemImage,
-                            tagColorKey: kind == .tag ? value : nil,
-                            isSelected: selectedMusicFilters.contains(option)
+                            count: counts[value],
+                            isSelected: viewModel.selectedMusicFilters.contains(option),
+                            tint: Design.annotationAccent
                         ) {
                             if kind == .tag {
                                 toggleMusicFilter(option)
@@ -284,49 +288,15 @@ struct MusicWorkspaceView: View {
     }
 
     @ViewBuilder
-    private func musicFilterSection(
-        kind: MusicFilterKind,
-        filterValues: [MusicFilterKind: [String]]
+    private func searchSection(
+        results: [AppleMusicSearchResultRowProjection]
     ) -> some View {
-        let values = filterValues[kind, default: []]
-        if !values.isEmpty {
-            Divider()
-            Section(kind.rawValue) {
-                ForEach(values, id: \.self) { value in
-                    let option = MusicFilterOption(kind: kind, value: value)
-                    Button {
-                        toggleMusicFilter(option)
-                    } label: {
-                        HStack {
-                            Image(systemName: selectedMusicFilters.contains(option) ? "checkmark.square.fill" : "square")
-                            if kind == .tag {
-                                VideoTagColorDot(tag: value)
-                            }
-                            Text(value)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func searchSection(results: [AppleMusicSearchResult]) -> some View {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty || isSearching || searchMessage != nil {
+        let query = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty && !viewModel.isSearching {
             VStack(alignment: .leading, spacing: 10) {
                 sectionHeader(title: "AM 搜索", count: results.count, icon: "magnifyingglass")
 
-                if isSearching {
-                    GenerationProgressRow(
-                        message: "正在搜索 AM",
-                        progress: nil,
-                        tint: .white,
-                        systemImage: "magnifyingglass",
-                        compact: true,
-                        showPercent: false
-                    )
-                } else if let searchMessage {
+                if let searchMessage = viewModel.searchMessage {
                     AppEmptyState(
                         title: searchMessage,
                         systemImage: "magnifyingglass",
@@ -342,8 +312,8 @@ struct MusicWorkspaceView: View {
                     )
                 } else {
                     LazyVStack(spacing: 8) {
-                        ForEach(results) { item in
-                            appleMusicResultRow(item)
+                        ForEach(results) { row in
+                            appleMusicResultRow(row)
                         }
                     }
                 }
@@ -354,17 +324,18 @@ struct MusicWorkspaceView: View {
     @ViewBuilder
     private func recognizedMusicSection(
         allAssets: [RecognizedMusicAsset],
-        filteredAssets: [RecognizedMusicAsset]
+        allLocalGroups: [LocalMusicGroup],
+        filteredEntries: [MusicLibraryRowProjection]
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if allAssets.isEmpty {
+            if allAssets.isEmpty && allLocalGroups.isEmpty {
                 AppEmptyState(
-                    title: folderMusicRecognitionStatusText ?? "暂无 AM 条目",
-                    systemImage: "sparkles",
+                    title: "音乐文件夹暂无音乐文件",
+                    systemImage: "music.note.list",
                     style: .compact,
                     minHeight: 90
                 )
-            } else if filteredAssets.isEmpty {
+            } else if filteredEntries.isEmpty {
                 AppEmptyState(
                     title: "没有匹配条目",
                     systemImage: "line.3.horizontal.decrease.circle",
@@ -373,8 +344,13 @@ struct MusicWorkspaceView: View {
                 )
             } else {
                 LazyVStack(spacing: 8) {
-                    ForEach(filteredAssets) { asset in
-                        recognizedMusicAssetRow(asset)
+                    ForEach(filteredEntries) { entry in
+                        switch entry {
+                        case .recognized(let row):
+                            recognizedMusicAssetRow(row)
+                        case .local(let row):
+                            localMusicGroupRow(row)
+                        }
                     }
                 }
             }
@@ -383,247 +359,493 @@ struct MusicWorkspaceView: View {
 
     private func musicRowLayout(
         containerWidth: CGFloat,
-        hasTags: Bool,
-        hasDownloadStatus: Bool,
-        includesSafari: Bool
+        tags: [String],
+        hasWaveform _: Bool,
+        includesSafari: Bool,
+        hasTagEditor: Bool = false,
+        actionWidth: CGFloat = MusicRowMetrics.buttonsWidth,
+        sideActionWidth: CGFloat = 0
     ) -> (
         infoWidth: CGFloat,
         tagWidth: CGFloat,
-        statusWidth: CGFloat,
-        timeWidth: CGFloat,
+        waveformWidth: CGFloat,
+        metadataWidth: CGFloat,
         showsTags: Bool,
-        showsDownloadStatus: Bool
+        showsWaveform: Bool
     ) {
-        let showsDownloadStatus = hasDownloadStatus && containerWidth >= 760
-        let showsTags = hasTags && containerWidth >= (showsDownloadStatus ? 900 : 760)
-        let timeWidth: CGFloat = 56
-        let buttonsWidth: CGFloat = 160
+        let hasTagContent = hasTagEditor || !tags.isEmpty
+        let showsTags = hasTagContent && containerWidth >= (includesSafari ? 560 : 500)
+        let showsWaveform = containerWidth >= (showsTags ? (includesSafari ? 800 : 760) : 620)
+        let metadataWidth = MusicRowMetrics.metadataWidth
         let safariWidth: CGFloat = includesSafari ? 24 : 0
-        let visibleColumnCount = 4
+        let minimumWaveformWidth: CGFloat = showsWaveform ? (containerWidth < 900 ? 168 : 236) : 0
+        let downloadControlsWidth = actionWidth
+            + (showsWaveform ? MusicRowMetrics.columnSpacing + minimumWaveformWidth : 0)
+        let visibleColumnCount = 3
             + (showsTags ? 1 : 0)
-            + (showsDownloadStatus ? 1 : 0)
             + (includesSafari ? 1 : 0)
-        let spacingWidth = CGFloat(max(0, visibleColumnCount - 1)) * 14
-        let fixedWidth = 18 + 56 + timeWidth + buttonsWidth + safariWidth + spacingWidth
+            + (sideActionWidth > 0 ? 1 : 0)
+        let spacingWidth = CGFloat(max(0, visibleColumnCount - 1)) * MusicRowMetrics.columnSpacing
+        let fixedWidth = MusicRowMetrics.totalHorizontalPadding
+            + MusicRowMetrics.artworkSize
+            + safariWidth
+            + downloadControlsWidth
+            + sideActionWidth
+            + spacingWidth
         let flexibleWidth = max(0, containerWidth - fixedWidth)
-        let tagWidth = showsTags ? min(160, max(96, flexibleWidth * 0.22)) : 0
-        let statusWidth = showsDownloadStatus ? min(300, max(132, flexibleWidth * 0.34)) : 0
-        let remainingWidth = max(0, flexibleWidth - tagWidth - statusWidth)
-        let infoWidth = min(containerWidth < 820 ? 210 : 270, max(120, remainingWidth))
-        return (infoWidth, tagWidth, statusWidth, timeWidth, showsTags, showsDownloadStatus)
+        let tagWidth = musicTagColumnWidth(
+            tags: tags,
+            flexibleWidth: flexibleWidth,
+            showsTags: showsTags,
+            showsWaveform: showsWaveform,
+            containerWidth: containerWidth,
+            hasTagEditor: hasTagEditor
+        )
+        let remainingWidth = max(0, flexibleWidth - tagWidth)
+        let preferredInfoWidth: CGFloat = containerWidth < 820 ? 210 : 282
+        let minimumInfoWidth = min(musicMinimumInfoWidth(containerWidth: containerWidth), remainingWidth)
+        let infoWidth = min(preferredInfoWidth, max(minimumInfoWidth, remainingWidth * 0.60))
+        let waveformWidth = showsWaveform
+            ? minimumWaveformWidth + Swift.max(CGFloat.zero, remainingWidth - infoWidth)
+            : 0
+        return (infoWidth, tagWidth, waveformWidth, metadataWidth, showsTags, showsWaveform)
     }
 
-    private func appleMusicResultRow(_ item: AppleMusicSearchResult) -> some View {
-        let song = item.asMusicRecognitionItem()
-        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
-        let visibleTags = visibleTags(for: song)
+    private func musicTagColumnWidth(
+        tags _: [String],
+        flexibleWidth: CGFloat,
+        showsTags: Bool,
+        showsWaveform _: Bool,
+        containerWidth: CGFloat,
+        hasTagEditor _: Bool = false
+    ) -> CGFloat {
+        guard showsTags, flexibleWidth > 0 else { return 0 }
 
-        return VStack(alignment: .leading, spacing: 0) {
-            GeometryReader { proxy in
-                let layout = musicRowLayout(
-                    containerWidth: proxy.size.width,
-                    hasTags: !visibleTags.isEmpty,
-                    hasDownloadStatus: false,
-                    includesSafari: URL(string: item.appleMusicURL) != nil
+        let reservedInfoWidth = min(musicMinimumInfoWidth(containerWidth: containerWidth), flexibleWidth)
+        let tagBudget = max(0, flexibleWidth - reservedInfoWidth)
+        guard tagBudget > 0 else { return 0 }
+
+        return min(MusicRowMetrics.tagColumnWidth, tagBudget)
+    }
+
+    private func musicMinimumInfoWidth(containerWidth: CGFloat) -> CGFloat {
+        containerWidth < 820
+            ? MusicRowMetrics.minimumInfoWidthCompact
+            : MusicRowMetrics.minimumInfoWidthRegular
+    }
+
+    private func appleMusicResultRow(_ row: AppleMusicSearchResultRowProjection) -> some View {
+        let item = row.item
+        let song = row.song
+        let downloadJobs = row.downloadJobs
+        let visibleTags = row.visibleTags
+        let hasDownloadedWaveform = row.hasDownloadedWaveform
+        let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
+
+        return GeometryReader { proxy in
+            let layout = musicRowLayout(
+                containerWidth: proxy.size.width,
+                tags: visibleTags,
+                hasWaveform: hasDownloadedWaveform,
+                includesSafari: false,
+                actionWidth: MusicRowMetrics.verticalButtonsWidth
+            )
+
+            HStack(alignment: .center, spacing: MusicRowMetrics.columnSpacing) {
+                musicArtwork(urlString: item.artworkURL, title: item.title, artist: item.artist)
+
+                musicInfoColumn(
+                    title: item.title.isEmpty ? "未知曲目" : item.title,
+                    artist: item.artist.isEmpty ? "未知作者" : item.artist,
+                    sourceText: nil,
+                    width: layout.infoWidth
                 )
 
-                HStack(alignment: .center, spacing: 14) {
-                    musicArtwork(urlString: item.artworkURL, title: item.title, artist: item.artist)
+                musicTagColumn(tags: visibleTags, layout: layout)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title.isEmpty ? "未知曲目" : item.title)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Text(item.artist.isEmpty ? "未知作者" : item.artist)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(width: layout.infoWidth, alignment: .leading)
-
-                    if layout.showsTags {
-                        MusicTagStrip(tags: visibleTags)
-                            .frame(width: layout.tagWidth, alignment: .leading)
-                    }
-
-                    Text(item.duration > 0 ? formatDuration(item.duration) : "--:--")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.76)
-                        .frame(width: layout.timeWidth, alignment: .trailing)
-
-                    musicDownloadButtons(song: song)
-
-                    if let url = URL(string: item.appleMusicURL) {
-                        Button {
-                            NSWorkspace.shared.open(url)
-                        } label: {
-                            Image(systemName: "safari")
-                                .frame(width: 24, height: 24)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("打开 AM 页面")
-                    }
-                }
-                .padding(9)
-                .frame(width: proxy.size.width, height: 86, alignment: .leading)
-            }
-            .frame(height: 86)
-
-            musicDownloadExtension(for: downloadJobs)
-        }
-        .background(.white.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.white.opacity(0.07), lineWidth: 0.7)
-        }
-    }
-
-    private func recognizedMusicAssetRow(_ asset: RecognizedMusicAsset) -> some View {
-        let downloadJobs = musicDownloadJobs(for: asset.song, in: libraryStore.musicDownloadJobs)
-        let visibleTags = visibleTags(for: asset.song)
-
-        return VStack(alignment: .leading, spacing: 0) {
-            GeometryReader { proxy in
-                let layout = musicRowLayout(
-                    containerWidth: proxy.size.width,
-                    hasTags: !visibleTags.isEmpty,
-                    hasDownloadStatus: false,
-                    includesSafari: false
+                MusicDownloadControlsAndWaveform(
+                    song: song,
+                    downloadJobs: downloadJobs,
+                    buttonsWidth: MusicRowMetrics.verticalButtonsWidth,
+                    buttonLayout: .vertical,
+                    elementSpacing: MusicRowMetrics.columnSpacing,
+                    timeWidth: layout.metadataWidth,
+                    waveformWidth: layout.waveformWidth,
+                    waveformHeight: MusicRowMetrics.waveformHeight,
+                    fallbackDuration: item.duration
                 )
-
-                HStack(alignment: .center, spacing: 14) {
-                    Button {
-                        goHome(asset.videoPath, asset.song.detectedAt)
-                    } label: {
-                        HStack(spacing: 10) {
-                            musicArtwork(
-                                urlString: asset.song.artworkURL,
-                                title: asset.song.title,
-                                artist: asset.song.artist
-                            )
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(asset.song.title.isEmpty ? "未知曲目" : asset.song.title)
-                                    .font(.caption.weight(.semibold))
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Text(asset.song.artist.isEmpty ? "未知作者" : asset.song.artist)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Text(asset.videoName)
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            .frame(width: layout.infoWidth, alignment: .leading)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("跳到视频中此段落")
-
-                    if layout.showsTags {
-                        MusicTagStrip(tags: visibleTags)
-                            .frame(width: layout.tagWidth, alignment: .leading)
-                    }
-
-                    Button {
-                        goHome(asset.videoPath, asset.song.detectedAt)
-                    } label: {
-                        Text(clockText(asset.song.detectedAt))
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.76)
-                            .frame(width: layout.timeWidth, alignment: .trailing)
-                    }
-                    .buttonStyle(.plain)
-                    .help("跳到原视频时间点")
-
-                    musicDownloadButtons(song: asset.song)
-                }
-                .padding(9)
-                .frame(width: proxy.size.width, height: 86, alignment: .leading)
             }
-            .frame(height: 86)
-
-            musicDownloadExtension(for: downloadJobs)
-        }
-        .background(.white.opacity(0.055))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.white.opacity(0.07), lineWidth: 0.7)
-        }
-    }
-
-    @ViewBuilder
-    private func musicDownloadExtension(for downloadJobs: [MusicDownloadJob]) -> some View {
-        if !downloadJobs.isEmpty {
-            MusicDownloadExtensionStack(downloadJobs: downloadJobs)
-                .padding(.horizontal, 9)
-                .padding(.bottom, 9)
-        }
-    }
-
-    private func musicDownloadButtons(song: MusicRecognitionItem) -> some View {
-        let jobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
-        let originalJob = jobs.first { $0.type == .original }
-        let instrumentalJob = jobs.first { $0.type == .instrumental }
-
-        return HStack(spacing: 6) {
-            musicDownloadButton(song: song, type: .original, job: originalJob)
-            musicDownloadButton(song: song, type: .instrumental, job: instrumentalJob)
-        }
-        .frame(width: 160, alignment: .trailing)
-    }
-
-    private func musicDownloadButton(
-        song: MusicRecognitionItem,
-        type: MusicDownloadJob.DownloadType,
-        job: MusicDownloadJob?
-    ) -> some View {
-        let isDownloaded = completedMusicFileURL(for: job) != nil
-        let isActive = job.map { isActiveDownloadStatus($0.status) } ?? false
-
-        return Button {
-            if let url = completedMusicFileURL(for: job) {
-                NSWorkspace.shared.open(url)
-            } else {
-                libraryStore.downloadMusic(song: song, type: type)
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: musicDownloadIcon(type: type, job: job))
-                    .font(.system(size: 11, weight: .semibold))
-                Text(musicDownloadTitle(type: type, job: job))
-                    .font(.caption2.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-            }
-            .foregroundStyle(isDownloaded ? .white.opacity(0.94) : .white.opacity(isActive ? 0.86 : 0.56))
-            .frame(width: 76, height: 28)
-            .background(.white.opacity(isDownloaded ? 0.15 : (isActive ? 0.10 : 0.045)))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .padding(.horizontal, MusicRowMetrics.contentInsetX)
+            .padding(.vertical, MusicRowMetrics.contentInsetY)
+            .frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(.white.opacity(isDownloaded ? 0.18 : 0.07), lineWidth: 0.7)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+            .contentShape(Rectangle())
+            .itemProviderDrag(rowDragProvider)
+        }
+        .frame(height: MusicRowMetrics.rowHeight)
+    }
+
+    private func recognizedMusicAssetRow(_ row: RecognizedMusicRowProjection) -> some View {
+        let asset = row.asset
+        let downloadJobs = row.downloadJobs
+        let visibleTags = row.visibleTags
+        let hasDownloadedWaveform = row.hasDownloadedWaveform
+        let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
+        let downloadedFileURLs = row.downloadedFileURLs
+
+        return GeometryReader { proxy in
+            let layout = musicRowLayout(
+                containerWidth: proxy.size.width,
+                tags: visibleTags,
+                hasWaveform: hasDownloadedWaveform,
+                includesSafari: false,
+                hasTagEditor: true,
+                actionWidth: MusicRowMetrics.verticalButtonsWidth,
+                sideActionWidth: MusicRowMetrics.sideActionWidth
+            )
+
+            HStack(alignment: .center, spacing: MusicRowMetrics.columnSpacing) {
+                Button {
+                    goHome(asset.videoPath, asset.song.detectedAt)
+                } label: {
+                    HStack(spacing: MusicRowMetrics.columnSpacing) {
+                        musicArtwork(
+                            urlString: asset.song.artworkURL,
+                            title: asset.song.title,
+                            artist: asset.song.artist
+                        )
+
+                        musicInfoColumn(
+                            title: asset.song.title.isEmpty ? "未知曲目" : asset.song.title,
+                            artist: asset.song.artist.isEmpty ? "未知作者" : asset.song.artist,
+                            sourceText: asset.videoName,
+                            width: layout.infoWidth
+                        )
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("跳到视频中此段落")
+
+                musicTagColumn(
+                    tags: visibleTags,
+                    suggestedTags: row.suggestedTags,
+                    layout: layout,
+                    onAdd: { libraryStore.addMusicTag($0, to: asset.song, in: asset.videoPath) },
+                    onRemove: { libraryStore.removeMusicTag($0, from: asset.song, in: asset.videoPath) }
+                )
+
+                MusicDownloadControlsAndWaveform(
+                    song: asset.song,
+                    downloadJobs: downloadJobs,
+                    buttonsWidth: MusicRowMetrics.verticalButtonsWidth,
+                    buttonLayout: .vertical,
+                    elementSpacing: MusicRowMetrics.columnSpacing,
+                    timeWidth: layout.metadataWidth,
+                    waveformWidth: layout.waveformWidth,
+                    waveformHeight: MusicRowMetrics.waveformHeight,
+                    fallbackDuration: asset.song.duration
+                )
+
+                recognizedMusicActionColumn(asset: asset, fileURLs: downloadedFileURLs)
+                    .frame(
+                        width: MusicRowMetrics.sideActionWidth,
+                        height: MusicRowMetrics.artworkSize,
+                        alignment: .center
+                    )
+            }
+            .padding(.horizontal, MusicRowMetrics.contentInsetX)
+            .padding(.vertical, MusicRowMetrics.contentInsetY)
+            .frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+            .contentShape(Rectangle())
+            .itemProviderDrag(rowDragProvider)
+        }
+        .frame(height: MusicRowMetrics.rowHeight)
+    }
+
+    private func localMusicGroupRow(_ row: LocalMusicGroupRowProjection) -> some View {
+        let group = row.group
+        let roleAssets = row.roleAssets
+        let downloadJobs = row.downloadJobs
+        let displayTitle = row.displayTitle
+        let displayArtist = row.displayArtist
+        let visibleTags = row.visibleTags
+        let primaryFileURL = row.primaryFileURL
+        let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
+        let sourceText = row.sourceText
+        let fileURLs = row.fileURLs
+
+        return GeometryReader { proxy in
+            let layout = musicRowLayout(
+                containerWidth: proxy.size.width,
+                tags: visibleTags,
+                hasWaveform: true,
+                includesSafari: false,
+                hasTagEditor: true,
+                actionWidth: MusicRowMetrics.verticalButtonsWidth,
+                sideActionWidth: MusicRowMetrics.sideActionWidth
+            )
+            HStack(alignment: .center, spacing: MusicRowMetrics.columnSpacing) {
+                Button {
+                    if let primaryFileURL {
+                        NSWorkspace.shared.open(primaryFileURL)
+                    }
+                } label: {
+                    musicArtwork(
+                        urlString: group.artworkURL,
+                        title: displayTitle,
+                        artist: displayArtist
+                    )
+                    .opacity(primaryFileURL == nil ? 0.45 : 1)
+                }
+                .buttonStyle(.plain)
+                .disabled(primaryFileURL == nil)
+                .help(primaryFileURL == nil ? "音乐文件不存在" : "打开音乐文件")
+                .frame(width: MusicRowMetrics.artworkSize, height: MusicRowMetrics.artworkSize, alignment: .center)
+
+                musicInfoColumn(
+                    title: displayTitle.isEmpty ? "未知曲目" : displayTitle,
+                    artist: displayArtist,
+                    sourceText: sourceText,
+                    width: layout.infoWidth
+                )
+
+                musicTagColumn(
+                    tags: visibleTags,
+                    suggestedTags: row.suggestedTags,
+                    layout: layout,
+                    onAdd: { addLocalMusicGroupTag($0, to: group) },
+                    onRemove: { removeLocalMusicGroupTag($0, from: group) }
+                )
+
+                MusicDownloadControlsAndWaveform(
+                    song: row.song,
+                    downloadJobs: downloadJobs,
+                    buttonsWidth: MusicRowMetrics.verticalButtonsWidth,
+                    buttonLayout: .vertical,
+                    elementSpacing: MusicRowMetrics.columnSpacing,
+                    timeWidth: layout.metadataWidth,
+                    waveformWidth: layout.waveformWidth,
+                    waveformHeight: MusicRowMetrics.waveformHeight,
+                    fallbackDuration: row.duration
+                )
+
+                localMusicActionColumn(group: group, fileURLs: fileURLs)
+                    .frame(
+                        width: MusicRowMetrics.sideActionWidth,
+                        height: MusicRowMetrics.artworkSize,
+                        alignment: .center
+                    )
+            }
+            .padding(.horizontal, MusicRowMetrics.contentInsetX)
+            .padding(.vertical, MusicRowMetrics.contentInsetY)
+            .frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .leading)
+            .background(.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.07), lineWidth: 0.7)
+            }
+            .contentShape(Rectangle())
+            .itemProviderDrag(rowDragProvider)
+        }
+        .frame(height: MusicRowMetrics.rowHeight)
+        .onAppear {
+            for roleAsset in roleAssets {
+                libraryStore.ensureLocalMusicWaveformIfNeeded(roleAsset.asset)
+            }
+        }
+        .help(group.hasBothRecognizedRoles ? "原曲和伴奏已合并显示" : "可拖出音乐文件")
+    }
+
+    private func addLocalMusicGroupTag(_ tag: String, to group: LocalMusicGroup) {
+        for asset in group.assets {
+            libraryStore.addLocalMusicTag(tag, to: asset)
+        }
+    }
+
+    private func removeLocalMusicGroupTag(_ tag: String, from group: LocalMusicGroup) {
+        let builder = makeMusicProjectionBuilder()
+        for asset in group.assets {
+            libraryStore.removeLocalMusicTag(tag, from: asset)
+            if let song = builder.localMusicDisplaySong(for: asset) {
+                libraryStore.removeMusicTag(tag, from: song, in: asset.filePath)
+            }
+        }
+    }
+
+    private func localMusicActionColumn(group: LocalMusicGroup, fileURLs: [URL]) -> some View {
+        VStack(spacing: MusicRowMetrics.actionButtonSpacing) {
+            Button {
+                showLocalMusicGroupInFinder(fileURLs)
+            } label: {
+                musicRowActionIcon("folder")
+            }
+            .buttonStyle(.plain)
+            .disabled(fileURLs.isEmpty)
+            .help(fileURLs.isEmpty ? "音乐文件不存在" : "在访达显示")
+
+            musicFeaturedButton(isFeatured: hasFeaturedMusicTag(group.tags)) {
+                toggleFeaturedLocalMusicGroup(group)
+            }
+        }
+        .frame(
+            width: MusicRowMetrics.sideActionWidth,
+            height: MusicRowMetrics.actionColumnHeight,
+            alignment: .center
+        )
+    }
+
+    private func recognizedMusicActionColumn(asset: RecognizedMusicAsset, fileURLs: [URL]) -> some View {
+        VStack(spacing: MusicRowMetrics.actionButtonSpacing) {
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
+            } label: {
+                musicRowActionIcon("folder")
+            }
+            .buttonStyle(.plain)
+            .disabled(fileURLs.isEmpty)
+            .help(fileURLs.isEmpty ? "暂无已下载音乐文件" : "在访达显示")
+
+            musicFeaturedButton(isFeatured: hasFeaturedMusicTag(asset.song.tags)) {
+                toggleFeaturedRecognizedMusicAsset(asset)
+            }
+        }
+        .frame(
+            width: MusicRowMetrics.sideActionWidth,
+            height: MusicRowMetrics.actionColumnHeight,
+            alignment: .center
+        )
+    }
+
+    private func musicFeaturedButton(isFeatured: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            musicRowActionIcon(
+                isFeatured ? "star.fill" : "star",
+                tint: isFeatured ? .yellow : .white.opacity(0.70)
+            )
+            .background(isFeatured ? Color.yellow.opacity(0.16) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isFeatured ? Color.yellow.opacity(0.34) : Color.clear, lineWidth: 0.7)
             }
         }
         .buttonStyle(.plain)
-        .disabled(isActive)
-        .help(musicDownloadHelp(type: type, job: job))
-        .contextMenu {
-            Button {
-                libraryStore.downloadMusic(song: song, type: type)
-            } label: {
-                Label("重新下载\(type.label)", systemImage: "arrow.clockwise")
+        .help(isFeatured ? "取消精选" : "加入精选")
+    }
+
+    private func musicRowActionIcon(_ systemName: String, tint: Color = .white.opacity(0.70)) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: MusicRowMetrics.actionButtonSize, height: MusicRowMetrics.actionButtonSize)
+            .contentShape(Rectangle())
+    }
+
+    private func showLocalMusicGroupInFinder(_ fileURLs: [URL]) {
+        guard !fileURLs.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
+    }
+
+    private func toggleFeaturedRecognizedMusicAsset(_ asset: RecognizedMusicAsset) {
+        if hasFeaturedMusicTag(asset.song.tags) {
+            libraryStore.removeMusicTag(MusicRecognitionItem.featuredMusicTag, from: asset.song, in: asset.videoPath)
+        } else {
+            libraryStore.addMusicTag(MusicRecognitionItem.featuredMusicTag, to: asset.song, in: asset.videoPath)
+        }
+    }
+
+    private func toggleFeaturedLocalMusicGroup(_ group: LocalMusicGroup) {
+        if hasFeaturedMusicTag(group.tags) {
+            let builder = makeMusicProjectionBuilder()
+            for asset in group.assets {
+                libraryStore.removeLocalMusicTag(MusicRecognitionItem.featuredMusicTag, from: asset)
+                if let song = builder.localMusicDisplaySong(for: asset) {
+                    libraryStore.removeMusicTag(MusicRecognitionItem.featuredMusicTag, from: song, in: asset.filePath)
+                }
+            }
+        } else {
+            for asset in group.assets {
+                libraryStore.addLocalMusicTag(MusicRecognitionItem.featuredMusicTag, to: asset)
+            }
+        }
+    }
+
+    private func musicInfoColumn(
+        title: String,
+        artist: String,
+        sourceText: String?,
+        width: CGFloat
+    ) -> some View {
+        let artistLine = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceLine = sourceText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(artistLine.isEmpty ? " " : artistLine)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(sourceLine.isEmpty ? " " : sourceLine)
+                .font(Design.numericCaption2())
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(width: width, height: MusicRowMetrics.artworkSize, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func musicTagColumn(
+        tags: [String],
+        suggestedTags: [String] = [],
+        layout: (
+            infoWidth: CGFloat,
+            tagWidth: CGFloat,
+            waveformWidth: CGFloat,
+            metadataWidth: CGFloat,
+            showsTags: Bool,
+            showsWaveform: Bool
+        ),
+        onAdd: ((String) -> Void)? = nil,
+        onRemove: ((String) -> Void)? = nil
+    ) -> some View {
+        if layout.showsTags {
+            if let onAdd, let onRemove {
+                EditableMusicTagStrip(
+                    title: "音乐标签",
+                    tags: tags,
+                    suggestedTags: suggestedTags,
+                    onAdd: onAdd,
+                    onRemove: onRemove
+                )
+                .padding(.top, MusicRowMetrics.tagColumnTopInset)
+                .frame(width: layout.tagWidth, height: MusicRowMetrics.artworkSize, alignment: .topLeading)
+                .clipped()
+            } else if !tags.isEmpty {
+                MusicEntryTagStrip(tags: tags)
+                    .padding(.top, MusicRowMetrics.tagColumnTopInset)
+                    .frame(width: layout.tagWidth, height: MusicRowMetrics.artworkSize, alignment: .topLeading)
+                    .clipped()
+            } else {
+                Color.clear
+                    .frame(width: layout.tagWidth, height: MusicRowMetrics.artworkSize, alignment: .topLeading)
             }
         }
     }
@@ -636,7 +858,7 @@ struct MusicWorkspaceView: View {
             Text(title)
                 .font(.headline.weight(.semibold))
             Text("\(count)")
-                .font(.caption2.monospacedDigit().weight(.bold))
+                .font(Design.numericCaption2(weight: .bold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
@@ -651,232 +873,312 @@ struct MusicWorkspaceView: View {
         size: CGFloat,
         tint: Color = Design.libraryToolbarIconTint
     ) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: size, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(tint)
-            .frame(
-                width: Design.libraryToolbarButtonSlotWidth,
-                height: Design.libraryToolbarButtonSlotHeight,
-                alignment: .center
-            )
+        libraryToolbarIcon(systemName: systemName, size: size, tint: tint)
+    }
+
+    private var selectedMusicSortOption: MusicSortOption {
+        MusicSortOption(rawValue: musicSortOptionRawValue) ?? .title
+    }
+
+    private var selectedMusicSortDirection: VideoSortDirection {
+        VideoSortDirection(rawValue: musicSortDirectionRawValue) ?? .ascending
+    }
+
+    private func makeMusicProjectionBuilder() -> MusicWorkspaceProjectionBuilder {
+        MusicWorkspaceProjectionBuilder(input: MusicWorkspaceProjectionInput(
+            videos: libraryStore.videos,
+            musicsByVideoPath: libraryStore.musicsByVideoPath,
+            localMusicAssets: libraryStore.localMusicAssets,
+            musicDownloadJobs: libraryStore.musicDownloadJobs,
+            metadataByVideoPath: libraryStore.metadataByVideoPath,
+            allMusicTags: libraryStore.allMusicTags,
+            searchText: viewModel.searchText,
+            searchResults: viewModel.searchResults,
+            selectedMusicFilters: viewModel.selectedMusicFilters,
+            isMusicTagFilterBarPresented: viewModel.isMusicTagFilterBarPresented,
+            sortOption: selectedMusicSortOption,
+            sortDirection: selectedMusicSortDirection,
+            musicDownloadLookupCaches: MusicDownloadLookupCaches(
+                jobs: libraryStore.musicDownloadJobs,
+                completedFileURL: completedMusicFileURL(for:)
+            ),
+            localMusicWaveformSamplesByPath: libraryStore.localMusicWaveformSamplesByPath,
+            knownLocalResourcePaths: libraryStore.knownLocalResourcePaths
+        ))
+    }
+
+    private func hasFeaturedMusicTag(_ tags: [String]) -> Bool {
+        tags.contains { MusicRecognitionItem.isFeaturedMusicTag($0) }
+    }
+
+    private var selectedMusicTagFilterCount: Int {
+        viewModel.selectedMusicTagFilterCount
+    }
+
+    private func toggleMusicFilter(_ option: MusicFilterOption) {
+        viewModel.toggleMusicFilter(option)
+    }
+
+    private func toggleSingleMusicFilter(_ option: MusicFilterOption) {
+        viewModel.toggleSingleMusicFilter(option)
     }
 
     private func musicArtwork(urlString: String, title: String = "", artist: String = "") -> some View {
         MusicArtworkView(
             urlString: urlString,
             title: title,
-            artist: artist
+            artist: artist,
+            allowsFallbackLookup: false
         )
-            .frame(width: 56, height: 56)
+            .frame(width: MusicRowMetrics.artworkSize, height: MusicRowMetrics.artworkSize)
     }
 
-    private var musicAssets: [RecognizedMusicAsset] {
-        let videoNameByPath = Dictionary(
-            uniqueKeysWithValues: libraryStore.videos.map { ($0.url.path, $0.name) }
-        )
-        let localNameByPath = Dictionary(
-            uniqueKeysWithValues: libraryStore.localMusicAssets.map { ($0.filePath, $0.title) }
-        )
-
-        return libraryStore.musicsByVideoPath.flatMap { path, songs in
-            guard videoNameByPath[path] != nil || localNameByPath[path] != nil else {
-                return [RecognizedMusicAsset]()
+    private func musicDownloadDragProvider(from jobs: [MusicDownloadJob]) -> (() -> NSItemProvider)? {
+        let preferredJob = MusicDownloadJob.DownloadType.allCases.compactMap { type in
+            jobs.first { job in
+                job.type == type && completedMusicFileURL(for: job) != nil
             }
-            let videoName = videoNameByPath[path]
-                ?? localNameByPath[path]
-                ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-            return songs
-                .filter(isAMReadySong)
-                .map { song in
-                    RecognizedMusicAsset(videoPath: path, videoName: videoName, song: song)
-                }
         }
-        .sorted { lhs, rhs in
-            if lhs.videoName == rhs.videoName {
-                return lhs.song.detectedAt < rhs.song.detectedAt
-            }
-            return lhs.videoName.localizedStandardCompare(rhs.videoName) == .orderedAscending
-        }
-    }
-
-    private var folderMusicRecognitionStatusText: String? {
-        let assets = libraryStore.localMusicAssets
-        guard !assets.isEmpty else { return nil }
-
-        let unresolved = assets.filter { asset in
-            let songs = libraryStore.musicsByVideoPath[asset.filePath, default: []]
-            return songs.allSatisfy { !isAMReadySong($0) }
-        }
-        guard !unresolved.isEmpty else { return nil }
-
-        if unresolved.contains(where: { asset in
-            if case .running = libraryStore.musicDetectionStatusByVideoPath[asset.filePath] {
-                return true
-            }
-            return false
-        }) {
-            return "正在识别文件夹内音乐"
-        }
-
-        let failedCount = unresolved.filter { asset in
-            if case .failed = libraryStore.musicDetectionStatusByVideoPath[asset.filePath] {
-                return true
-            }
-            return false
-        }.count
-
-        if failedCount == unresolved.count {
-            return "文件夹内音乐暂未识别成功"
-        }
-        return "等待识别文件夹内音乐"
-    }
-
-    private var filteredSearchResults: [AppleMusicSearchResult] {
-        searchResults.filter { item in
-            let song = item.asMusicRecognitionItem()
-            guard isAMReadySong(song) else { return false }
-            return matchesSelectedMusicFilters(for: song)
-        }
-    }
-
-    private func filteredRecognizedMusicAssets(from assets: [RecognizedMusicAsset]) -> [RecognizedMusicAsset] {
-        let query = normalizedSearch(searchText)
-        guard !query.isEmpty || !selectedMusicFilters.isEmpty else {
-            return assets
-        }
-        return assets.filter { asset in
-            let matchesSearch = query.isEmpty
-                || normalizedSearch(asset.song.title).contains(query)
-                || normalizedSearch(asset.song.artist).contains(query)
-                || normalizedSearch(asset.videoName).contains(query)
-                || visibleTags(for: asset.song).contains { normalizedSearch($0).contains(query) }
-            guard matchesSearch else { return false }
-            return matchesSelectedMusicFilters(for: asset)
-        }
-    }
-
-    private func musicFilterValues(from assets: [RecognizedMusicAsset]) -> [MusicFilterKind: [String]] {
-        let titleValues = assets.map(\.song.title)
-        let artistValues = assets.map(\.song.artist)
-        let tagValues = assets.flatMap { visibleTags(for: $0.song) }
-
-        return [
-            .title: cleanedMusicFilterValues(titleValues),
-            .artist: cleanedMusicFilterValues(artistValues),
-            .tag: cleanedMusicFilterValues(tagValues)
-        ]
-    }
-
-    private func cleanedMusicFilterValues(_ values: [String]) -> [String] {
-        Array(Set(values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }))
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    private var selectedMusicTagFilterCount: Int {
-        selectedMusicFilters.filter { $0.kind == .tag }.count
-    }
-
-    private var selectedMusicMetadataFilterCount: Int {
-        selectedMusicFilters.filter { $0.kind != .tag }.count
-    }
-
-    private func toggleMusicFilter(_ option: MusicFilterOption) {
-        if selectedMusicFilters.contains(option) {
-            selectedMusicFilters.remove(option)
-        } else {
-            selectedMusicFilters.insert(option)
-        }
-    }
-
-    private func toggleSingleMusicFilter(_ option: MusicFilterOption) {
-        if selectedMusicFilters.contains(option) {
-            selectedMusicFilters.remove(option)
-        } else {
-            selectedMusicFilters = selectedMusicFilters.filter { $0.kind != option.kind }
-            selectedMusicFilters.insert(option)
-        }
-    }
-
-    private func matchesSelectedMusicFilters(for asset: RecognizedMusicAsset) -> Bool {
-        matchesSelectedMusicFilters(for: asset.song)
-    }
-
-    private func matchesSelectedMusicFilters(for song: MusicRecognitionItem) -> Bool {
-        guard !selectedMusicFilters.isEmpty else { return true }
-        let options = Set(filterOptions(for: song))
-        return selectedMusicFilters.allSatisfy { options.contains($0) }
-    }
-
-    private func filterOptions(for song: MusicRecognitionItem) -> [MusicFilterOption] {
-        let metadata = [
-            MusicFilterOption(kind: .title, value: song.title.trimmingCharacters(in: .whitespacesAndNewlines)),
-            MusicFilterOption(kind: .artist, value: song.artist.trimmingCharacters(in: .whitespacesAndNewlines))
-        ]
-        let tags = visibleTags(for: song).map { MusicFilterOption(kind: .tag, value: $0) }
-        return (metadata + tags).filter { !$0.value.isEmpty }
-    }
-
-    private func visibleTags(for song: MusicRecognitionItem) -> [String] {
-        MusicRecognitionItem.cleanedTags(song.tags)
-            .filter { !isMetadataValue($0, for: song) }
-    }
-
-    private func isMetadataValue(_ value: String, for song: MusicRecognitionItem) -> Bool {
-        let valueKey = normalizedSearch(value)
-        guard !valueKey.isEmpty else { return true }
-
-        let titleKey = normalizedSearch(song.title)
-        let artistKey = normalizedSearch(song.artist)
-        if valueKey == titleKey || valueKey == artistKey {
-            return true
-        }
-
-        let separators = CharacterSet(charactersIn: ",，/、·&")
-        let artistParts = song.artist
-            .components(separatedBy: separators)
-            .map(normalizedSearch)
-            .filter { !$0.isEmpty }
-        return artistParts.contains(valueKey)
-    }
-
-    private func isAMReadySong(_ song: MusicRecognitionItem) -> Bool {
-        let hasTitle = !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasArtist = !song.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasArtwork = normalizedMusicArtworkURL(song.artworkURL) != nil
-            || !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasAMLink = !song.appleMusicURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasTitle && hasArtist && hasArtwork && hasAMLink
+        .first
+        return musicDownloadFileDragProvider(for: preferredJob)
     }
 
     private func runAppleMusicSearch() async {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            searchResults = []
-            searchMessage = nil
-            isSearching = false
-            return
-        }
-
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        guard !Task.isCancelled else { return }
-
-        isSearching = true
-        searchMessage = nil
-        libraryStore.prepareExternalServiceWork()
-        do {
-            let results = try await LibraryStore.searchAppleMusic(query: query)
-            guard !Task.isCancelled else { return }
-            searchResults = results
-            searchMessage = results.isEmpty ? "没有搜索结果" : nil
-        } catch {
-            guard !Task.isCancelled else { return }
-            searchResults = []
-            searchMessage = "搜索失败"
-        }
-        isSearching = false
+        await viewModel.runAppleMusicSearch(
+            prepareExternalServiceWork: prepareMusicWorkspaceExternalServiceWork,
+            search: LibraryStore.searchAppleMusic(query:)
+        )
     }
 
+}
+
+private struct EditableMusicTagStrip: View {
+    let title: String
+    let tags: [String]
+    let suggestedTags: [String]
+    let onAdd: (String) -> Void
+    let onRemove: (String) -> Void
+
+    @State private var isPresented = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(1, proxy.size.width)
+
+            editableTagFlow(maxChipWidth: width)
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipped()
+        .help(title)
+        .transaction { transaction in
+            transaction.disablesAnimations = true
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .trailing) {
+            tagEditorPopover
+        }
+    }
+
+    private func editableTagFlow(maxChipWidth: CGFloat) -> some View {
+        MusicEntryTagFlowLayout(spacing: MusicRowMetrics.tagSpacing, rowSpacing: MusicRowMetrics.tagSpacing) {
+            ForEach(tags, id: \.self) { tag in
+                MusicEntryTagChip(tag: tag, size: .compact, maxChipWidth: maxChipWidth)
+            }
+            TagStripAddButton(height: MusicEntryTagChip.Size.compact.height) {
+                presentEditor()
+            }
+        }
+    }
+
+    private func presentEditor() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isPresented = true
+        }
+    }
+
+    private var tagEditorPopover: some View {
+        TagEditorSection(
+            title: title,
+            domain: .music,
+            tags: tags,
+            suggestedTags: suggestedTags,
+            chipSize: .compact,
+            onAdd: onAdd,
+            onRemove: onRemove
+        )
+        .padding(12)
+    }
+}
+
+private struct MusicEntryTagStrip: View {
+    let tags: [String]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(1, proxy.size.width)
+
+            tagFlow(size: .compact, maxChipWidth: width)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func tagFlow(size: MusicEntryTagChip.Size, maxChipWidth: CGFloat) -> some View {
+        MusicEntryTagFlowLayout(spacing: MusicRowMetrics.tagSpacing, rowSpacing: MusicRowMetrics.tagSpacing) {
+            ForEach(tags, id: \.self) { tag in
+                MusicEntryTagChip(tag: tag, size: size, maxChipWidth: maxChipWidth)
+            }
+        }
+    }
+}
+
+private struct MusicEntryTagChip: View {
+    enum Size {
+        case regular
+        case compact
+        case mini
+
+        var fontSize: CGFloat {
+            switch self {
+            case .regular: return 11
+            case .compact: return 9.5
+            case .mini: return 8.5
+            }
+        }
+
+        var horizontalPadding: CGFloat {
+            switch self {
+            case .regular: return 7
+            case .compact: return 5.5
+            case .mini: return 4.5
+            }
+        }
+
+        var height: CGFloat {
+            switch self {
+            case .regular: return 18
+            case .compact: return 16
+            case .mini: return 14
+            }
+        }
+
+        var minimumScaleFactor: CGFloat {
+            switch self {
+            case .regular: return 0.72
+            case .compact: return 0.64
+            case .mini: return 0.54
+            }
+        }
+    }
+
+    let tag: String
+    let size: Size
+    let maxChipWidth: CGFloat
+
+    var body: some View {
+        let chipWidth = min(maxChipWidth, estimatedChipWidth)
+        let textWidth = max(12, chipWidth - size.horizontalPadding * 2)
+
+        Text(tag)
+            .font(.system(size: size.fontSize, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(size.minimumScaleFactor)
+            .allowsTightening(true)
+            .frame(width: textWidth, height: size.height, alignment: .center)
+            .foregroundStyle(Design.tagChipForeground)
+            .padding(.horizontal, size.horizontalPadding)
+            .frame(width: chipWidth, height: size.height, alignment: .center)
+            .background(Design.tagChipFill)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Design.tagChipStroke, lineWidth: 0.8)
+            }
+    }
+
+    private var estimatedChipWidth: CGFloat {
+        let font = NSFont.systemFont(ofSize: size.fontSize, weight: .semibold)
+        let textWidth = (tag as NSString).size(withAttributes: [.font: font]).width
+        return ceil(textWidth) + size.horizontalPadding * 2
+    }
+}
+
+private struct MusicEntryTagFlowLayout: Layout {
+    let spacing: CGFloat
+    let rowSpacing: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        layout(for: subviews, maxWidth: proposal.width ?? 0).size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let result = layout(for: subviews, maxWidth: bounds.width)
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + result.positions[index].x,
+                    y: bounds.minY + result.positions[index].y
+                ),
+                proposal: ProposedViewSize(result.sizes[index])
+            )
+        }
+    }
+
+    private func layout(
+        for subviews: Subviews,
+        maxWidth: CGFloat
+    ) -> (positions: [CGPoint], sizes: [CGSize], size: CGSize) {
+        guard !subviews.isEmpty else {
+            return ([], [], .zero)
+        }
+
+        let widthLimit = max(1, maxWidth)
+        let sizes = subviews.map { subview in
+            let size = subview.sizeThatFits(.unspecified)
+            return CGSize(width: min(size.width, widthLimit), height: size.height)
+        }
+        var positions: [CGPoint] = []
+        positions.reserveCapacity(sizes.count)
+
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for size in sizes {
+            if x > 0, x + spacing + size.width > widthLimit {
+                y += rowHeight + rowSpacing
+                x = 0
+                rowHeight = 0
+            }
+
+            if x > 0 {
+                x += spacing
+            }
+
+            positions.append(CGPoint(x: x, y: y))
+            usedWidth = max(usedWidth, x + size.width)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width
+        }
+
+        return (
+            positions: positions,
+            sizes: sizes,
+            size: CGSize(width: min(usedWidth, widthLimit), height: y + rowHeight)
+        )
+    }
 }
 
 nonisolated func normalizedSearch(_ text: String) -> String {
@@ -885,35 +1187,16 @@ nonisolated func normalizedSearch(_ text: String) -> String {
         .lowercased()
 }
 
-func fileSizeText(_ size: Int64) -> String {
-    ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-}
-
 func fileDragProvider(for fileURL: URL, suggestedName: String) -> NSItemProvider {
-    let provider = NSItemProvider()
-    provider.suggestedName = suggestedName
-    let typeIdentifier = UTType(filenameExtension: fileURL.pathExtension)?.identifier ?? UTType.data.identifier
-
-    provider.registerFileRepresentation(
-        forTypeIdentifier: typeIdentifier,
-        fileOptions: .openInPlace,
-        visibility: .all
-    ) { completion in
-        let progress = Progress(totalUnitCount: 1)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            completion(nil, true, NSError(
-                domain: "LapianBao.FileDrag",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "文件不存在"]
-            ))
-            return progress
-        }
-
-        progress.completedUnitCount = 1
-        completion(fileURL, true, nil)
-        return progress
-    }
-
-    provider.registerObject(fileURL as NSURL, visibility: .all)
-    return provider
+    let type = UTType(filenameExtension: fileURL.pathExtension)
+    let dragURL = type?.conforms(to: .audio) == true
+        ? externalAudioDragFileURL(for: fileURL, suggestedName: suggestedName)
+        : fileURL
+    return existingFileItemProvider(
+        for: dragURL,
+        suggestedName: suggestedName,
+        fallbackTypeIdentifier: UTType.data.identifier,
+        errorDomain: "LapianBao.FileDrag",
+        missingFileMessage: "文件不存在"
+    )
 }

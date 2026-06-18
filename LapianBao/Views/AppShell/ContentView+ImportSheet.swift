@@ -28,8 +28,7 @@ extension ContentView {
                         }
                         .padding(18)
                     }
-                    .scrollIndicators(.hidden)
-                    .background(HiddenScrollIndicators())
+                    .fadingVerticalScrollIndicators()
                 } else {
                     HStack(alignment: .top, spacing: 0) {
                         VStack(alignment: .leading, spacing: 14) {
@@ -54,8 +53,14 @@ extension ContentView {
             }
         }
         .onAppear {
-            libraryStore.prewarmSavedCollectionCookieCache()
-            refreshSavedImportCandidatesIfNeeded(force: true)
+            refreshSavedImportCandidatesIfNeeded()
+            if !isSavedImportRefreshing {
+                libraryStore.prewarmSavedCollectionCookieCache()
+            }
+        }
+        .onChange(of: libraryStore.libraryURL) { _, libraryURL in
+            guard libraryURL != nil else { return }
+            prewarmSavedImportCandidatesIfPossible()
         }
     }
 
@@ -70,9 +75,9 @@ extension ContentView {
                     Button {
                         importURLText = ""
                     } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 24, height: 22)
+                        Text("清空")
+                            .font(.caption2.weight(.semibold))
+                            .frame(height: 22)
                     }
                     .buttonStyle(.borderless)
                     .help("清空")
@@ -120,17 +125,6 @@ extension ContentView {
                 Spacer(minLength: 10)
 
                 Button {
-                    startRemoteImport()
-                } label: {
-                    Label(isImporting ? "继续添加" : "下载输入链接", systemImage: "arrow.down.circle.fill")
-                        .fontWeight(.semibold)
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(manualImportVideos.isEmpty)
-
-                Button {
                     closeImportPanel()
                 } label: {
                     Image(systemName: "xmark")
@@ -140,7 +134,19 @@ extension ContentView {
                 .buttonStyle(.borderless)
                 .keyboardShortcut(.cancelAction)
                 .help("关闭")
+
+                Button {
+                    startRemoteImport()
+                } label: {
+                    Label("下载", systemImage: "arrow.down.circle.fill")
+                        .fontWeight(.semibold)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(manualImportVideos.isEmpty)
             }
+            .frame(height: 30)
         }
     }
 
@@ -154,33 +160,33 @@ extension ContentView {
                 Spacer(minLength: 8)
 
                 Button {
-                    refreshSavedImportCandidates()
+                    refreshSavedImportCandidates(restartExisting: true)
                 } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 24, height: 22)
+                    ZStack {
+                        if isSavedImportRefreshing {
+                            ProgressView()
+                                .controlSize(.small)
+                                .scaleEffect(0.55)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                    }
+                    .frame(width: 24, height: 22)
                 }
                 .buttonStyle(.borderless)
-                .disabled(isSavedImportRefreshing || libraryStore.libraryURL == nil)
-                .help("重新拉取 IG 和小红书收藏")
-
-                if !pendingImportVideos.isEmpty {
-                    Text("\(pendingImportVideos.count)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
+                .disabled(libraryStore.libraryURL == nil)
+                .help(isSavedImportRefreshing ? "重新开始拉取收藏" : "重新拉取 IG 和小红书收藏")
             }
 
             if isSavedImportRefreshing && pendingImportVideos.isEmpty {
-                VStack {
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                        .controlSize(.small)
-                        .tint(Color(red: 0.36, green: 0.70, blue: 1.00))
-                        .frame(width: 180)
-                }
-                .frame(maxWidth: .infinity, minHeight: 170)
-                .frame(maxHeight: .infinity)
+                Text("请保持 Chrome 中 IG 或对应网站的网页已登录")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 170, alignment: .center)
+                    .frame(maxHeight: .infinity)
             } else if pendingImportVideos.isEmpty {
                 AppEmptyState(
                     title: "暂无未添加收藏",
@@ -197,18 +203,19 @@ extension ContentView {
                         }
                     }
                 }
-                .scrollIndicators(.hidden)
-                .background(HiddenScrollIndicators())
+                .fadingVerticalScrollIndicators()
                 .frame(maxHeight: .infinity)
             }
 
             HStack(alignment: .center, spacing: 10) {
+                savedImportRefreshStatusFooter
+
                 Spacer(minLength: 10)
 
                 Button {
                     startAllSavedImportCandidates()
                 } label: {
-                    Label(isSavedImportSerialRunning ? "逐个下载中" : "全部下载", systemImage: "arrow.down.circle.fill")
+                    Label("全部下载", systemImage: "arrow.down.circle.fill")
                         .fontWeight(.semibold)
                 }
                 .buttonStyle(.borderedProminent)
@@ -216,8 +223,35 @@ extension ContentView {
                 .disabled(pendingImportVideos.isEmpty || isSavedImportSerialRunning)
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             }
+            .frame(height: 30)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    var savedImportRefreshStatusFooter: some View {
+        if !isSavedImportSerialRunning, let text = savedImportRefreshStatusText {
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(savedImportRefreshStatusIsError ? Color.orange.opacity(0.92) : .secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 340, alignment: .leading)
+        }
+    }
+
+    var savedImportRefreshStatusText: String? {
+        if libraryStore.libraryURL == nil {
+            return "请先打开素材库文件夹"
+        }
+        if isSavedImportRefreshing {
+            return savedImportRefreshMessage ?? "正在拉取 IG 和小红书收藏..."
+        }
+        return savedImportRefreshMessage
+    }
+
+    var savedImportRefreshStatusIsError: Bool {
+        libraryStore.libraryURL == nil || savedImportRefreshIsError
     }
 
     func pendingImportVideoRow(_ video: PendingImportVideo) -> some View {
@@ -226,19 +260,7 @@ extension ContentView {
             : Color.orange.opacity(0.86)
 
         return HStack(alignment: .center, spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(tint.opacity(0.12))
-
-                Image(systemName: VideoSourcePlatform.iconName(for: video.platform))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(tint)
-            }
-            .frame(width: 42, height: 42)
-            .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(tint.opacity(0.22), lineWidth: 1)
-            }
+            pendingImportVideoCover(video, tint: tint)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(video.title)
@@ -247,7 +269,7 @@ extension ContentView {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                Text(video.subtitle)
+                Text(pendingImportVideoSubtitle(video))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -269,7 +291,7 @@ extension ContentView {
                 .help(video.isSupported ? "加入队列" : "尝试加入队列")
 
                 Button {
-                    removePendingImportVideo(video)
+                    ignorePendingImportVideo(video)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
@@ -277,7 +299,7 @@ extension ContentView {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("移除")
+                .help("以后不再拉取")
             }
         }
         .padding(.horizontal, 9)
@@ -290,6 +312,53 @@ extension ContentView {
         }
     }
 
+    func pendingImportVideoCover(_ video: PendingImportVideo, tint: Color) -> some View {
+        ZStack {
+            if let data = video.thumbnailData,
+               let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(tint.opacity(0.12))
+
+                Image(systemName: VideoSourcePlatform.iconName(for: video.platform))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+
+            if video.isMetadataLoading && video.thumbnailData == nil {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.48)
+            }
+        }
+        .frame(width: 54, height: 42)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(alignment: .bottomTrailing) {
+            Image(systemName: VideoSourcePlatform.iconName(for: video.platform))
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.white.opacity(0.94))
+                .frame(width: 15, height: 15)
+                .background(tint.opacity(0.92))
+                .clipShape(Circle())
+                .padding(4)
+                .opacity(video.thumbnailData == nil ? 0 : 1)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(tint.opacity(video.thumbnailData == nil ? 0.22 : 0.28), lineWidth: 1)
+        }
+    }
+
+    func pendingImportVideoSubtitle(_ video: PendingImportVideo) -> String {
+        guard let authorName = video.authorName,
+              !authorName.isEmpty
+        else { return video.subtitle }
+        return "\(authorName) · \(video.subtitle)"
+    }
+
     var downloadTimelineSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -298,18 +367,10 @@ extension ContentView {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(downloadTimelineSummary)
-                    .font(.caption.monospacedDigit())
+                    .font(Design.numericCaption())
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-            }
-
-            if !activeImportJobs.isEmpty {
-                if let progress = activeImportOverallProgress {
-                    importLinearProgress(progress, tint: Color(red: 0.36, green: 0.70, blue: 1.00))
-                } else {
-                    importIndeterminateProgress(tint: Color(red: 0.36, green: 0.70, blue: 1.00))
-                }
             }
 
             if downloadTimelineJobs.isEmpty {
@@ -327,14 +388,13 @@ extension ContentView {
                         }
                     }
                 }
-                .scrollIndicators(.hidden)
-                .background(HiddenScrollIndicators())
+                .fadingVerticalScrollIndicators()
 
                 if finishedImportCount + failedImportCount > 0 {
                     Button {
                         libraryStore.clearFinishedRemoteImports()
                     } label: {
-                        Label("清空已完成记录", systemImage: "trash")
+                        Text("清空已完成记录")
                             .frame(maxWidth: .infinity)
                     }
                     .font(.caption.weight(.semibold))

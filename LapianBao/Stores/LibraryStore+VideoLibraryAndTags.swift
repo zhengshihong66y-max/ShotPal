@@ -49,8 +49,12 @@ extension LibraryStore {
         cachedThumbnailDataByPath: [String: Data] = [:],
         cachedPlaybackSupportByPath: [String: VideoPlaybackSupport] = [:],
         preservedSelectionPath: String? = nil,
-        preservedSelectedTags: Set<String>? = nil
+        preservedSelectedTags: Set<String>? = nil,
+        decodeCachedThumbnailsImmediately: Bool = false
     ) {
+        beginLibrarySidebarMetricsBatch()
+        defer { endLibrarySidebarMetricsBatch() }
+
         flushProjectDataSave()
         projectLoadTask?.cancel()
         projectLoadTask = nil
@@ -58,7 +62,7 @@ extension LibraryStore {
         projectDataDirty = false
         startupAutomationLibraryPath = nil
         libraryURL = folder
-        UserDefaults.standard.set(folder.path, forKey: lastLibraryPathKey)
+        AppSettings.lastLibraryPath = folder.path
         Self.ensureMediaFolders(in: folder)
         pendingVideoPathRemap = videoPathRemap
         pendingVideoFolderTagsByPath = videoFolderTagsByPath
@@ -70,6 +74,7 @@ extension LibraryStore {
 
         let previousMetadataByPath = metadataByVideoPath
         let previousThumbnailDataByPath = thumbnailDataByVideoPath
+        let previousThumbnailImageByPath = thumbnailImageByVideoPath
         let previousPlaybackSupportByPath = playbackSupportByVideoPath
         let metadataVideos = metadataPrefetchLimit.map {
             Array(scannedVideos.prefix(max(0, $0)))
@@ -79,10 +84,12 @@ extension LibraryStore {
             for: scannedVideos,
             previousMetadataByPath: previousMetadataByPath,
             previousThumbnailDataByPath: previousThumbnailDataByPath,
+            previousThumbnailImageByPath: previousThumbnailImageByPath,
             previousPlaybackSupportByPath: previousPlaybackSupportByPath,
             cachedMetadataByPath: cachedMetadataByPath,
             cachedThumbnailDataByPath: cachedThumbnailDataByPath,
-            cachedPlaybackSupportByPath: cachedPlaybackSupportByPath
+            cachedPlaybackSupportByPath: cachedPlaybackSupportByPath,
+            decodeCachedThumbnailsImmediately: decodeCachedThumbnailsImmediately
         )
         videos = scannedVideos
 
@@ -104,6 +111,15 @@ extension LibraryStore {
         sceneStripImagesByVideoPath = [:]
         sceneCutProgressesByVideoPath = [:]
         sceneThumbnailVersionsByVideoPath = [:]
+        sceneDetectionErrorByVideoPath = [:]
+        transientMediaCacheTrimTask?.cancel()
+        transientMediaCacheTrimTask = nil
+        transientMediaCacheAccessTickByPath.removeAll()
+        transcriptTasks.values.forEach { $0.cancel() }
+        transcriptTasks.removeAll()
+        transcriptBatchTask?.cancel()
+        transcriptBatchTask = nil
+        isTranscriptBatchPaused = false
         frameStripTasks.values.forEach { $0.cancel() }
         frameStripTasks.removeAll()
         musicDownloadBatchTask?.cancel()
@@ -123,18 +139,31 @@ extension LibraryStore {
         } else {
             loadProjectData()
         }
-        loadThumbnails(for: metadataVideos, workerCount: metadataWorkerCount)
+        loadThumbnails(for: metadataVideos, workerCount: metadataWorkerCount, allowThumbnailGeneration: false)
+        if !decodeCachedThumbnailsImmediately {
+            scheduleCachedThumbnailImageHydration(
+                for: Array(scannedVideos.prefix(Self.launchCachedThumbnailHydrationLimit)),
+                after: Self.launchCachedThumbnailHydrationDelay
+            )
+        }
+        if deferProjectDataLoad && cachedThumbnailDataByPath.isEmpty {
+            scheduleCachedThumbnailDataRestore(in: folder, after: Self.launchCachedThumbnailDataRestoreDelay)
+        }
         if let metadataBackgroundPrefetchDelay,
            let metadataPrefetchLimit,
            videos.count > metadataPrefetchLimit {
             scheduleDeferredMetadataLoad(
                 for: Array(videos.dropFirst(max(0, metadataPrefetchLimit))),
                 after: metadataBackgroundPrefetchDelay,
-                workerCount: 1
+                workerCount: 1,
+                allowThumbnailGeneration: false
             )
         }
         loadSceneCutCache()
-        scanResourceLibrary(loadCachedSnapshotSynchronously: !deferProjectDataLoad)
+        scanResourceLibrary(
+            refreshMode: deferProjectDataLoad ? .cachedOnly : .deferred,
+            loadCachedSnapshotSynchronously: !deferProjectDataLoad
+        )
         scheduleCurrentVideoLibrarySnapshotSave(after: 1.0)
     }
 
@@ -142,14 +171,18 @@ extension LibraryStore {
         for scannedVideos: [VideoItem],
         previousMetadataByPath: [String: VideoMetadata],
         previousThumbnailDataByPath: [String: Data],
+        previousThumbnailImageByPath: [String: NSImage],
         previousPlaybackSupportByPath: [String: VideoPlaybackSupport],
         cachedMetadataByPath: [String: VideoMetadata],
         cachedThumbnailDataByPath: [String: Data],
-        cachedPlaybackSupportByPath: [String: VideoPlaybackSupport]
+        cachedPlaybackSupportByPath: [String: VideoPlaybackSupport],
+        decodeCachedThumbnailsImmediately: Bool
     ) {
         let scannedPaths = Set(scannedVideos.map { $0.url.path })
         thumbnailDataByVideoPath = previousThumbnailDataByPath.filter { scannedPaths.contains($0.key) }
-        thumbnailImageByVideoPath = thumbnailDataByVideoPath.compactMapValues(Self.decodedThumbnailImage(from:))
+        thumbnailImageByVideoPath = decodeCachedThumbnailsImmediately
+            ? thumbnailDataByVideoPath.compactMapValues(Self.decodedThumbnailImage(from:))
+            : previousThumbnailImageByPath.filter { scannedPaths.contains($0.key) }
         durationByVideoPath = [:]
         playbackSupportByVideoPath = previousPlaybackSupportByPath.filter { scannedPaths.contains($0.key) }
 
@@ -167,7 +200,8 @@ extension LibraryStore {
             if let thumbnailData = cachedThumbnailDataByPath[path] ?? previousThumbnailDataByPath[path],
                Self.cachedVideoMetadata(metadataByVideoPath[path], matchesFileAt: video.url) {
                 thumbnailDataByVideoPath[path] = thumbnailData
-                if let image = Self.decodedThumbnailImage(from: thumbnailData) {
+                if decodeCachedThumbnailsImmediately,
+                   let image = Self.decodedThumbnailImage(from: thumbnailData) {
                     thumbnailImageByVideoPath[path] = image
                 }
             }
@@ -274,6 +308,18 @@ extension LibraryStore {
         var folderTags: [String]
         var metadata: VideoMetadata?
         var thumbnailData: Data?
+        var playbackSupport: VideoPlaybackSupport?
+    }
+
+    nonisolated struct CachedVideoLibrarySummary: Decodable, Sendable {
+        var version: Int
+        var entries: [CachedVideoSummaryEntry]
+    }
+
+    nonisolated struct CachedVideoSummaryEntry: Decodable, Sendable {
+        var relativePath: String
+        var folderTags: [String]
+        var metadata: VideoMetadata?
         var playbackSupport: VideoPlaybackSupport?
     }
 
@@ -388,31 +434,58 @@ extension LibraryStore {
     }
 
     nonisolated static func videoLibraryCacheURL(in libraryURL: URL) -> URL {
-        libraryURL.appendingPathComponent(".lapianbao_videos_cache.json")
+        ProjectRepository.videoCacheURL(in: libraryURL)
     }
 
     nonisolated static func loadCachedVideoLibrary(in libraryURL: URL) -> CachedVideoLibrary? {
         let url = videoLibraryCacheURL(in: libraryURL)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
         guard
-            let data = try? Data(contentsOf: url),
-            let cache = try? decoder.decode(CachedVideoLibrary.self, from: data),
+            let cache = ProjectRepository.readJSON(
+                CachedVideoLibrary.self,
+                from: url,
+                decoder: ProjectRepository.makeDecoder(dateDecodingStrategy: .iso8601)
+            ),
             cache.version == videoLibraryCacheVersion
         else { return nil }
         return cache
     }
 
-    nonisolated static func loadCachedVideoOrganization(in libraryURL: URL) -> VideoOrganizationResult? {
-        guard let cache = loadCachedVideoLibrary(in: libraryURL) else { return nil }
+    nonisolated static func loadCachedVideoLibrarySummary(in libraryURL: URL) -> CachedVideoLibrarySummary? {
+        let url = videoLibraryCacheURL(in: libraryURL)
+        guard
+            let cache = ProjectRepository.readJSON(
+                CachedVideoLibrarySummary.self,
+                from: url,
+                decoder: ProjectRepository.makeDecoder(dateDecodingStrategy: .iso8601)
+            ),
+            cache.version == videoLibraryCacheVersion
+        else { return nil }
+        return cache
+    }
 
+    nonisolated static func loadCachedVideoOrganization(
+        in libraryURL: URL,
+        includeThumbnailData: Bool = true
+    ) -> VideoOrganizationResult? {
+        if includeThumbnailData {
+            guard let cache = loadCachedVideoLibrary(in: libraryURL) else { return nil }
+            return videoOrganizationResult(from: cache.entries, libraryURL: libraryURL)
+        }
+        guard let cache = loadCachedVideoLibrarySummary(in: libraryURL) else { return nil }
+        return videoOrganizationResult(from: cache.entries, libraryURL: libraryURL)
+    }
+
+    nonisolated static func videoOrganizationResult(
+        from entries: [CachedVideoEntry],
+        libraryURL: URL
+    ) -> VideoOrganizationResult? {
         let fm = FileManager.default
         var urls: [URL] = []
         var folderTagsByPath: [String: [String]] = [:]
         var metadataByPath: [String: VideoMetadata] = [:]
         var thumbnailDataByPath: [String: Data] = [:]
         var playbackSupportByPath: [String: VideoPlaybackSupport] = [:]
-        for entry in cache.entries {
+        for entry in entries {
             let fileURL = libraryURL.appendingPathComponent(entry.relativePath)
             let path = fileURL.path
             guard supportedVideoExtensions.contains(fileURL.pathExtension.lowercased()) else { continue }
@@ -433,7 +506,7 @@ extension LibraryStore {
             }
         }
 
-        if !cache.entries.isEmpty && urls.isEmpty {
+        if !entries.isEmpty && urls.isEmpty {
             return nil
         }
 
@@ -445,6 +518,49 @@ extension LibraryStore {
             folderTagsByPath: folderTagsByPath,
             metadataByPath: metadataByPath,
             thumbnailDataByPath: thumbnailDataByPath,
+            playbackSupportByPath: playbackSupportByPath
+        )
+    }
+
+    nonisolated static func videoOrganizationResult(
+        from entries: [CachedVideoSummaryEntry],
+        libraryURL: URL
+    ) -> VideoOrganizationResult? {
+        let fm = FileManager.default
+        var urls: [URL] = []
+        var folderTagsByPath: [String: [String]] = [:]
+        var metadataByPath: [String: VideoMetadata] = [:]
+        var playbackSupportByPath: [String: VideoPlaybackSupport] = [:]
+        for entry in entries {
+            let fileURL = libraryURL.appendingPathComponent(entry.relativePath)
+            let path = fileURL.path
+            guard supportedVideoExtensions.contains(fileURL.pathExtension.lowercased()) else { continue }
+            guard fm.fileExists(atPath: path) else { continue }
+            urls.append(fileURL)
+            if !entry.folderTags.isEmpty {
+                folderTagsByPath[path] = entry.folderTags
+            }
+            if let metadata = entry.metadata,
+               cachedVideoMetadata(metadata, matchesFileAt: fileURL) {
+                metadataByPath[path] = fileResourceMetadata(for: fileURL, preserving: metadata)
+                if let playbackSupport = entry.playbackSupport {
+                    playbackSupportByPath[path] = playbackSupport
+                }
+            }
+        }
+
+        if !entries.isEmpty && urls.isEmpty {
+            return nil
+        }
+
+        let displayURLs = preferredVideoDisplayURLs(from: urls, libraryURL: libraryURL)
+
+        return VideoOrganizationResult(
+            urls: displayURLs.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending },
+            pathRemap: [:],
+            folderTagsByPath: folderTagsByPath,
+            metadataByPath: metadataByPath,
+            thumbnailDataByPath: [:],
             playbackSupportByPath: playbackSupportByPath
         )
     }
@@ -487,11 +603,14 @@ extension LibraryStore {
             generatedAt: Date(),
             entries: entries
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(cache) else { return }
-        try? data.write(to: videoLibraryCacheURL(in: libraryURL), options: Data.WritingOptions.atomic)
+        try? ProjectRepository.writeJSON(
+            cache,
+            to: videoLibraryCacheURL(in: libraryURL),
+            encoder: ProjectRepository.makeEncoder(
+                outputFormatting: [.prettyPrinted, .sortedKeys],
+                dateEncodingStrategy: .iso8601
+            )
+        )
     }
 
     nonisolated static func cachedVideoMetadata(_ metadata: VideoMetadata?, matchesFileAt url: URL) -> Bool {
@@ -576,7 +695,9 @@ extension LibraryStore {
 
         let musicHints = [
             "official music video", "official mv", "music video",
-            "instrumental", "karaoke", "伴奏", "off vocal", "off-vocal"
+            "instrumental", "karaoke", "伴奏", "off vocal", "off-vocal",
+            "backing track", "accompaniment", "minus one", "no vocal", "without vocal", "without vocals",
+            "无人声", "纯音乐"
         ]
         if musicHints.contains(where: { name.contains($0) }) {
             return musicExportFolderName
@@ -591,23 +712,20 @@ extension LibraryStore {
     }
 
     nonisolated static func resourceLibraryCacheURL(in libraryURL: URL) -> URL {
-        libraryURL.appendingPathComponent(".lapianbao_resource_cache.json")
+        ProjectRepository.resourceCacheURL(in: libraryURL)
     }
 
     nonisolated static func loadCachedResourceLibrarySnapshot(in libraryURL: URL) -> ResourceLibrarySnapshot? {
         let url = resourceLibraryCacheURL(in: libraryURL)
-        guard
-            let data = try? Data(contentsOf: url),
-            let snapshot = try? JSONDecoder().decode(ResourceLibrarySnapshot.self, from: data)
-        else { return nil }
-        return snapshot
+        return ProjectRepository.readJSON(ResourceLibrarySnapshot.self, from: url)
     }
 
     nonisolated static func saveCachedResourceLibrarySnapshot(_ snapshot: ResourceLibrarySnapshot, in libraryURL: URL) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(snapshot) else { return }
-        try? data.write(to: resourceLibraryCacheURL(in: libraryURL), options: .atomic)
+        try? ProjectRepository.writeJSON(
+            snapshot,
+            to: resourceLibraryCacheURL(in: libraryURL),
+            encoder: ProjectRepository.prettySortedEncoder
+        )
     }
 
     nonisolated static func quickResourceLibrarySnapshot(in libraryURL: URL) -> ResourceLibrarySnapshot {
@@ -634,19 +752,20 @@ extension LibraryStore {
         let music: [LocalMusicAsset] = musicFiles.map { entry in
             let role = inferredMusicRole(from: entry.url)
             let relativePath = libraryRelativePath(for: entry.url, base: libraryURL)
-            let tags = cleanedResourceTags(
-                [musicExportFolderName, role.label] +
-                (persistedAssetTags[relativePath] ?? []) +
-                entry.tags
+            let title = entry.url.deletingPathExtension().lastPathComponent
+            let tags = MusicRecognitionItem.cleanedMusicTags(
+                cleanedResourceTags((persistedAssetTags[relativePath] ?? []) + entry.tags),
+                title: title
             )
             return LocalMusicAsset(
                 filePath: entry.url.path,
-                title: entry.url.deletingPathExtension().lastPathComponent,
+                title: title,
                 fileExtension: entry.url.pathExtension.lowercased(),
                 role: role,
                 tags: tags,
                 duration: 0,
                 fileSize: entry.fileSize,
+                createdAt: entry.createdAt,
                 modifiedAt: entry.modifiedAt
             )
         }
@@ -710,48 +829,57 @@ extension LibraryStore {
                 return true
             }
 
-            let music: [LocalMusicAsset] = musicFiles.map { entry -> LocalMusicAsset in
+            var music: [LocalMusicAsset] = []
+            music.reserveCapacity(musicFiles.count)
+            for entry in musicFiles {
                 let role = inferredMusicRole(from: entry.url)
                 let relativePath = libraryRelativePath(for: entry.url, base: libraryURL)
-                let tags = cleanedResourceTags(
-                    [musicExportFolderName, role.label] +
-                    (persistedAssetTags[relativePath] ?? []) +
-                    entry.tags
+                let title = entry.url.deletingPathExtension().lastPathComponent
+                let asset = AVURLAsset(url: entry.url)
+                let fileGenreTags = await musicGenreTags(for: asset, title: title)
+                let tags = MusicRecognitionItem.cleanedMusicTags(
+                    cleanedResourceTags((persistedAssetTags[relativePath] ?? []) + entry.tags + fileGenreTags),
+                    title: title
                 )
                 persistedAssetTags[relativePath] = tags
-                return LocalMusicAsset(
+                let duration = await durationSeconds(for: asset) ?? 0
+                music.append(LocalMusicAsset(
                     filePath: entry.url.path,
-                    title: entry.url.deletingPathExtension().lastPathComponent,
+                    title: title,
                     fileExtension: entry.url.pathExtension.lowercased(),
                     role: role,
                     tags: tags,
-                    duration: 0,
+                    duration: duration,
                     fileSize: entry.fileSize,
+                    createdAt: entry.createdAt,
                     modifiedAt: entry.modifiedAt
-                )
+                ))
             }
-            .sorted { (lhs: LocalMusicAsset, rhs: LocalMusicAsset) in
+            music.sort { (lhs: LocalMusicAsset, rhs: LocalMusicAsset) in
                 lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             }
 
-            let audio: [LocalAudioAsset] = audioFiles.map { entry -> LocalAudioAsset in
+            var audio: [LocalAudioAsset] = []
+            audio.reserveCapacity(audioFiles.count)
+            for entry in audioFiles {
                 let relativePath = libraryRelativePath(for: entry.url, base: libraryURL)
                 let tags = cleanedResourceTags(
                     (persistedAssetTags[relativePath] ?? []) +
                     entry.tags
                 )
                 persistedAssetTags[relativePath] = tags
-                return LocalAudioAsset(
+                let duration = await durationSeconds(for: AVURLAsset(url: entry.url)) ?? 0
+                audio.append(LocalAudioAsset(
                     filePath: entry.url.path,
                     title: entry.url.deletingPathExtension().lastPathComponent,
                     fileExtension: entry.url.pathExtension.lowercased(),
                     tags: tags,
-                    duration: 0,
+                    duration: duration,
                     fileSize: entry.fileSize,
                     modifiedAt: entry.modifiedAt
-                )
+                ))
             }
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            audio.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 
             saveResourceAssetTags(persistedAssetTags, in: libraryURL)
             let snapshot = ResourceLibrarySnapshot(music: music, audio: audio)
@@ -767,6 +895,7 @@ extension LibraryStore {
         var url: URL
         var tags: [String]
         var fileSize: Int64
+        var createdAt: Date?
         var modifiedAt: Date?
     }
 
@@ -785,20 +914,21 @@ extension LibraryStore {
             let sourceRootPath = sourceRoot.standardizedFileURL.path
             let urls = fm.enumerator(
                 at: sourceRoot,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )?.compactMap { $0 as? URL } ?? []
 
             for url in urls {
                 guard extensions.contains(url.pathExtension.lowercased()) else { continue }
                 if skipGeneratedAudioClipFiles, isGeneratedAudioClipFile(url) { continue }
-                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
+                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey, .contentModificationDateKey])
                 guard values?.isRegularFile == true else { continue }
 
                 results.append(FlattenedResourceFile(
                     url: url,
                     tags: resourceFolderTags(for: url, under: sourceRoot) + (extraTagsBySourcePath[sourceRootPath] ?? []),
                     fileSize: Int64(values?.fileSize ?? 0),
+                    createdAt: values?.creationDate,
                     modifiedAt: values?.contentModificationDate
                 ))
             }
@@ -967,7 +1097,7 @@ extension LibraryStore {
     }
 
     nonisolated static func resourceAssetTagsURL(in libraryURL: URL) -> URL {
-        libraryURL.appendingPathComponent(".lapianbao_asset_tags.json")
+        ProjectRepository.resourceAssetTagsURL(in: libraryURL)
     }
 
     nonisolated static func libraryRelativePath(for url: URL, base libraryURL: URL) -> String {
@@ -980,10 +1110,7 @@ extension LibraryStore {
 
     nonisolated static func loadResourceAssetTags(in libraryURL: URL) -> [String: [String]] {
         let url = resourceAssetTagsURL(in: libraryURL)
-        guard
-            let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
-        else { return [:] }
+        guard let decoded = ProjectRepository.readJSON([String: [String]].self, from: url) else { return [:] }
 
         return decoded.mapValues(cleanedResourceTags)
     }
@@ -993,10 +1120,7 @@ extension LibraryStore {
         let cleaned = tagsByRelativePath
             .filter { !$0.value.isEmpty }
             .mapValues(cleanedResourceTags)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(cleaned) else { return }
-        try? data.write(to: url, options: .atomic)
+        try? ProjectRepository.writeJSON(cleaned, to: url, encoder: ProjectRepository.prettySortedEncoder)
     }
 
     nonisolated static func resourceFolderTags(for fileURL: URL, under rootURL: URL) -> [String] {
@@ -1018,7 +1142,10 @@ extension LibraryStore {
 
     nonisolated static func inferredMusicRole(from url: URL) -> LocalMusicAsset.Role {
         let text = url.deletingPathExtension().lastPathComponent.lowercased()
-        let instrumentalHints = ["伴奏", "instrumental", "karaoke", "off vocal", "off-vocal", "纯音乐", "inst"]
+        let instrumentalHints = [
+            "伴奏", "instrumental", "karaoke", "off vocal", "off-vocal", "纯音乐", "无人声",
+            "backing track", "accompaniment", "minus one", "no vocal", "without vocal", "without vocals", "inst"
+        ]
         if instrumentalHints.contains(where: { text.contains($0) }) {
             return .instrumental
         }
@@ -1067,6 +1194,22 @@ extension LibraryStore {
     func removeVideo(_ video: VideoItem) {
         let path = video.url.path
         guard Self.trashVideoFileIfPresent(at: video.url) else { return }
+        let framesToRemove = sampledFrames.filter { $0.videoPath == path }
+        let frameIDsToRemove = Set(framesToRemove.map(\.id))
+        let clipsToRemove = audioClips.filter { $0.videoPath == path }
+        let transcriptExportsToRemove = transcriptExports.filter { $0.videoPath == path }
+
+        for frame in framesToRemove {
+            for url in imageExportURLsToDelete(for: frame, excludingFrameIDs: frameIDsToRemove) {
+                _ = trashLibraryFileIfPresent(url, context: "video-related image export")
+            }
+        }
+        for clip in clipsToRemove {
+            _ = trashLibraryFileIfPresent(audioClipFileURL(for: clip), context: "video-related audio clip export")
+        }
+        for export in transcriptExportsToRemove {
+            _ = trashLibraryFileIfPresent(URL(fileURLWithPath: export.filePath), context: "video-related transcript export")
+        }
 
         videos.removeAll { $0.url.path == path }
         if selectedVideo?.url.path == path {
@@ -1080,6 +1223,7 @@ extension LibraryStore {
         metadataByVideoPath.removeValue(forKey: path)
         thumbnailDataByVideoPath.removeValue(forKey: path)
         thumbnailImageByVideoPath.removeValue(forKey: path)
+        thumbnailImageAccessTickByPath.removeValue(forKey: path)
         durationByVideoPath.removeValue(forKey: path)
         playbackSupportByVideoPath.removeValue(forKey: path)
         waveformTasks[path]?.cancel()
@@ -1096,6 +1240,8 @@ extension LibraryStore {
         pendingVideoPathRemap = pendingVideoPathRemap.filter { $0.value != path }
         transcriptSegmentsByVideoPath.removeValue(forKey: path)
         transcriptStatusByVideoPath.removeValue(forKey: path)
+        transcriptTasks[path]?.cancel()
+        transcriptTasks[path] = nil
         transcriptExportJobs.removeValue(forKey: path)
         transcriptExports.removeAll { $0.videoPath == path }
         let removedAudioClipIDs = Set(audioClips.filter { $0.videoPath == path }.map(\.id))
@@ -1122,11 +1268,13 @@ extension LibraryStore {
         sceneCutProgressesByVideoPath.removeValue(forKey: path)
         sceneThumbnailVersionsByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress.removeValue(forKey: path)
+        sceneDetectionErrorByVideoPath.removeValue(forKey: path)
         sceneDetectionTasks[path]?.cancel()
         sceneDetectionTasks[path] = nil
         sceneThumbnailHydrationTasks[path]?.cancel()
         sceneThumbnailHydrationTasks[path] = nil
         sceneThumbnailHydrationNeeded.remove(path)
+        transientMediaCacheAccessTickByPath.removeValue(forKey: path)
         sceneCutCache.removeValue(forKey: relativeVideoPath(for: video.url))
         saveTagsJSON()
         saveSourceInfoJSON()
@@ -1167,13 +1315,20 @@ extension LibraryStore {
     }
 
     func addTag(_ rawTag: String, to video: VideoItem) {
-        let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !tag.isEmpty else { return }
-        var tags = tagsByVideoPath[video.url.path, default: []]
-        if !tags.contains(tag) {
-            tags.append(tag)
-            tagsByVideoPath[video.url.path] = tags.sorted()
-        }
+        let rawTag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawTag.isEmpty else { return }
+        let path = video.url.path
+        guard let tag = subjectiveVideoTags(forPath: path, tags: [rawTag]).first else { return }
+
+        let existingKeys = Set(tagsByVideoPath[path, default: []].compactMap(Self.normalizedSubjectiveTagKey))
+        guard let tagKey = Self.normalizedSubjectiveTagKey(tag),
+              !existingKeys.contains(tagKey)
+        else { return }
+
+        tagsByVideoPath[path] = subjectiveVideoTags(
+            forPath: path,
+            tags: tagsByVideoPath[path, default: []] + [tag]
+        ).sorted()
 
         saveTagsJSON()
     }

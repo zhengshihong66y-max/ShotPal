@@ -15,45 +15,42 @@ import UniformTypeIdentifiers
 extension LibraryStore {
     func tagsJSONURL() -> URL? {
         guard let libraryURL else { return nil }
-        return libraryURL.appendingPathComponent(".lapianbaotags.json")
+        return ProjectRepository.videoTagsURL(in: libraryURL)
     }
 
     func sourceInfoJSONURL() -> URL? {
         guard let libraryURL else { return nil }
-        return libraryURL.appendingPathComponent(".lapianbao_sources.json")
+        return ProjectRepository.sourceInfoURL(in: libraryURL)
     }
 
     func saveTagsJSON() {
         guard let url = tagsJSONURL(), let libraryURL else { return }
-        let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
         var relative: [String: [String]] = [:]
         for (absPath, tags) in tagsByVideoPath where !tags.isEmpty {
-            let key = absPath.hasPrefix(base) ? String(absPath.dropFirst(base.count)) : absPath
-            relative[key] = tags
+            let cleanedTags = subjectiveVideoTags(
+                forPath: absPath,
+                tags: tags,
+                sourceInfo: sourceInfoByVideoPath[absPath]
+            )
+            guard !cleanedTags.isEmpty else { continue }
+            relative[ProjectRepository.relativePath(for: absPath, base: libraryURL)] = cleanedTags
         }
-        if let data = try? JSONEncoder().encode(relative) {
-            try? data.write(to: url, options: .atomic)
-        }
+        try? ProjectRepository.writeJSON(relative, to: url)
     }
 
     func saveSourceInfoJSON() {
         guard let url = sourceInfoJSONURL(), let libraryURL else { return }
-        let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
         var relative: [String: VideoSourceInfo] = [:]
         for (absPath, info) in sourceInfoByVideoPath {
-            let key = absPath.hasPrefix(base) ? String(absPath.dropFirst(base.count)) : absPath
-            relative[key] = info
+            guard let cleanedInfo = Self.cleanedVideoSourceInfo(info) else { continue }
+            relative[ProjectRepository.relativePath(for: absPath, base: libraryURL)] = cleanedInfo
         }
 
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(relative) {
-            try? data.write(to: url, options: .atomic)
-        }
+        try? ProjectRepository.writeJSON(relative, to: url, encoder: ProjectRepository.prettySortedEncoder)
     }
 
     func projectDataURL() -> URL? {
-        libraryURL?.appendingPathComponent(".lapianbao_project.json")
+        libraryURL.map(ProjectRepository.projectDataURL)
     }
 
     func flushProjectDataSave() {
@@ -111,12 +108,7 @@ extension LibraryStore {
     }
 
     nonisolated static func writeProjectData(_ dataFile: ProjectDataFile, to url: URL) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(dataFile)
-        try Task.checkCancellation()
-        try data.write(to: url, options: .atomic)
+        try ProjectRepository.writeProjectData(dataFile, to: url)
     }
 
     func loadProjectData() {
@@ -188,10 +180,7 @@ extension LibraryStore {
     }
 
     nonisolated static func readProjectData(from url: URL) -> ProjectDataFile? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(ProjectDataFile.self, from: data)
+        ProjectRepository.readProjectData(from: url)
     }
 
     func clearProjectData() {
@@ -212,9 +201,8 @@ extension LibraryStore {
         transcriptExports = decoded.transcriptExports ?? []
         musicsByVideoPath = decoded.musicsByVideoPath ?? [:]
         musicDownloadJobs = reconciledMusicDownloadJobs(decoded.musicDownloadJobs ?? [])
-        enrichMusicTagsIfNeeded()
-        hydratePersistedMusicDownloadWaveformsIfNeeded()
-        prepareAudioClipWaveformsIfNeeded()
+        reconcileMusicDownloadJobsWithLocalAssets(localMusicAssets)
+        enrichMusicTagsIfNeeded(includeLocalAssets: false)
         runStartupAutomationIfNeeded()
     }
 
@@ -275,38 +263,15 @@ extension LibraryStore {
                 reconciled.status = .paused
                 reconciled.downloadProgress = nil
             }
-            if case .succeeded = reconciled.status,
-               let filePath = reconciled.filePath,
-               !FileManager.default.fileExists(atPath: filePath) {
-                reconciled.status = .failed("下载文件不存在")
+            if let filePath = reconciled.filePath,
+               FileManager.default.fileExists(atPath: filePath) {
+                reconciled.status = .succeeded(URL(fileURLWithPath: filePath).lastPathComponent)
+                reconciled.downloadProgress = 1
+            } else if case .succeeded = reconciled.status {
                 reconciled.downloadProgress = nil
                 reconciled.waveformSamples = nil
             }
             return reconciled
-        }
-    }
-
-    func hydratePersistedMusicDownloadWaveformsIfNeeded() {
-        for job in musicDownloadJobs {
-            guard case .succeeded = job.status,
-                  job.waveformSamples?.isEmpty != false,
-                  let filePath = job.filePath,
-                  FileManager.default.fileExists(atPath: filePath)
-            else { continue }
-
-            updateMusicDownloadJob(id: job.id) { $0.isPreparingWaveform = true }
-            Task { [weak self, jobID = job.id, fileURL = URL(fileURLWithPath: filePath)] in
-                let samples = await Self.makeWaveformSamples(
-                    for: fileURL,
-                    sampleCount: Self.musicWaveformSampleCount
-                )
-                await MainActor.run {
-                    self?.updateMusicDownloadJob(id: jobID) { j in
-                        j.waveformSamples = samples ?? []
-                        j.isPreparingWaveform = false
-                    }
-                }
-            }
         }
     }
 
@@ -319,14 +284,13 @@ extension LibraryStore {
         startupAutomationLibraryPath = libraryPath
         DispatchQueue.main.async { [weak self] in
             guard let self, self.libraryURL?.path == libraryPath else { return }
-            let defaults = UserDefaults.standard
-            if defaults.bool(forKey: Self.autoSceneBatchKey) {
+            if AppSettings.autoSceneBatchEnabled {
                 self.startSceneBatch(onlyMissing: true)
             }
-            if defaults.bool(forKey: Self.autoTranscriptBatchKey) {
+            if AppSettings.autoTranscriptBatchEnabled {
                 self.startTranscriptBatch(onlyMissing: true)
             }
-            if defaults.bool(forKey: Self.autoMusicDownloadBatchKey) {
+            if AppSettings.autoMusicDownloadBatchEnabled {
                 self.startMusicDownloadBatch(types: MusicDownloadJob.DownloadType.allCases)
             }
         }
@@ -334,10 +298,7 @@ extension LibraryStore {
 
     func loadTagsJSON() {
         guard let url = tagsJSONURL(), let libraryURL else { return }
-        guard
-            let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
-        else { return }
+        guard let decoded = ProjectRepository.readJSON([String: [String]].self, from: url) else { return }
 
         let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
         var loadedTagsByVideoPath = tagsByVideoPath
@@ -350,16 +311,14 @@ extension LibraryStore {
 
     func loadSourceInfoJSON() {
         guard let url = sourceInfoJSONURL(), let libraryURL else { return }
-        guard
-            let data = try? Data(contentsOf: url),
-            let decoded = try? JSONDecoder().decode([String: VideoSourceInfo].self, from: data)
-        else { return }
+        guard let decoded = ProjectRepository.readJSON([String: VideoSourceInfo].self, from: url) else { return }
 
         let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
         var loadedSourceInfoByVideoPath = sourceInfoByVideoPath
         for (key, info) in decoded {
+            guard let cleanedInfo = Self.cleanedVideoSourceInfo(info) else { continue }
             let absPath = key.hasPrefix("/") ? key : base + key
-            loadedSourceInfoByVideoPath[absPath] = info
+            loadedSourceInfoByVideoPath[absPath] = cleanedInfo
         }
         sourceInfoByVideoPath = loadedSourceInfoByVideoPath
     }
@@ -419,46 +378,105 @@ extension LibraryStore {
         var title: String?
     }
 
+    nonisolated static func cleanedVideoSourceInfo(_ info: VideoSourceInfo) -> VideoSourceInfo? {
+        return VideoSourceInfo(
+            platform: normalizedSourcePlatform(info.platform),
+            sourceURL: usefulSourceURLString(info.sourceURL),
+            authorName: info.authorName.flatMap(normalizedSourceAuthorName),
+            title: info.title.flatMap(normalizedSourceTitle)
+        )
+    }
+
+    nonisolated static func instagramSourceTitleFamilyKeys(
+        from sourceInfoByVideoPath: [String: VideoSourceInfo]
+    ) -> Set<String> {
+        var keys = Set<String>()
+        for (path, info) in sourceInfoByVideoPath {
+            guard canonicalSourcePlatform(info.platform) == "Instagram" else { continue }
+            if let key = sourceTitleFamilyKey(info.title) {
+                keys.insert(key)
+            }
+            let fileName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+            if let key = sourceTitleFamilyKey(fileName) {
+                keys.insert(key)
+            }
+        }
+        return keys
+    }
+
+    static func sourcePlatformFromKnownInstagramTitleFamily(
+        video: VideoItem,
+        sourceInfo: VideoSourceInfo?,
+        instagramTitleFamilyKeys: Set<String>
+    ) -> String? {
+        guard !instagramTitleFamilyKeys.isEmpty else { return nil }
+        let storedPlatform = sourceInfo.flatMap { canonicalSourcePlatform($0.platform) }
+        guard storedPlatform == nil || storedPlatform == unknownSourcePlatformName else {
+            return nil
+        }
+
+        let candidates = [
+            sourceInfo?.title,
+            video.name,
+            video.url.deletingPathExtension().lastPathComponent
+        ]
+        for candidate in candidates {
+            if let key = sourceTitleFamilyKey(candidate),
+               instagramTitleFamilyKeys.contains(key) {
+                return "Instagram"
+            }
+        }
+        return nil
+    }
+
     func ensureVideoSourceInfoAndTags() {
         var updatedTagsByVideoPath = tagsByVideoPath
         var updatedSourceInfoByVideoPath = sourceInfoByVideoPath
+        let instagramTitleFamilyKeys = Self.instagramSourceTitleFamilyKeys(
+            from: updatedSourceInfoByVideoPath
+        )
         var didChangeTags = false
         var didChangeSourceInfo = false
 
         for video in videos {
             let path = video.url.path
-            var tags = updatedTagsByVideoPath[path, default: []]
+            let tags = updatedTagsByVideoPath[path, default: []]
             let sourceInfo = updatedSourceInfoByVideoPath[path]
-            let inference = inferredVideoSource(for: video, sourceInfo: sourceInfo, tags: tags)
-            let normalizedPlatform = inference.platform.flatMap(Self.canonicalSourcePlatform)
-            let normalizedAuthor = (sourceInfo?.authorName ?? inference.authorName).flatMap(Self.normalizedImportTag)
+            let inference = inferredVideoSource(for: video, sourceInfo: sourceInfo)
+            let titleFamilyPlatform = Self.sourcePlatformFromKnownInstagramTitleFamily(
+                video: video,
+                sourceInfo: sourceInfo,
+                instagramTitleFamilyKeys: instagramTitleFamilyKeys
+            )
+            let normalizedPlatform = Self.normalizedSourcePlatform(
+                titleFamilyPlatform ?? inference.platform
+            )
+            let normalizedAuthor = [
+                sourceInfo?.authorName,
+                inference.authorName
+            ]
+                .compactMap { $0.flatMap(Self.normalizedSourceAuthorName) }
+                .first
             let normalizedTitle = (sourceInfo?.title ?? inference.title).flatMap(Self.normalizedSourceTitle)
 
-            if let normalizedPlatform {
-                let sourceURLString = Self.usefulSourceURLString(sourceInfo?.sourceURL)
-                    ?? inference.sourceURL?.absoluteString
-                let updatedInfo = VideoSourceInfo(
-                    platform: normalizedPlatform,
-                    sourceURL: sourceURLString,
-                    authorName: normalizedAuthor,
-                    title: normalizedTitle
-                )
-                if updatedInfo != sourceInfo {
-                    updatedSourceInfoByVideoPath[path] = updatedInfo
-                    didChangeSourceInfo = true
-                }
+            let sourceURLString = Self.usefulSourceURLString(sourceInfo?.sourceURL)
+                ?? inference.sourceURL?.absoluteString
+            let updatedInfo = VideoSourceInfo(
+                platform: normalizedPlatform,
+                sourceURL: sourceURLString,
+                authorName: normalizedAuthor,
+                title: normalizedTitle
+            )
+            if updatedInfo != sourceInfo {
+                updatedSourceInfoByVideoPath[path] = updatedInfo
+                didChangeSourceInfo = true
             }
 
-            let candidates = [
-                normalizedPlatform,
-                normalizedAuthor
-            ]
-
-            for candidate in candidates.compactMap({ $0 }).compactMap(Self.normalizedImportTag) where !tags.contains(candidate) {
-                tags.append(candidate)
-            }
-
-            let sortedTags = tags.sorted()
+            let sortedTags = subjectiveVideoTags(
+                forPath: path,
+                tags: tags,
+                sourceInfo: updatedSourceInfoByVideoPath[path]
+            ).sorted()
             if sortedTags != updatedTagsByVideoPath[path, default: []] {
                 updatedTagsByVideoPath[path] = sortedTags
                 didChangeTags = true
@@ -470,6 +488,10 @@ extension LibraryStore {
             saveSourceInfoJSON()
         }
         if didChangeTags {
+            let availableTags = Set(updatedTagsByVideoPath.values.flatMap { $0 })
+            if !selectedTags.isSubset(of: availableTags) {
+                selectedTags.formIntersection(availableTags)
+            }
             tagsByVideoPath = updatedTagsByVideoPath
             saveTagsJSON()
         }
@@ -483,8 +505,21 @@ extension LibraryStore {
         }
     }
 
-    func videoAuthorName(for video: VideoItem) -> String? {
-        sourceInfoByVideoPath[video.url.path]?.authorName
+    func videoSourceAuthorName(for video: VideoItem) -> String? {
+        let path = video.url.path
+        if let cached = videoSourceAuthorCache[path] {
+            return cached
+        }
+
+        let sourceInfo = sourceInfoByVideoPath[path]
+        let storedAuthor = sourceInfo?.authorName.flatMap(Self.normalizedSourceAuthorName)
+        let inferredAuthor = inferredVideoSource(
+            for: video,
+            sourceInfo: sourceInfo
+        ).authorName.flatMap(Self.normalizedSourceAuthorName)
+        let author = [storedAuthor, inferredAuthor].compactMap { $0 }.first
+        videoSourceAuthorCache[path] = Optional.some(author)
+        return author
     }
 
     func videoSourceTitle(for video: VideoItem) -> String? {
@@ -502,14 +537,46 @@ extension LibraryStore {
         if let cached = videoSourcePlatformCache[path] {
             return cached
         }
-        let tags = tagsByVideoPath[path, default: []]
         let platform = inferredVideoSource(
             for: video,
-            sourceInfo: sourceInfoByVideoPath[path],
-            tags: tags
+            sourceInfo: sourceInfoByVideoPath[path]
         ).platform
         videoSourcePlatformCache[path] = platform
         return platform
+    }
+
+    func subjectiveVideoTags(forPath path: String, tags: [String]) -> [String] {
+        subjectiveVideoTags(forPath: path, tags: tags, sourceInfo: sourceInfoByVideoPath[path])
+    }
+
+    func subjectiveVideoTags(forPath _: String, tags: [String], sourceInfo: VideoSourceInfo?) -> [String] {
+        var sourceValues: [String] = []
+        if let rawPlatform = sourceInfo?.platform,
+           let platform = Self.canonicalSourcePlatform(rawPlatform) {
+            sourceValues.append(platform)
+        }
+        if let rawAuthor = sourceInfo?.authorName,
+           let author = Self.normalizedSourceAuthorName(rawAuthor) {
+            sourceValues.append(author)
+        }
+        if let rawTitle = sourceInfo?.title,
+           let title = Self.normalizedSourceTitle(rawTitle) {
+            sourceValues.append(title)
+        }
+        let sourceValueKeys = Set(sourceValues.compactMap(Self.normalizedSubjectiveTagKey))
+
+        var seenKeys = Set<String>()
+        return tags.compactMap { rawTag in
+            guard let tag = Self.normalizedImportTag(rawTag),
+                  let key = Self.normalizedSubjectiveTagKey(tag),
+                  !Self.looksLikeSourceMetadataFragment(tag),
+                  Self.canonicalSourcePlatform(tag) == nil,
+                  !sourceValueKeys.contains(key),
+                  seenKeys.insert(key).inserted
+            else { return nil }
+
+            return tag
+        }
     }
 
     func sourceTag(forImportedVideo video: VideoItem) -> String? {
@@ -523,22 +590,38 @@ extension LibraryStore {
         return Self.canonicalSourcePlatform(folder)
     }
 
-    func inferredVideoSource(for video: VideoItem, sourceInfo: VideoSourceInfo?, tags: [String]) -> VideoSourceInference {
-        let whereFromURLs = Self.whereFromURLs(for: video.url)
-        let sourceURLs = Self.uniqueURLs(Self.sourceURLs(from: sourceInfo) + whereFromURLs)
-        let importedPlatform = sourceInfo?.platform
+    func inferredVideoSource(
+        for video: VideoItem,
+        sourceInfo: VideoSourceInfo?,
+        readExtendedAttributes: Bool = false
+    ) -> VideoSourceInference {
+        let importedPlatform = sourceInfo.flatMap { Self.canonicalSourcePlatform($0.platform) }
+        let explicitImportedPlatform = importedPlatform.flatMap {
+            Self.isUnknownSourcePlatform($0) ? nil : $0
+        }
+        let storedSourceURLs = Self.sourceURLs(from: sourceInfo)
+        let shouldReadWhereFromURLs = readExtendedAttributes && explicitImportedPlatform == nil && storedSourceURLs.isEmpty
+        let whereFromURLs = shouldReadWhereFromURLs ? Self.whereFromURLs(for: video.url) : []
+        let sourceURLs = Self.uniqueURLs(storedSourceURLs + whereFromURLs)
         let importedAuthorName = sourceInfo?.authorName
-        let platform = [
-            importedPlatform.flatMap(Self.canonicalSourcePlatform),
+        let videoTags = tagsByVideoPath[video.url.path, default: []]
+        let inferredPlatforms = [
             Self.sourcePlatform(from: sourceURLs),
             sourceTag(forImportedVideo: video),
-            Self.sourcePlatform(fromTags: tags),
             Self.sourcePlatform(fromPathComponents: video.url.pathComponents),
-            Self.sourcePlatform(fromText: video.name)
-        ].compactMap { $0 }.first
+            Self.sourcePlatform(fromText: video.name),
+            Self.sourcePlatform(fromVideoTags: videoTags)
+        ].compactMap { $0 }
+        let concreteInferredPlatform = inferredPlatforms.first { !Self.isUnknownSourcePlatform($0) }
+        let platform = [
+            explicitImportedPlatform,
+            concreteInferredPlatform,
+            importedPlatform,
+            inferredPlatforms.first
+        ].compactMap { $0 }.first ?? Self.unknownSourcePlatformName
 
         let sourceURL = sourceURLs.first(where: Self.isUsefulSourceURL)
-        let authorName = importedAuthorName.flatMap(Self.normalizedImportTag)
+        let authorName = importedAuthorName.flatMap(Self.normalizedSourceAuthorName)
             ?? Self.sourceAuthorName(from: sourceURLs, fileName: video.url.lastPathComponent)
         let title = sourceInfo?.title.flatMap(Self.normalizedSourceTitle)
             ?? Self.sourceTitle(from: sourceURLs, fileName: video.url.lastPathComponent)
@@ -566,8 +649,182 @@ extension LibraryStore {
         return nil
     }
 
-    nonisolated static func sourcePlatform(fromTags tags: [String]) -> String? {
-        tags.compactMap(canonicalSourcePlatform).first
+    nonisolated static func normalizedSubjectiveTagKey(_ rawValue: String) -> String? {
+        normalizedImportTag(rawValue)?.lowercased()
+    }
+
+    nonisolated static func normalizedSourcePlatform(_ rawValue: String?) -> String {
+        guard let rawValue,
+              normalizedImportTag(rawValue) != nil
+        else { return unknownSourcePlatformName }
+        return canonicalSourcePlatform(rawValue) ?? unknownSourcePlatformName
+    }
+
+    nonisolated static func looksLikeSourceIdentityTag(_ rawValue: String) -> Bool {
+        let normalized = normalizedSpaces(rawValue)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let compact = normalized.trimmingCharacters(in: CharacterSet(charactersIn: "@# "))
+
+        if normalized.range(
+            of: #"(?i)^instagram\s+id\s+\d{6,}$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        if compact.range(
+            of: #"^\d{6,}$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        if compact.range(
+            of: #"(?i)^[0-9a-f]{8,}$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        if compact.range(
+            of: #"(?i)^UC[A-Za-z0-9_-]{20,}$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+
+        if compact.range(
+            of: #"^[A-Za-z0-9_-]{18,}$"#,
+            options: .regularExpression
+        ) != nil {
+            let digitCount = compact.filter(\.isNumber).count
+            let letterCount = compact.filter(\.isLetter).count
+            return digitCount >= 4 || letterCount == 0
+        }
+
+        return false
+    }
+
+    nonisolated static func looksLikeSourceMetadataFragment(_ rawValue: String) -> Bool {
+        let normalized = normalizedSpaces(rawValue)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+
+        let lowercased = normalized.lowercased()
+        if looksLikeSourceIdentityTag(normalized) { return true }
+        if lowercased.contains("http://")
+            || lowercased.contains("https://")
+            || lowercased.contains("www.")
+            || lowercased.contains(".com") {
+            return true
+        }
+        if normalized.contains("/") || normalized.contains("\\") {
+            return true
+        }
+        if normalized.contains("...") || normalized.contains("…") {
+            return true
+        }
+        return normalized.range(
+            of: #"(?i)\.(mp4|mov|m4v|webm|mkv|avi|m2ts|mts)$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    nonisolated static func normalizedSourceAuthorName(_ rawValue: String) -> String? {
+        guard let author = normalizedImportTag(rawValue) else { return nil }
+        guard !looksLikeSourceMetadataFragment(author),
+              canonicalSourcePlatform(author) == nil,
+              sourcePlatform(fromText: author) == nil,
+              !isGenericImportTitle(author),
+              !looksLikeTechnicalSourceTitle(author)
+        else { return nil }
+        return author
+    }
+
+    nonisolated static func sourceAuthorName(fromVideoTags tags: [String]) -> String? {
+        for tag in tags {
+            if let author = sourceAuthorName(fromVideoTag: tag) {
+                return author
+            }
+        }
+
+        let candidates = tags.compactMap(normalizedSourceAuthorName)
+        guard !candidates.isEmpty else { return nil }
+
+        let hasPlatformTag = tags.contains { tag in
+            if canonicalSourcePlatform(tag) != nil {
+                return true
+            }
+            return looksLikeSourceMetadataFragment(tag) && sourcePlatform(fromText: tag) != nil
+        }
+        if hasPlatformTag {
+            return candidates.first
+        }
+
+        return nil
+    }
+
+    nonisolated static func sourcePlatform(fromVideoTags tags: [String]) -> String? {
+        for tag in tags {
+            if let platform = canonicalSourcePlatform(tag) ?? sourcePlatform(fromText: tag) {
+                return platform
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func sourceAuthorName(fromVideoTag rawValue: String) -> String? {
+        let tag = normalizedSpaces(rawValue)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty else { return nil }
+
+        if let handle = firstMentionHandle(in: tag) {
+            return handle
+        }
+
+        if let author = authorNameAfterLeadingBy(in: tag) {
+            return author
+        }
+
+        let labels = [
+            "作者", "博主", "UP主", "up主",
+            "creator", "author", "uploader", "channel",
+            "user", "username", "nickname"
+        ]
+        var separators = CharacterSet.whitespacesAndNewlines
+        separators.insert(charactersIn: ":：-=–—")
+
+        for label in labels {
+            guard let labelRange = tag.range(of: label, options: [.caseInsensitive, .anchored]) else {
+                continue
+            }
+
+            let rawRemainder = String(tag[labelRange.upperBound...])
+            guard let firstScalar = rawRemainder.unicodeScalars.first,
+                  separators.contains(firstScalar)
+            else { continue }
+
+            let remainder = rawRemainder.trimmingCharacters(in: separators)
+            if let author = normalizedSourceAuthorName(remainder) {
+                return author
+            }
+        }
+
+        return nil
+    }
+
+    nonisolated static func authorNameAfterLeadingBy(in rawValue: String) -> String? {
+        guard let byRange = rawValue.range(of: "by", options: [.caseInsensitive, .anchored]) else {
+            return nil
+        }
+
+        let rawRemainder = String(rawValue[byRange.upperBound...])
+        guard let firstScalar = rawRemainder.unicodeScalars.first,
+              CharacterSet.whitespacesAndNewlines.contains(firstScalar)
+        else { return nil }
+
+        return normalizedSourceAuthorName(rawRemainder)
     }
 
     nonisolated static func sourcePlatform(fromPathComponents components: [String]) -> String? {
@@ -578,7 +835,17 @@ extension LibraryStore {
         let lowercased = text.lowercased()
         if lowercased.contains("instagram.com")
             || lowercased.contains("instagr.am")
-            || lowercased.contains("sssinstagram") {
+            || lowercased.contains("sssinstagram")
+            || lowercased.contains("cdninstagram")
+            || lowercased.contains("instagram")
+            || lowercased.range(
+                of: #"(?i)(^|[^a-z0-9])insta([^a-z0-9]|$)"#,
+                options: .regularExpression
+            ) != nil
+            || lowercased.range(
+                of: #"(?i)(^|[\s._-])ig([\s._-]|$)"#,
+                options: .regularExpression
+            ) != nil {
             return "Instagram"
         }
         if lowercased.contains("youtube.com") || lowercased.contains("youtu.be") {
@@ -608,6 +875,11 @@ extension LibraryStore {
         return nil
     }
 
+    nonisolated static func isUnknownSourcePlatform(_ platform: String?) -> Bool {
+        guard let platform else { return true }
+        return canonicalSourcePlatform(platform) == unknownSourcePlatformName
+    }
+
     nonisolated static func canonicalSourcePlatform(_ rawValue: String) -> String? {
         let normalized = normalizedSpaces(rawValue)
             .trimmingCharacters(in: CharacterSet(charactersIn: " .-_/@#"))
@@ -634,6 +906,8 @@ extension LibraryStore {
             return "Bilibili"
         case "douyin", "抖音", "tiktok", "tik tok":
             return "抖音"
+        case "其他", "other", "others", "unknown":
+            return unknownSourcePlatformName
         default:
             return nil
         }
@@ -714,8 +988,7 @@ extension LibraryStore {
         let pathHints = urls.flatMap(sourceAuthorHints(from:))
         let hints = [fileName] + queryHints + urls.map(\.absoluteString)
         return hints.lazy.compactMap(firstMentionHandle).first
-            ?? pathHints.lazy.compactMap(normalizedImportTag).first
-            ?? instagramAuthorID(from: urls)
+            ?? pathHints.lazy.compactMap(normalizedSourceAuthorName).first
     }
 
     nonisolated static func firstMentionHandle(in text: String) -> String? {
@@ -726,7 +999,7 @@ extension LibraryStore {
             match.numberOfRanges > 1,
             let captureRange = Range(match.range(at: 1), in: text)
         else { return nil }
-        return normalizedImportTag(String(text[captureRange]))
+        return normalizedSourceAuthorName(String(text[captureRange]))
     }
 
     nonisolated static func sourceAuthorHints(from url: URL) -> [String] {
@@ -751,29 +1024,6 @@ extension LibraryStore {
             }
         }
         return []
-    }
-
-    nonisolated static func instagramAuthorID(from urls: [URL]) -> String? {
-        for url in urls {
-            let text = decodedSourceText(url.absoluteString)
-            let lowercased = text.lowercased()
-            guard lowercased.contains("instagram") || lowercased.contains("cdninstagram") else { continue }
-            let patterns = [
-                #"(?i)(?:^|[?&])vs=(\d{6,})_"#,
-                #"(?i)vs%3D(\d{6,})_"#
-            ]
-            for pattern in patterns {
-                guard
-                    let regex = try? NSRegularExpression(pattern: pattern),
-                    let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
-                    match.numberOfRanges > 1,
-                    let range = Range(match.range(at: 1), in: text)
-                else { continue }
-                let id = String(text[range])
-                return normalizedImportTag("Instagram ID \(id)")
-            }
-        }
-        return nil
     }
 
     nonisolated static func sourceTitle(from urls: [URL], fileName: String) -> String? {
@@ -809,6 +1059,29 @@ extension LibraryStore {
 
         candidates.append(fileStem(from: fileName))
         return candidates.lazy.compactMap(normalizedSourceTitle).first
+    }
+
+    nonisolated static func sourceTitleFamilyKey(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        var title = decodedSourceText(rawValue)
+        title = fileStem(from: title)
+        title = normalizedSpaces(title)
+        title = title.replacingOccurrences(
+            of: #"(?i)\.(mp4|mov|m4v|webm|mkv|avi|m2ts|mts)$"#,
+            with: "",
+            options: .regularExpression
+        )
+        title = title.replacingOccurrences(
+            of: #"\s+[-–—_]\s*0?\d{1,3}$"#,
+            with: "",
+            options: .regularExpression
+        )
+        title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !isGenericImportTitle(title), !looksLikeTechnicalSourceTitle(title) else {
+            return nil
+        }
+        let key = normalizedSearch(title)
+        return key.count >= 8 ? key : nil
     }
 
     nonisolated static func normalizedSourceTitle(_ rawValue: String) -> String? {

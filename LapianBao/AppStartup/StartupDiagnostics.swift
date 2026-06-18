@@ -23,7 +23,6 @@ enum StartupDiagnostics {
         case keyboardMonitorInstalled = "keyboard monitor installed"
         case appActivated = "app activated"
         case savedCollectionPrewarmScheduled = "saved collection prewarm scheduled"
-        case externalSelfCheckStarted = "external self-check started"
         case libraryRestoreScheduled = "library restore scheduled"
         case libraryRestoreStarted = "library restore started"
     }
@@ -35,5 +34,20 @@ enum StartupDiagnostics {
 
     static func mark(_ stage: Stage) {
         logger.notice("\(stage.rawValue, privacy: .public)")
+    }
+}
+
+nonisolated enum PerformanceDiagnostics {
+    private static let logger = Logger(
+        subsystem: "com.newtybei.LapianBao",
+        category: "Performance"
+    )
+
+    static func mark(_ event: String, path: String? = nil) {
+        if let path {
+            logger.debug("\(event, privacy: .public) \(path, privacy: .public)")
+        } else {
+            logger.debug("\(event, privacy: .public)")
+        }
     }
 }

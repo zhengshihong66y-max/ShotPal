@@ -378,13 +378,14 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
     var youtubeProbeTitle: String?
     var problemLocation: String?
     var repairSummary: String?
+    var progress: Double?
     var serviceChecks: [ExternalServiceSelfCheckItem] = []
 
     var isRunning: Bool { status == .running }
 
     private enum CodingKeys: String, CodingKey {
         case status, checkedAt, message, ytdlpPath, ytdlpVersion, ffmpegPath, youtubeProbeTitle
-        case problemLocation, repairSummary, serviceChecks
+        case problemLocation, repairSummary, progress, serviceChecks
     }
 
     nonisolated init(
@@ -397,6 +398,7 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         youtubeProbeTitle: String? = nil,
         problemLocation: String? = nil,
         repairSummary: String? = nil,
+        progress: Double? = nil,
         serviceChecks: [ExternalServiceSelfCheckItem] = []
     ) {
         self.status = status
@@ -408,6 +410,7 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         self.youtubeProbeTitle = youtubeProbeTitle
         self.problemLocation = problemLocation
         self.repairSummary = repairSummary
+        self.progress = progress
         self.serviceChecks = serviceChecks
     }
 
@@ -422,6 +425,7 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         youtubeProbeTitle = try container.decodeIfPresent(String.self, forKey: .youtubeProbeTitle)
         problemLocation = try container.decodeIfPresent(String.self, forKey: .problemLocation)
         repairSummary = try container.decodeIfPresent(String.self, forKey: .repairSummary)
+        progress = try container.decodeIfPresent(Double.self, forKey: .progress)
         serviceChecks = try container.decodeIfPresent([ExternalServiceSelfCheckItem].self, forKey: .serviceChecks) ?? []
     }
 
@@ -436,6 +440,7 @@ struct DownloaderSelfCheckReport: Codable, Equatable, Sendable {
         try container.encodeIfPresent(youtubeProbeTitle, forKey: .youtubeProbeTitle)
         try container.encodeIfPresent(problemLocation, forKey: .problemLocation)
         try container.encodeIfPresent(repairSummary, forKey: .repairSummary)
+        try container.encodeIfPresent(progress, forKey: .progress)
         try container.encode(serviceChecks, forKey: .serviceChecks)
     }
 }
@@ -447,6 +452,7 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
     var artworkURL: String
     var appleMusicURL: String
     var detectedAt: Double  // seconds into the video where this song was found
+    var duration: Double
     var tags: [String] = []
 
     nonisolated init(
@@ -456,6 +462,7 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
         artworkURL: String,
         appleMusicURL: String,
         detectedAt: Double,
+        duration: Double = 0,
         tags: [String] = []
     ) {
         self.id = id
@@ -464,7 +471,8 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
         self.artworkURL = artworkURL
         self.appleMusicURL = appleMusicURL
         self.detectedAt = detectedAt
-        self.tags = Self.cleanedTags(tags.isEmpty ? [artist] : tags)
+        self.duration = duration.isFinite && duration > 0 ? duration : 0
+        self.tags = Self.cleanedMusicTags(tags, title: title, artist: artist)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -472,6 +480,7 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
         case artworkURL = "artwork_url"
         case appleMusicURL = "apple_music_url"
         case detectedAt = "detected_at"
+        case duration
         case tags
     }
 
@@ -483,8 +492,10 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
         artworkURL = try container.decodeIfPresent(String.self, forKey: .artworkURL) ?? ""
         appleMusicURL = try container.decodeIfPresent(String.self, forKey: .appleMusicURL) ?? ""
         detectedAt = try container.decodeIfPresent(Double.self, forKey: .detectedAt) ?? 0
+        let decodedDuration = try container.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        duration = decodedDuration.isFinite && decodedDuration > 0 ? decodedDuration : 0
         let decodedTags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
-        tags = Self.cleanedTags(decodedTags.isEmpty ? [artist] : decodedTags)
+        tags = Self.cleanedMusicTags(decodedTags, title: title, artist: artist)
     }
 
     nonisolated func encode(to encoder: Encoder) throws {
@@ -495,21 +506,12 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
         try container.encode(artworkURL, forKey: .artworkURL)
         try container.encode(appleMusicURL, forKey: .appleMusicURL)
         try container.encode(detectedAt, forKey: .detectedAt)
+        if duration.isFinite && duration > 0 {
+            try container.encode(duration, forKey: .duration)
+        }
         try container.encode(tags, forKey: .tags)
     }
 
-    nonisolated static func cleanedTags(_ tags: [String]) -> [String] {
-        var seen = Set<String>()
-        return tags
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .filter { seen.insert($0).inserted }
-            .sorted()
-    }
-
-    nonisolated var displayTags: [String] {
-        Self.cleanedTags(tags.isEmpty ? [artist] : tags)
-    }
 }
 
 struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
@@ -588,7 +590,8 @@ struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
             artworkURL: artworkURL,
             appleMusicURL: appleMusicURL,
             detectedAt: 0,
-            tags: MusicRecognitionItem.cleanedTags([artist, genre])
+            duration: duration,
+            tags: MusicRecognitionItem.cleanedGenreTags([genre], title: title, artist: artist)
         )
     }
 
@@ -632,6 +635,7 @@ struct LocalMusicAsset: Identifiable, Codable, Equatable, Sendable {
     var tags: [String]
     var duration: Double
     var fileSize: Int64
+    var createdAt: Date? = nil
     var modifiedAt: Date?
 
     var id: String { filePath }
@@ -830,11 +834,38 @@ struct RemoteImportJob: Identifiable, Equatable {
     var thumbnailData: Data? = nil
 }
 
+struct SavedImportCandidateMetadata: Equatable, Sendable {
+    var title: String? = nil
+    var authorName: String? = nil
+    var thumbnailURLString: String? = nil
+
+    nonisolated var hasAnyValue: Bool {
+        title?.isEmpty == false
+            || authorName?.isEmpty == false
+            || thumbnailURLString?.isEmpty == false
+    }
+
+    nonisolated func merging(_ fallback: SavedImportCandidateMetadata?) -> SavedImportCandidateMetadata {
+        guard let fallback else { return self }
+        return SavedImportCandidateMetadata(
+            title: title ?? fallback.title,
+            authorName: authorName ?? fallback.authorName,
+            thumbnailURLString: thumbnailURLString ?? fallback.thumbnailURLString
+        )
+    }
+}
+
+struct SavedImportCandidate: Equatable, Sendable {
+    var urlString: String
+    var metadata: SavedImportCandidateMetadata? = nil
+}
+
 struct InstagramSavedImportResult: Equatable, Sendable {
     var foundCount: Int
     var skippedCount: Int
     var queuedCount: Int
     var queuedLinks: [String]
+    var queuedMetadataByLink: [String: SavedImportCandidateMetadata] = [:]
     var scannedPageCount: Int = 1
     var stoppedAtKnownBaseline: Bool = false
 }
@@ -860,267 +891,4 @@ enum InstagramSavedImportError: LocalizedError {
             return "读取收藏页超时"
         }
     }
-}
-
-nonisolated final class SceneDetectionProcessRegistry: @unchecked Sendable {
-    static let shared = SceneDetectionProcessRegistry()
-
-    private let lock = NSLock()
-    private var process: Process?
-
-    func set(_ process: Process?) {
-        lock.lock()
-        self.process = process
-        lock.unlock()
-    }
-
-    func cancelRunningProcess() {
-        lock.lock()
-        let process = process
-        self.process = nil
-        lock.unlock()
-
-        if process?.isRunning == true {
-            process?.terminate()
-        }
-    }
-}
-
-actor SceneDetectionGate {
-    static let shared = SceneDetectionGate()
-
-    private var isRunning = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func acquire() async {
-        if !isRunning {
-            isRunning = true
-            return
-        }
-
-        await withCheckedContinuation { continuation in
-            waiters.append(continuation)
-        }
-    }
-
-    func release() {
-        guard let nextWaiter = waiters.first else {
-            isRunning = false
-            return
-        }
-
-        waiters.removeFirst()
-        nextWaiter.resume()
-    }
-}
-
-nonisolated final class ToolProcessRegistry: @unchecked Sendable {
-    private let lock = NSLock()
-    private var process: Process?
-
-    func set(_ process: Process?) {
-        lock.lock()
-        self.process = process
-        lock.unlock()
-    }
-
-    func cancelRunningProcess() {
-        lock.lock()
-        let process = process
-        self.process = nil
-        lock.unlock()
-
-        if process?.isRunning == true {
-            process?.terminate()
-        }
-    }
-}
-
-nonisolated final class PipeDataCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer = Data()
-
-    func append(_ data: Data) {
-        guard !data.isEmpty else { return }
-        lock.lock()
-        buffer.append(data)
-        lock.unlock()
-    }
-
-    var data: Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return buffer
-    }
-}
-
-nonisolated final class PipeLineCollector: @unchecked Sendable {
-    private let dataCollector = PipeDataCollector()
-    private let lock = NSLock()
-    private var pendingText = ""
-
-    func append(_ data: Data) -> [String] {
-        guard !data.isEmpty else { return [] }
-        dataCollector.append(data)
-        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return [] }
-
-        lock.lock()
-        defer { lock.unlock() }
-
-        pendingText += text.replacingOccurrences(of: "\r", with: "\n")
-        let parts = pendingText.components(separatedBy: .newlines)
-        guard parts.count > 1 else { return [] }
-
-        pendingText = parts.last ?? ""
-        return Array(parts.dropLast())
-    }
-
-    func finish(with data: Data = Data()) -> [String] {
-        var lines = append(data)
-
-        lock.lock()
-        if !pendingText.isEmpty {
-            lines.append(pendingText)
-            pendingText = ""
-        }
-        lock.unlock()
-
-        return lines
-    }
-
-    var data: Data {
-        dataCollector.data
-    }
-}
-
-actor VideoMetadataQueue {
-    private let videos: [VideoItem]
-    private var nextIndex = 0
-
-    init(videos: [VideoItem]) {
-        self.videos = videos
-    }
-
-    func next() -> VideoItem? {
-        guard nextIndex < videos.count else { return nil }
-        let video = videos[nextIndex]
-        nextIndex += 1
-        return video
-    }
-}
-
-nonisolated struct DownloadProgressUpdate: Sendable {
-    var progress: Double?
-    var speed: String?
-}
-
-nonisolated struct ProjectDataFile: Codable, Sendable {
-    var sampledFrames: [SampledFrame]
-    var annotations: [AnnotationItem]
-    var audioClips: [AudioClipItem]
-    var transcripts: [String: [TranscriptSegment]]
-    var transcriptExports: [TranscriptExportItem]?
-    var musicsByVideoPath: [String: [MusicRecognitionItem]]? // optional for backward compat
-    var musicDownloadJobs: [MusicDownloadJob]? // optional for backward compat
-}
-
-nonisolated enum ResourceLibrarySQLite {
-    static func write(libraryURL: URL, music: [LocalMusicAsset], audio: [LocalAudioAsset]) {
-        let sqliteURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        guard FileManager.default.isExecutableFile(atPath: sqliteURL.path) else { return }
-
-        let dbURL = libraryURL.appendingPathComponent(".lapianbao.sqlite")
-        let process = Process()
-        process.executableURL = sqliteURL
-        process.arguments = [dbURL.path]
-        let inputPipe = Pipe()
-        process.standardInput = inputPipe
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            inputPipe.fileHandleForWriting.write(sql(libraryURL: libraryURL, music: music, audio: audio).data(using: .utf8) ?? Data())
-            try? inputPipe.fileHandleForWriting.close()
-            process.waitUntilExit()
-        } catch {
-            try? inputPipe.fileHandleForWriting.close()
-        }
-    }
-
-    private static func sql(libraryURL: URL, music: [LocalMusicAsset], audio: [LocalAudioAsset]) -> String {
-        var lines: [String] = [
-            "PRAGMA journal_mode=WAL;",
-            "CREATE TABLE IF NOT EXISTS assets (kind TEXT NOT NULL, path TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, role TEXT NOT NULL, tags TEXT NOT NULL, file_extension TEXT NOT NULL, file_size INTEGER NOT NULL, modified_at REAL, duration REAL NOT NULL);",
-            "BEGIN IMMEDIATE;",
-            "DELETE FROM assets WHERE kind IN ('music', 'audio', '音乐', '音频');"
-        ]
-
-        for item in music {
-            lines.append(insertSQL(
-                kind: "音乐",
-                path: relativePath(item.filePath, base: libraryURL),
-                title: item.title,
-                role: item.role.rawValue,
-                tags: item.tags,
-                fileExtension: item.fileExtension,
-                fileSize: item.fileSize,
-                modifiedAt: item.modifiedAt,
-                duration: item.duration
-            ))
-        }
-
-        for item in audio {
-            lines.append(insertSQL(
-                kind: "音频",
-                path: relativePath(item.filePath, base: libraryURL),
-                title: item.title,
-                role: "soundEffect",
-                tags: item.tags,
-                fileExtension: item.fileExtension,
-                fileSize: item.fileSize,
-                modifiedAt: item.modifiedAt,
-                duration: item.duration
-            ))
-        }
-
-        lines.append("COMMIT;")
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func insertSQL(
-        kind: String,
-        path: String,
-        title: String,
-        role: String,
-        tags: [String],
-        fileExtension: String,
-        fileSize: Int64,
-        modifiedAt: Date?,
-        duration: Double
-    ) -> String {
-        let tagsJSON = (try? String(
-            data: JSONEncoder().encode(tags),
-            encoding: .utf8
-        )) ?? "[]"
-        let modifiedValue = modifiedAt.map { "\($0.timeIntervalSince1970)" } ?? "NULL"
-        return """
-        INSERT OR REPLACE INTO assets (kind, path, title, role, tags, file_extension, file_size, modified_at, duration) VALUES (\(quote(kind)), \(quote(path)), \(quote(title)), \(quote(role)), \(quote(tagsJSON)), \(quote(fileExtension)), \(fileSize), \(modifiedValue), \(duration));
-        """
-    }
-
-    private static func relativePath(_ path: String, base libraryURL: URL) -> String {
-        let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
-        return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path
-    }
-
-    private static func quote(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
-    }
-}
-
-enum ProjectDataLoadState {
-    case idle
-    case loading
-    case loaded
 }
