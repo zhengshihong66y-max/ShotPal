@@ -181,13 +181,13 @@ def require_scene_detection_progress_guardrails(sources: dict[str, str]) -> None
     )
 
 
-def require_interaction_hit_testing_guardrails(sources: dict[str, str], readme: str) -> None:
+def require_interaction_hit_testing_guardrails(sources: dict[str, str], guidance: str) -> None:
     require(
-        "全窗口遮罩背景" in readme
-        and "`Button { Color... }`" in readme
-        and "只能监听 `.keyDown` 和 `.keyUp`" in readme
-        and "命中检查" in readme,
-        "README must document hit-testing guardrails for overlays and app-level event monitors.",
+        "全窗口遮罩背景" in guidance
+        and "`Button { Color... }`" in guidance
+        and "只能监听 `.keyDown` 和 `.keyUp`" in guidance
+        and "命中检查" in guidance,
+        "AGENTS must document hit-testing guardrails for overlays and app-level event monitors.",
     )
 
     app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
@@ -220,12 +220,12 @@ def require_interaction_hit_testing_guardrails(sources: dict[str, str], readme: 
 
 
 def require_architecture_guardrails(sources: dict[str, str]) -> None:
-    readme = read("README.md")
+    agents = read("AGENTS.md")
     require(
-        "## 4.5 架构护栏和拆分路线" in readme
-        and "Tools/regression_checks.py" in readme
-        and "LibraryStore.swift` 只能保留状态壳" in readme,
-        "README must document the current architecture guardrails before checks can enforce them.",
+        "## 架构护栏和收尾边界" in agents
+        and "Tools/regression_checks.py" in agents
+        and "LibraryStore.swift` 只能保留状态壳" in agents,
+        "AGENTS must document the current architecture guardrails before checks can enforce them.",
     )
     require(
         "LapianBao/AppSettings.swift" in sources
@@ -247,7 +247,7 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
         and "enum ProjectRepository" in sources["LapianBao/ProjectRepository.swift"],
         "ProjectRepository.swift must own project hidden-file paths and JSON persistence helpers.",
     )
-    require_interaction_hit_testing_guardrails(sources, readme)
+    require_interaction_hit_testing_guardrails(sources, agents)
 
     require_file_line_limits(
         sources,
@@ -310,7 +310,7 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
             "LapianBao/AppChrome.swift",
             "LapianBao/AppEventBus.swift",
             "LapianBao/PreviewController.swift",
-            "LapianBao/Views/Audio/AudioWorkspaceView.swift",
+            "LapianBao/Views/Audio/AudioWorkspacePreview.swift",
             "LapianBao/Views/Music/AudioMusicComponents.swift",
             "LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift",
         },
@@ -342,6 +342,7 @@ def main() -> None:
     library_store = app_swift
     preview_controller = app_swift
     content_view = app_swift
+    launch_imports = swift_sources.get("LapianBao/Stores/LibraryStore+LaunchAndRemoteImports.swift", "")
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
 
     require(
@@ -357,9 +358,9 @@ def main() -> None:
         "Startup diagnostics must mark pre-main, AppDelegate, and window-ordering stages.",
     )
     launch_restore_section = section_between(
-        library_store,
+        launch_imports,
         "func loadLastLibraryForLaunch()",
-        "func reconcileVideoLibraryAfterLaunch",
+        "func scheduleInitialVideoSelectionAfterLaunch",
     )
     require(
         "includeThumbnailData: false" in launch_restore_section
@@ -367,7 +368,7 @@ def main() -> None:
         "Launch library restore must use a lightweight video cache and avoid decoding cached thumbnail data before the list appears.",
     )
     bookmark_restore_section = section_between(
-        library_store,
+        launch_imports,
         "func restoreLastLibraryBookmark()",
         "func stopAccessingScopedLibrary()",
     )
@@ -543,13 +544,13 @@ def main() -> None:
     )
     require(
         "func startExternalServiceSelfCheck(force: Bool = true)" in library_store
-        and "func startDailyExternalServiceSelfCheckIfNeeded()" in library_store,
-        "External service self-check must expose manual and daily entry points.",
+        and "func startExternalServiceSelfCheckPreflightIfNeeded()" in library_store,
+        "External service self-check must expose manual and preflight entry points.",
     )
     require(
-        "func startExternalServiceRepair()" in library_store
-        and "repairMode: .always" in library_store,
-        "External service self-check must expose an independent update/repair entry point.",
+        "repairMode = .always" in app_swift
+        and "--lapianbao-self-repair" in app_swift,
+        "External service self-check must expose a command-line update/repair entry point.",
     )
     require(
         "func prepareExternalServiceWork()" in library_store,
@@ -558,9 +559,9 @@ def main() -> None:
     require(
         "runDownloaderSelfCheck(" in library_store
         and "repairMode: DownloaderSelfCheckRepairMode = .afterFailure" in library_store
-        and "步骤 1/2：正在检查 yt-dlp 最新版本" in library_store
+        and "检查 yt-dlp 最新版本" in library_store
         and "fetchLatestNightlyYTDLPRelease" in library_store
-        and "步骤 2/2：正在下载最新 yt-dlp" in library_store
+        and "下载最新 yt-dlp" in library_store
         and "verifySHA256Digest" in library_store
         and "replaceAppManagedYTDLP" in library_store
         and "removeUnresponsiveAppManagedYTDLP()" in library_store
@@ -573,8 +574,8 @@ def main() -> None:
         "External service self-check must be runnable from a command-line self-check hook.",
     )
     require(
-        app_swift.count("startDailyExternalServiceSelfCheckIfNeeded()") >= 2,
-        "App activation and launch setup must trigger downloader update checks.",
+        library_store.count("startExternalServiceSelfCheckPreflightIfNeeded()") >= 4,
+        "Import and media work must trigger downloader self-check preflight checks.",
     )
 
     for service_key in [
@@ -587,14 +588,14 @@ def main() -> None:
 
     for start, end, name in [
         (
-            "func importLatestInstagramSavedFromChrome",
-            "func importLatestXiaohongshuSavedVideosFromChrome",
-            "Instagram saved import",
+            "func latestInstagramSavedImportCandidatesFromChrome",
+            "func latestXiaohongshuSavedVideoImportCandidatesFromChrome",
+            "Instagram saved candidate scan",
         ),
         (
-            "func importLatestXiaohongshuSavedVideosFromChrome",
-            "func queuedOrImportedInstagramSourceURLs",
-            "Xiaohongshu saved import",
+            "func latestXiaohongshuSavedVideoImportCandidatesFromChrome",
+            "func recordInstagramSavedSyncSnapshot",
+            "Xiaohongshu saved candidate scan",
         ),
         (
             "func enqueueRemoteImport",
@@ -623,14 +624,6 @@ def main() -> None:
         )
 
     for start, name in [
-        (
-            "private func analyzeFrame",
-            "frame image analysis",
-        ),
-        (
-            "private func runAppleMusicSearch",
-            "Apple Music search",
-        ),
         (
             "struct MusicWorkspaceView",
             "music workspace external artwork/search",

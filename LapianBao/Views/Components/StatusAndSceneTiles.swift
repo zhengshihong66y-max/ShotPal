@@ -143,7 +143,8 @@ func normalizedProgressFraction(_ progress: Double) -> Double {
 }
 
 func progressPercentText(_ progress: Double) -> String {
-    "\(Int((normalizedProgressFraction(progress) * 100).rounded()))%"
+    let percent = normalizedProgressFraction(progress) * 100
+    return String(format: "%.1f%%", percent)
 }
 
 func activityProgressValue(from message: String) -> Double? {

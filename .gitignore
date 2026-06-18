@@ -7,6 +7,11 @@ __pycache__/
 *.py[cod]
 Tools/*-env/
 
+# One-off local checks and generated fixtures
+ExportReadinessCheck/
+Tools/whisper_test/
+video_rename_plan.tsv
+
 # Xcode local user state
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
