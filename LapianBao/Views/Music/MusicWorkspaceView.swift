@@ -26,7 +26,7 @@ struct MusicWorkspaceView: View {
 
     var body: some View {
         let projection = viewModel.projection
-        let waveformRenderingCount = activeMusicWaveformCacheCount
+        let waveformCacheProgress = musicWaveformCacheProgress
 
         VStack(alignment: .leading, spacing: 12) {
             musicHeader()
@@ -61,14 +61,15 @@ struct MusicWorkspaceView: View {
         .padding(.bottom, 14)
         .background(Design.sidebarBg)
         .overlay(alignment: .bottom) {
-            if waveformRenderingCount > 0 {
-                MusicWaveformCacheProgressOverlay(activeCount: waveformRenderingCount)
+            if let waveformCacheProgress {
+                MusicWaveformCacheProgressOverlay(progress: waveformCacheProgress)
                     .padding(.horizontal, Design.libraryContentInset)
                     .padding(.bottom, 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: waveformRenderingCount)
+        .animation(.easeInOut(duration: 0.18), value: waveformCacheProgress?.activeCount ?? 0)
+        .animation(.easeInOut(duration: 0.12), value: waveformCacheProgress?.progress ?? 0)
         .onAppear {
             prepareMusicWorkspaceForDisplay()
         }
@@ -922,11 +923,22 @@ struct MusicWorkspaceView: View {
         viewModel.selectedMusicTagFilterCount
     }
 
-    private var activeMusicWaveformCacheCount: Int {
-        let downloadCount = libraryStore.musicDownloadJobs.reduce(0) { count, job in
-            count + (job.isPreparingWaveform ? 1 : 0)
+    private var musicWaveformCacheProgress: MusicWaveformCacheProgress? {
+        let localProgresses = libraryStore.localMusicWaveformRenderingPaths.map { path in
+            libraryStore.localMusicWaveformProgressByPath[path] ?? 0
         }
-        return downloadCount + libraryStore.localMusicWaveformRenderingPaths.count
+        let downloadProgresses = libraryStore.musicDownloadJobs.compactMap { job -> Double? in
+            guard job.isPreparingWaveform else { return nil }
+            return libraryStore.musicDownloadWaveformProgressByID[job.id] ?? 0
+        }
+        let progressValues = localProgresses + downloadProgresses
+        guard !progressValues.isEmpty else { return nil }
+
+        let averageProgress = progressValues.reduce(0, +) / Double(progressValues.count)
+        return MusicWaveformCacheProgress(
+            activeCount: progressValues.count,
+            progress: min(1, max(0, averageProgress))
+        )
     }
 
     private func toggleMusicFilter(_ option: MusicFilterOption) {
@@ -966,8 +978,13 @@ struct MusicWorkspaceView: View {
 
 }
 
-private struct MusicWaveformCacheProgressOverlay: View {
+private struct MusicWaveformCacheProgress: Equatable {
     let activeCount: Int
+    let progress: Double
+}
+
+private struct MusicWaveformCacheProgressOverlay: View {
+    let progress: MusicWaveformCacheProgress
 
     var body: some View {
         HStack(spacing: 8) {
@@ -977,7 +994,7 @@ private struct MusicWaveformCacheProgressOverlay: View {
                 .foregroundStyle(.white.opacity(0.86))
                 .frame(width: 14, height: 14)
 
-            ProgressView()
+            ProgressView(value: progress.progress, total: 1)
                 .progressViewStyle(.linear)
                 .controlSize(.small)
                 .tint(.white.opacity(0.86))
@@ -988,7 +1005,7 @@ private struct MusicWaveformCacheProgressOverlay: View {
                 .foregroundStyle(.white.opacity(0.88))
                 .lineLimit(1)
 
-            Text("\(activeCount) 个")
+            Text("\(Int((progress.progress * 100).rounded()))% · \(progress.activeCount) 个")
                 .font(Design.numericCaption2(weight: .bold))
                 .foregroundStyle(.white.opacity(0.62))
                 .lineLimit(1)

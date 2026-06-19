@@ -1791,7 +1791,8 @@ extension LibraryStore {
         for url: URL,
         sampleCount: Int,
         start: Double? = nil,
-        end: Double? = nil
+        end: Double? = nil,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async -> [Double]? {
         let task = Task<[Double]?, Never>.detached(priority: .utility) {
             let asset = AVURLAsset(url: url)
@@ -1829,10 +1830,41 @@ extension LibraryStore {
             var currentPeak = 0.0
             var samplesInWindow = 0
             let windowSize = 512
+            let loadedDuration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
+            let progressStart = max(0, start ?? 0)
+            let progressEnd: Double
+            if let end, end > progressStart {
+                progressEnd = end
+            } else if loadedDuration.isFinite, loadedDuration > progressStart {
+                progressEnd = loadedDuration
+            } else {
+                progressEnd = progressStart
+            }
+            let progressDuration = max(0, progressEnd - progressStart)
+            var lastReportedProgress = -1.0
+
+            func reportProgress(_ value: Double) {
+                guard let progressHandler else { return }
+                let progress = min(1, max(0, value))
+                guard progress >= 1 || progress - lastReportedProgress >= 0.01 else { return }
+                lastReportedProgress = progress
+                progressHandler(progress)
+            }
+
+            reportProgress(0)
 
             while !Task.isCancelled,
                   reader.status == .reading,
                   let sampleBuffer = output.copyNextSampleBuffer() {
+                if progressDuration > 0 {
+                    let timestamp = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+                    let sampleDuration = CMTimeGetSeconds(CMSampleBufferGetDuration(sampleBuffer))
+                    let bufferEnd = timestamp + (sampleDuration.isFinite ? sampleDuration : 0)
+                    if bufferEnd.isFinite {
+                        reportProgress(min(0.98, (bufferEnd - progressStart) / progressDuration))
+                    }
+                }
+
                 guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
                 let byteCount = CMBlockBufferGetDataLength(blockBuffer)
                 guard byteCount > 0 else { continue }
@@ -1867,7 +1899,9 @@ extension LibraryStore {
             }
 
             guard !peaks.isEmpty else { return nil }
-            return downsample(peaks, to: sampleCount)
+            let samples = downsample(peaks, to: sampleCount)
+            reportProgress(1)
+            return samples
         }
 
         return await withTaskCancellationHandler(operation: {

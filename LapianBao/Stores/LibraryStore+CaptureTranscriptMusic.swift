@@ -624,6 +624,7 @@ extension LibraryStore {
             localMusicWaveformTasks[path]?.cancel()
             localMusicWaveformTasks[path] = nil
             localMusicWaveformRenderingPaths.remove(path)
+            localMusicWaveformProgressByPath.removeValue(forKey: path)
             knownLocalResourcePaths.remove(path)
 
             let enrichmentKeys = musicTagEnrichmentTasks.keys.filter { $0.hasPrefix("\(path)|") }
@@ -840,6 +841,7 @@ extension LibraryStore {
                 j.waveformSamples = nil
                 j.isPreparingWaveform = true
             }
+            musicDownloadWaveformProgressByID[jobID] = 0
             registerDownloadedMusicAsset(outputURL, song: song, type: type)
             scanResourceLibrary(
                 forceFullScan: true,
@@ -850,23 +852,34 @@ extension LibraryStore {
             let samples = await Self.makeWaveformSamples(
                 for: outputURL,
                 sampleCount: Self.musicWaveformSampleCount
-            )
+            ) { progress in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          let job = self.musicDownloadJobs.first(where: { $0.id == jobID }),
+                          job.isPreparingWaveform
+                    else { return }
+                    self.musicDownloadWaveformProgressByID[jobID] = progress
+                }
+            }
             updateMusicDownloadJob(id: jobID) { j in
                 j.waveformSamples = samples ?? []
                 j.isPreparingWaveform = false
             }
+            musicDownloadWaveformProgressByID.removeValue(forKey: jobID)
         } catch is CancellationError {
             updateMusicDownloadJob(id: jobID) { j in
                 j.status = .paused
                 j.downloadProgress = nil
                 j.isPreparingWaveform = false
             }
+            musicDownloadWaveformProgressByID.removeValue(forKey: jobID)
         } catch {
             updateMusicDownloadJob(id: jobID) { j in
                 j.status = .failed(error.localizedDescription)
                 j.downloadProgress = nil
                 j.isPreparingWaveform = false
             }
+            musicDownloadWaveformProgressByID.removeValue(forKey: jobID)
         }
     }
 
@@ -942,20 +955,31 @@ extension LibraryStore {
         else { return }
 
         musicDownloadJobs[index].isPreparingWaveform = true
+        musicDownloadWaveformProgressByID[current.id] = 0
         saveProjectData()
 
         Task.detached(priority: .utility) { [weak self, jobID = current.id, fileURL = URL(fileURLWithPath: filePath)] in
+            guard let store = self else { return }
             let samples = await Self.makeWaveformSamples(
                 for: fileURL,
                 sampleCount: Self.musicWaveformSampleCount
-            )
-            await MainActor.run { [weak self] in
-                guard let self,
-                      let index = self.musicDownloadJobs.firstIndex(where: { $0.id == jobID })
+            ) { progress in
+                Task { @MainActor [weak store] in
+                    guard let store,
+                          let job = store.musicDownloadJobs.first(where: { $0.id == jobID }),
+                          job.isPreparingWaveform
+                    else { return }
+                    store.musicDownloadWaveformProgressByID[jobID] = progress
+                }
+            }
+            await MainActor.run { [weak store] in
+                guard let store,
+                      let index = store.musicDownloadJobs.firstIndex(where: { $0.id == jobID })
                 else { return }
-                self.musicDownloadJobs[index].waveformSamples = samples ?? []
-                self.musicDownloadJobs[index].isPreparingWaveform = false
-                self.saveProjectData()
+                store.musicDownloadJobs[index].waveformSamples = samples ?? []
+                store.musicDownloadJobs[index].isPreparingWaveform = false
+                store.musicDownloadWaveformProgressByID.removeValue(forKey: jobID)
+                store.saveProjectData()
             }
         }
     }

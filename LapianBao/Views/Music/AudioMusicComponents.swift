@@ -984,6 +984,11 @@ struct MusicDownloadWaveformPanel: View {
                 stopAudioPreview()
             }
         }
+        .onChange(of: libraryStore.isHydratingLocalWaveformCache) { _, isHydrating in
+            if !isHydrating {
+                requestWaveformIfNeeded()
+            }
+        }
         .task(id: previewFileURL?.path) {
             await loadAudioDuration()
         }

@@ -136,6 +136,9 @@ final class LibraryStore: ObservableObject {
     }
     @Published var localMusicWaveformSamplesByPath: [String: [Double]] = [:]
     @Published var localMusicWaveformRenderingPaths = Set<String>()
+    @Published var localMusicWaveformProgressByPath: [String: Double] = [:]
+    @Published var musicDownloadWaveformProgressByID: [UUID: Double] = [:]
+    @Published var isHydratingLocalWaveformCache = false
     @Published var localAudioWaveformSamplesByPath: [String: [Double]] = [:]
     @Published var musicFileDurationsByPath: [String: Double] = [:]
     @Published var musicDetectionStatusByVideoPath: [String: TranscriptJobStatus] = [:]

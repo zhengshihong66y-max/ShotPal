@@ -159,6 +159,7 @@ extension LibraryStore {
         }
 
         localWaveformCacheHydrationTask?.cancel()
+        isHydratingLocalWaveformCache = true
         localWaveformCacheHydrationTask = Task.detached(priority: .utility) { [weak self, snapshot, libraryURL, libraryPath, shouldLoadCache, currentCache] in
             let cache = shouldLoadCache ? Self.loadLocalWaveformCache(in: libraryURL) : currentCache
             let result = Self.localWaveformHydrationResult(
@@ -171,6 +172,7 @@ extension LibraryStore {
             await MainActor.run { [weak self] in
                 guard let self, self.libraryURL?.path == libraryPath else { return }
                 self.localWaveformCacheHydrationTask = nil
+                self.isHydratingLocalWaveformCache = false
 
                 if self.localMusicWaveformSamplesByPath != result.hydratedMusic {
                     self.localMusicWaveformSamplesByPath = result.hydratedMusic
@@ -193,6 +195,7 @@ extension LibraryStore {
         if localMusicWaveformSamplesByPath[path]?.count == Self.localMusicWaveformSampleCount {
             return
         }
+        guard !isHydratingLocalWaveformCache else { return }
         guard localMusicWaveformTasks[path] == nil,
               FileManager.default.fileExists(atPath: path)
         else { return }
@@ -203,32 +206,41 @@ extension LibraryStore {
         let modifiedAt = asset.modifiedAt
 
         localMusicWaveformRenderingPaths.insert(path)
+        localMusicWaveformProgressByPath[path] = 0
         localMusicWaveformTasks[path] = Task.detached(priority: .utility) { [weak self, fileURL, path, libraryURL, fileSize, modifiedAt] in
+            guard let store = self else { return }
             let samples = await Self.makeWaveformSamples(
                 for: fileURL,
                 sampleCount: Self.localMusicWaveformSampleCount
-            ) ?? []
-            guard !Task.isCancelled else { return }
+            ) { progress in
+                Task { @MainActor [weak store] in
+                    guard let store, store.localMusicWaveformTasks[path] != nil else { return }
+                    store.localMusicWaveformProgressByPath[path] = progress
+                }
+            } ?? []
+            let wasCancelled = Task.isCancelled
 
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.localMusicWaveformTasks[path] = nil
-                self.localMusicWaveformRenderingPaths.remove(path)
+            await MainActor.run { [weak store] in
+                guard let store else { return }
+                store.localMusicWaveformTasks[path] = nil
+                store.localMusicWaveformRenderingPaths.remove(path)
+                store.localMusicWaveformProgressByPath.removeValue(forKey: path)
 
-                guard let currentAsset = self.localMusicAssets.first(where: { $0.filePath == path }),
+                guard !wasCancelled,
+                      let currentAsset = store.localMusicAssets.first(where: { $0.filePath == path }),
                       currentAsset.fileSize == fileSize,
                       currentAsset.modifiedAt == modifiedAt
                 else { return }
 
-                self.localMusicWaveformSamplesByPath[path] = samples
+                store.localMusicWaveformSamplesByPath[path] = samples
                 guard samples.count == Self.localMusicWaveformSampleCount,
                       let libraryURL,
-                      self.libraryURL?.path == libraryURL.path
+                      store.libraryURL?.path == libraryURL.path
                 else { return }
 
                 let relativePath = Self.libraryRelativePath(for: fileURL, base: libraryURL)
                 let key = Self.localWaveformCacheKey(kind: "music", relativePath: relativePath)
-                self.localWaveformCacheByKey[key] = LocalWaveformCacheEntry(
+                store.localWaveformCacheByKey[key] = LocalWaveformCacheEntry(
                     kind: "music",
                     relativePath: relativePath,
                     fileIdentity: Self.localWaveformFileIdentity(for: fileURL),
@@ -237,7 +249,7 @@ extension LibraryStore {
                     sampleCount: Self.localMusicWaveformSampleCount,
                     samples: samples
                 )
-                self.scheduleLocalWaveformCacheSave()
+                store.scheduleLocalWaveformCacheSave()
             }
         }
     }
@@ -251,6 +263,7 @@ extension LibraryStore {
         var hydratedMusic: [String: [Double]] = [:]
         var hydratedAudio: [String: [Double]] = [:]
         let cacheByIdentity = localWaveformIdentityCacheIndex(cacheByKey)
+        retainedCache = cacheByKey
 
         for asset in snapshot.music {
             let assetURL = URL(fileURLWithPath: asset.filePath)
