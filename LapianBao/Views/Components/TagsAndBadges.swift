@@ -668,7 +668,6 @@ struct TagEditorSection: View {
                 .frame(height: visibleTagPanelHeight, alignment: .topLeading)
             } else {
                 grid
-                    .frame(height: visibleTagPanelHeight, alignment: .topLeading)
             }
         }
     }
