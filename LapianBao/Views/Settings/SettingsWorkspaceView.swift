@@ -31,27 +31,6 @@ private enum AccountLoginTarget: String, Identifiable {
         }
     }
 
-    var buttonTitle: String {
-        switch self {
-        case .instagram: return "IG"
-        case .xiaohongshu: return "小红书"
-        case .youtube: return "YouTube"
-        case .bilibili: return "B站"
-        case .douyin: return "抖音"
-        }
-    }
-
-    var buttonWidth: CGFloat {
-        switch self {
-        case .xiaohongshu, .douyin:
-            return 42
-        case .youtube:
-            return 50
-        case .instagram, .bilibili:
-            return 44
-        }
-    }
-
     var startURL: URL {
         switch self {
         case .instagram:
@@ -64,6 +43,36 @@ private enum AccountLoginTarget: String, Identifiable {
             return URL(string: "https://passport.bilibili.com/login")!
         case .douyin:
             return URL(string: "https://www.douyin.com/")!
+        }
+    }
+
+    func statusText(in summary: AccountCookieSummary) -> String {
+        switch self {
+        case .instagram:
+            return summary.hasInstagramSession ? "IG 已登录" : "IG 未登录"
+        case .xiaohongshu:
+            return summary.hasXiaohongshuSession ? "小红书已登录" : "小红书未登录"
+        case .youtube:
+            return summary.hasYouTubeSession ? "YouTube 已登录" : "YouTube 未登录"
+        case .bilibili:
+            return summary.hasBilibiliSession ? "B站已登录" : "B站未登录"
+        case .douyin:
+            return summary.hasDouyinSession ? "抖音已登录" : "抖音未登录"
+        }
+    }
+
+    func isLoggedIn(_ summary: AccountCookieSummary) -> Bool {
+        switch self {
+        case .instagram:
+            return summary.hasInstagramSession
+        case .xiaohongshu:
+            return summary.hasXiaohongshuSession
+        case .youtube:
+            return summary.hasYouTubeSession
+        case .bilibili:
+            return summary.hasBilibiliSession
+        case .douyin:
+            return summary.hasDouyinSession
         }
     }
 
@@ -115,33 +124,7 @@ struct SettingsWorkspaceView: View {
                 tint: libraryStore.accountCookieSummary.hasAnySession ? .green : Design.annotationAccent
             )
 
-            settingsInfoColumn(
-                title: "账号登录",
-                detail: libraryStore.accountCookieSummary.detailText,
-                detailColor: libraryStore.accountCookieSummary.hasAnySession ? .secondary : Color.orange.opacity(0.92)
-            )
-
-            HStack(spacing: 6) {
-                ForEach(AccountLoginTarget.allLoginTargets) { target in
-                    Button {
-                        openAccountLogin(target)
-                    } label: {
-                        Text(target.buttonTitle)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .frame(width: target.buttonWidth, height: Self.rowActionButtonSize)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.78))
-                    .background(.white.opacity(0.07))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .help("用默认浏览器打开\(target.title)")
-                }
-
-                accountLoginRefreshButton()
-                    .padding(.leading, 4)
-            }
+            accountLoginInfoColumn()
         }
         .padding(.horizontal, Self.rowHorizontalPadding)
         .padding(.vertical, Self.rowVerticalPadding)
@@ -149,26 +132,45 @@ struct SettingsWorkspaceView: View {
         .settingsRowBackground()
     }
 
-    private func accountLoginRefreshButton() -> some View {
-        Button {
-            refreshAccountLoginStatus(forceRefresh: true)
-        } label: {
-            ZStack {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(libraryStore.isRefreshingAccountCookieSummary ? 0 : 0.70))
-                if libraryStore.isRefreshingAccountCookieSummary {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(.white.opacity(0.72))
+    private func accountLoginInfoColumn() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("账号登录")
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+            HStack(spacing: 5) {
+                ForEach(Array(AccountLoginTarget.allLoginTargets.enumerated()), id: \.element.id) { index, target in
+                    if index > 0 {
+                        Text("·")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    accountLoginStatusLink(target)
                 }
             }
-            .frame(width: Self.rowActionButtonSize, height: Self.rowActionButtonSize)
-            .contentShape(Rectangle())
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: Self.rowContentHeight, maxHeight: Self.rowContentHeight, alignment: .leading)
+    }
+
+    private func accountLoginStatusLink(_ target: AccountLoginTarget) -> some View {
+        let summary = libraryStore.accountCookieSummary
+        let isLoggedIn = target.isLoggedIn(summary)
+        let color: Color = isLoggedIn ? .secondary : Color.orange.opacity(0.92)
+
+        return Button {
+            openAccountLogin(target)
+        } label: {
+            Text(target.statusText(in: summary))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(color)
+                .underline(true, color: color)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .buttonStyle(.plain)
-        .disabled(libraryStore.isRefreshingAccountCookieSummary)
-        .help("检测最新登录状态")
+        .help("用默认浏览器打开\(target.title)")
     }
 
     private func downloaderSelfCheckCard() -> some View {
