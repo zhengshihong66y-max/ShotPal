@@ -186,25 +186,7 @@ struct SettingsWorkspaceView: View {
     }
 
     private func shortcutSettingsCard() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: Self.rowColumnSpacing) {
-                settingsRowIcon("keyboard", tint: Design.annotationAccent)
-
-                settingsInfoColumn(
-                    title: "快捷键",
-                    detail: shortcutConflictCountText,
-                    detailColor: shortcutConflictCount == 0 ? .secondary : Color.red
-                )
-
-                settingsActionButton(
-                    systemImage: "arrow.counterclockwise",
-                    help: "恢复默认快捷键",
-                    action: resetAllPreviewShortcuts
-                )
-                .disabled(previewShortcutActionsAreDefault)
-            }
-            .frame(height: Self.rowContentHeight, alignment: .center)
-
+        VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 0) {
                 ForEach(PreviewShortcutAction.allCases) { action in
                     shortcutRow(action)
@@ -279,30 +261,6 @@ struct SettingsWorkspaceView: View {
         PreviewShortcutAction.actions(for: action.keyCode).filter { $0 != action }
     }
 
-    private var shortcutConflictCount: Int {
-        var seen = Set<UInt16>()
-        return PreviewShortcutAction.allCases.reduce(0) { count, action in
-            guard !seen.contains(action.keyCode) else { return count }
-            seen.insert(action.keyCode)
-            return count + (PreviewShortcutAction.actions(for: action.keyCode).count > 1 ? 1 : 0)
-        }
-    }
-
-    private var shortcutConflictCountText: String {
-        shortcutConflictCount == 0 ? "无冲突" : "\(shortcutConflictCount) 组冲突"
-    }
-
-    private var previewShortcutActionsAreDefault: Bool {
-        PreviewShortcutAction.allCases.allSatisfy { $0.keyCode == $0.defaultKeyCode }
-    }
-
-    private func resetAllPreviewShortcuts() {
-        PreviewShortcutAction.allCases.forEach {
-            AppSettings.resetPreviewShortcutKeyCode(actionRawValue: $0.rawValue)
-        }
-        shortcutRevision += 1
-    }
-
     private func settingsCompactRow(
         icon: String,
         iconTint: Color,
@@ -337,20 +295,17 @@ struct SettingsWorkspaceView: View {
         detail: String,
         detailColor: Color = .secondary
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.tail)
+            Spacer(minLength: 0)
             Text(detail.isEmpty ? " " : detail)
                 .font(.caption2)
                 .foregroundStyle(detailColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Text(" ")
-                .font(Design.numericCaption2())
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, minHeight: Self.rowContentHeight, maxHeight: Self.rowContentHeight, alignment: .leading)
     }
