@@ -160,6 +160,7 @@ final class LibraryStore: ObservableObject {
     @Published var instagramImportEndpoint = AppSettings.instagramImportEndpoint
     @Published var downloaderSelfCheckReport = LibraryStore.loadDownloaderSelfCheckReport()
     @Published var accountCookieSummary = AccountCookieSummary()
+    @Published var isRefreshingAccountCookieSummary = false
     @Published var isClearingAccountCookies = false
 
     let defaultLibraryPath = AppSettings.defaultLibraryPath

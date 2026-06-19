@@ -196,11 +196,11 @@ extension LibraryStore {
         return result
     }
 
-    nonisolated static func currentAccountCookieSummary() async -> AccountCookieSummary {
+    nonisolated static func currentAccountCookieSummary(forceRefresh: Bool = false) async -> AccountCookieSummary {
         let cookies = await webKitAccountCookies()
         let internalSummary = accountCookieSummary(from: cookies)
         let browserSummary = await Task.detached(priority: .utility) {
-            guard let cookieURL = try? cachedOrExportedChromeCookieURL(),
+            guard let cookieURL = try? cachedOrExportedChromeCookieURL(forceRefresh: forceRefresh),
                   let cookieText = try? String(contentsOf: cookieURL, encoding: .utf8)
             else { return nil as AccountCookieSummary? }
             return accountCookieSummary(fromNetscapeCookieText: cookieText)

@@ -138,12 +138,37 @@ struct SettingsWorkspaceView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .help("用默认浏览器打开\(target.title)")
                 }
+
+                accountLoginRefreshButton()
+                    .padding(.leading, 4)
             }
         }
         .padding(.horizontal, Self.rowHorizontalPadding)
         .padding(.vertical, Self.rowVerticalPadding)
         .frame(height: Self.rowHeight, alignment: .center)
         .settingsRowBackground()
+    }
+
+    private func accountLoginRefreshButton() -> some View {
+        Button {
+            refreshAccountLoginStatus(forceRefresh: true)
+        } label: {
+            ZStack {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(libraryStore.isRefreshingAccountCookieSummary ? 0 : 0.70))
+                if libraryStore.isRefreshingAccountCookieSummary {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(.white.opacity(0.72))
+                }
+            }
+            .frame(width: Self.rowActionButtonSize, height: Self.rowActionButtonSize)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(libraryStore.isRefreshingAccountCookieSummary)
+        .help("检测最新登录状态")
     }
 
     private func downloaderSelfCheckCard() -> some View {
@@ -391,18 +416,18 @@ struct SettingsWorkspaceView: View {
 
     private func openAccountLogin(_ target: AccountLoginTarget) {
         NSWorkspace.shared.open(target.startURL)
-        refreshAccountLoginStatus(after: 2.0)
+        refreshAccountLoginStatus(after: 2.0, forceRefresh: true)
     }
 
-    private func refreshAccountLoginStatus(after delay: TimeInterval = 0) {
+    private func refreshAccountLoginStatus(after delay: TimeInterval = 0, forceRefresh: Bool = false) {
         if delay <= 0 {
-            libraryStore.refreshAccountCookieSummary()
+            libraryStore.refreshAccountCookieSummary(forceRefresh: forceRefresh)
             libraryStore.prewarmSavedCollectionCookieCache()
             return
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            libraryStore.refreshAccountCookieSummary()
+            libraryStore.refreshAccountCookieSummary(forceRefresh: forceRefresh)
             libraryStore.prewarmSavedCollectionCookieCache()
         }
     }

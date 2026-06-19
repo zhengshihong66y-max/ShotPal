@@ -292,11 +292,14 @@ extension LibraryStore {
         Self.prewarmAccountCookieCache()
     }
 
-    func refreshAccountCookieSummary() {
+    func refreshAccountCookieSummary(forceRefresh: Bool = false) {
+        guard !isRefreshingAccountCookieSummary else { return }
+        isRefreshingAccountCookieSummary = true
         Task { [weak self] in
-            let summary = await Self.currentAccountCookieSummary()
+            let summary = await Self.currentAccountCookieSummary(forceRefresh: forceRefresh)
             await MainActor.run { [weak self] in
                 self?.accountCookieSummary = summary
+                self?.isRefreshingAccountCookieSummary = false
             }
         }
     }
