@@ -576,7 +576,6 @@ struct MusicWorkspaceView: View {
 
     private func localMusicGroupRow(_ row: LocalMusicGroupRowProjection) -> some View {
         let group = row.group
-        let roleAssets = row.roleAssets
         let downloadJobs = row.downloadJobs
         let displayTitle = row.displayTitle
         let displayArtist = row.displayArtist
@@ -661,11 +660,6 @@ struct MusicWorkspaceView: View {
             .itemProviderDrag(rowDragProvider)
         }
         .frame(height: MusicRowMetrics.rowHeight)
-        .onAppear {
-            for roleAsset in roleAssets {
-                libraryStore.ensureLocalMusicWaveformIfNeeded(roleAsset.asset)
-            }
-        }
         .help(group.hasBothRecognizedRoles ? "原曲和伴奏已合并显示" : "可拖出音乐文件")
     }
 

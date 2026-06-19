@@ -789,9 +789,6 @@ struct MusicDownloadControlsAndWaveform: View {
 
     private func requestDownloadedMediaInfoIfNeeded() {
         for job in downloadJobs where completedMusicFileURL(for: job) != nil {
-            if waveformWidth > 0 {
-                libraryStore.ensureMusicDownloadWaveformIfNeeded(job)
-            }
             if let filePath = job.filePath {
                 libraryStore.ensureMusicFileDurationIfNeeded(filePath: filePath)
             }
@@ -907,8 +904,12 @@ struct MusicDownloadWaveformPanel: View {
 
     private func requestWaveformIfNeeded() {
         guard let job else { return }
-        libraryStore.ensureMusicDownloadWaveformIfNeeded(job)
-        if let localAsset = localMusicAsset(for: job) {
+        if let samples = waveformSamples(for: job), !samples.isEmpty {
+            return
+        }
+        if libraryStore.musicDownloadJobs.contains(where: { $0.id == job.id }) {
+            libraryStore.ensureMusicDownloadWaveformIfNeeded(job)
+        } else if let localAsset = localMusicAsset(for: job) {
             libraryStore.ensureLocalMusicWaveformIfNeeded(localAsset)
         }
     }
@@ -976,7 +977,9 @@ struct MusicDownloadWaveformPanel: View {
             loadedAudioDuration = 0
         }
         .onChange(of: job?.status) { _, _ in
-            if !canPreviewAudio {
+            if canPreviewAudio {
+                requestWaveformIfNeeded()
+            } else {
                 onTimeTextChange?(nil)
                 stopAudioPreview()
             }
@@ -1004,7 +1007,7 @@ struct MusicDownloadWaveformPanel: View {
             toggleAudioPreview()
         }
         .animation(.easeInOut(duration: 0.18), value: job?.downloadProgress)
-        .animation(.easeInOut(duration: 0.22), value: job?.waveformSamples)
+        .animation(.easeInOut(duration: 0.22), value: job?.waveformSamples?.count ?? 0)
         .animation(.easeInOut(duration: 0.18), value: isPreviewing)
     }
 
@@ -1619,7 +1622,7 @@ struct MusicDownloadStatusView: View {
             toggleAudioPreview()
         }
         .animation(.easeInOut(duration: 0.18), value: job.downloadProgress)
-        .animation(.easeInOut(duration: 0.22), value: job.waveformSamples)
+        .animation(.easeInOut(duration: 0.22), value: job.waveformSamples?.count ?? 0)
         .animation(.easeInOut(duration: 0.18), value: isPreviewing)
     }
 
@@ -1831,7 +1834,7 @@ struct DownloadedMusicWaveformView: View {
     }
 
     private func musicWaveformCanvas(samples displaySamples: [Double], progress displayedProgress: Double) -> some View {
-        Canvas { context, size in
+        Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, size in
             guard !displaySamples.isEmpty, size.width > 0, size.height > 0 else { return }
 
             let midY = size.height / 2
@@ -1885,21 +1888,6 @@ struct DownloadedMusicWaveformView: View {
             context.stroke(upperPath, with: .color(Color.white.opacity(baseStrokeOpacity)), lineWidth: isCompact ? 0.9 : 1.05)
             context.stroke(lowerPath, with: .color(Color.white.opacity(baseStrokeOpacity * 0.7)), lineWidth: isCompact ? 0.8 : 0.95)
 
-            let barStride = max(1, Int(ceil(2.4 / max(0.2, xStep))))
-            for index in stride(from: 0, to: pointCount, by: barStride) {
-                let value = min(1, max(0.03, displaySamples[index]))
-                let x = pointCount > 1 ? CGFloat(index) * xStep : size.width / 2
-                let halfHeight = max(1.2, CGFloat(value) * maxHalfHeight)
-                var transient = Path()
-                transient.move(to: CGPoint(x: x, y: midY - halfHeight))
-                transient.addLine(to: CGPoint(x: x, y: midY + halfHeight))
-                context.stroke(
-                    transient,
-                    with: .color(Color.white.opacity((isActive ? 0.20 : 0.13) + Double(value) * 0.12)),
-                    lineWidth: 0.75
-                )
-            }
-
             if isActive {
                 let playedWidth = size.width * CGFloat(clampedProgress)
                 var playedContext = context
@@ -1923,7 +1911,7 @@ struct DownloadedMusicWaveformView: View {
 
     private func preparedSamples(for width: CGFloat) -> [Double] {
         guard !samples.isEmpty else { return [] }
-        let targetCount = max(24, min(samples.count, Int(max(24, width / (isCompact ? 2.2 : 1.45)))))
+        let targetCount = max(24, min(samples.count, Int(max(24, width / (isCompact ? 3.2 : 2.6)))))
         let reduced: [Double]
 
         if samples.count <= targetCount {
@@ -1945,17 +1933,14 @@ struct DownloadedMusicWaveformView: View {
 
     private func contrastExpanded(_ values: [Double]) -> [Double] {
         guard !values.isEmpty else { return [] }
-        let sorted = values.sorted()
-        let low = sorted[min(sorted.count - 1, max(0, Int(Double(sorted.count - 1) * 0.08)))]
-        let high = sorted[min(sorted.count - 1, max(0, Int(Double(sorted.count - 1) * 0.94)))]
-        let span = high - low
+        let high = values.max() ?? 0
 
-        guard span > 0.015 else {
+        guard high > 0.015 else {
             return values.map { min(1, max(0.08, $0)) }
         }
 
         return values.map { value in
-            let normalized = min(1, max(0, (value - low) / span))
+            let normalized = min(1, max(0, value / high))
             return 0.07 + pow(normalized, 0.78) * 0.93
         }
     }
