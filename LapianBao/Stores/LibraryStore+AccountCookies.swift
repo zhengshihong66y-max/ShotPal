@@ -2,7 +2,7 @@
 //  LibraryStore+AccountCookies.swift
 //  LapianBao
 //
-//  Owns the app-local WebKit login session used by remote imports.
+//  Summarizes and exports account cookies used by remote imports.
 //
 
 import Foundation
@@ -133,7 +133,7 @@ extension LibraryStore {
                 return try cachedOrExportedChromeCookieURL(forceRefresh: forceRefresh)
             } catch {
                 throw InstagramSavedImportError.chromeCookieUnavailable(
-                    "请先在设置里的账号登录中登录对应平台。若仍需回退到浏览器 Cookie，请确认 Chrome 已登录并授权拉片宝读取。"
+                    "请先在设置里的账号登录中用默认浏览器登录对应平台。若仍失败，请确认 Safari、Chrome、Edge、Brave 或 Firefox 已登录并允许拉片宝读取 Cookie。"
                 )
             }
         }
@@ -198,7 +198,14 @@ extension LibraryStore {
 
     nonisolated static func currentAccountCookieSummary() async -> AccountCookieSummary {
         let cookies = await webKitAccountCookies()
-        return accountCookieSummary(from: cookies)
+        let internalSummary = accountCookieSummary(from: cookies)
+        let browserSummary = await Task.detached(priority: .utility) {
+            guard let cookieURL = try? cachedOrExportedChromeCookieURL(),
+                  let cookieText = try? String(contentsOf: cookieURL, encoding: .utf8)
+            else { return nil as AccountCookieSummary? }
+            return accountCookieSummary(fromNetscapeCookieText: cookieText)
+        }.value
+        return mergedAccountCookieSummary(internalSummary, browserSummary)
     }
 
     nonisolated static func webKitAccountCookies() async -> [HTTPCookie] {
@@ -282,6 +289,79 @@ extension LibraryStore {
                 ].contains($0.name)
             },
             updatedAt: Date()
+        )
+    }
+
+    nonisolated static func accountCookieSummary(fromNetscapeCookieText text: String) -> AccountCookieSummary {
+        var instagramCookieCount = 0
+        var xiaohongshuCookieCount = 0
+        var youtubeCookieCount = 0
+        var hasInstagramSession = false
+        var hasXiaohongshuSession = false
+        var hasYouTubeSession = false
+
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            var line = String(rawLine)
+            if line.hasPrefix("#HttpOnly_") {
+                line.removeFirst("#HttpOnly_".count)
+            } else if line.hasPrefix("#") {
+                continue
+            }
+
+            let columns = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard columns.count >= 7 else { continue }
+            let domain = columns[0]
+            let name = columns[5]
+            guard let supportedDomain = accountCookieDomain(domain) else { continue }
+
+            switch supportedDomain {
+            case "instagram.com", "instagr.am":
+                instagramCookieCount += 1
+                hasInstagramSession = hasInstagramSession || ["sessionid", "ds_user_id"].contains(name)
+            case "xiaohongshu.com", "xhslink.com":
+                xiaohongshuCookieCount += 1
+                hasXiaohongshuSession = hasXiaohongshuSession || ["web_session", "webId"].contains(name)
+            case "youtube.com", "google.com":
+                youtubeCookieCount += 1
+                hasYouTubeSession = hasYouTubeSession || [
+                    "LOGIN_INFO",
+                    "SID",
+                    "HSID",
+                    "SSID",
+                    "APISID",
+                    "SAPISID",
+                    "__Secure-1PSID",
+                    "__Secure-3PSID"
+                ].contains(name)
+            default:
+                continue
+            }
+        }
+
+        return AccountCookieSummary(
+            instagramCookieCount: instagramCookieCount,
+            xiaohongshuCookieCount: xiaohongshuCookieCount,
+            youtubeCookieCount: youtubeCookieCount,
+            hasInstagramSession: hasInstagramSession,
+            hasXiaohongshuSession: hasXiaohongshuSession,
+            hasYouTubeSession: hasYouTubeSession,
+            updatedAt: Date()
+        )
+    }
+
+    nonisolated static func mergedAccountCookieSummary(
+        _ lhs: AccountCookieSummary,
+        _ rhs: AccountCookieSummary?
+    ) -> AccountCookieSummary {
+        guard let rhs else { return lhs }
+        return AccountCookieSummary(
+            instagramCookieCount: lhs.instagramCookieCount + rhs.instagramCookieCount,
+            xiaohongshuCookieCount: lhs.xiaohongshuCookieCount + rhs.xiaohongshuCookieCount,
+            youtubeCookieCount: lhs.youtubeCookieCount + rhs.youtubeCookieCount,
+            hasInstagramSession: lhs.hasInstagramSession || rhs.hasInstagramSession,
+            hasXiaohongshuSession: lhs.hasXiaohongshuSession || rhs.hasXiaohongshuSession,
+            hasYouTubeSession: lhs.hasYouTubeSession || rhs.hasYouTubeSession,
+            updatedAt: [lhs.updatedAt, rhs.updatedAt].compactMap { $0 }.max()
         )
     }
 

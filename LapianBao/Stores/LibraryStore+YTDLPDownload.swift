@@ -375,9 +375,10 @@ extension LibraryStore {
         }
         if isInstagramURL(sourceURL) {
             let accountCookieAttempts = ytdlpAccountCookieAttempts()
+            let browserCookieAttempts = ytdlpBrowserCookieAttempts()
             var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
             attempts += accountCookieAttempts
-            attempts.append(YTDLPArgumentAttempt(label: "Chrome Cookie", arguments: ["--cookies-from-browser", "chrome"]))
+            attempts += browserCookieAttempts
             for proxyURL in currentYTDLPProxyURLs() {
                 let proxyArguments = ["--proxy", proxyURL]
                 let label = ytdlpProxyAttemptLabel(for: proxyURL)
@@ -388,10 +389,12 @@ extension LibraryStore {
                         arguments: proxyArguments + cookieAttempt.arguments
                     ))
                 }
-                attempts.append(YTDLPArgumentAttempt(
-                    label: "\(label) + Chrome Cookie",
-                    arguments: proxyArguments + ["--cookies-from-browser", "chrome"]
-                ))
+                for cookieAttempt in browserCookieAttempts {
+                    attempts.append(YTDLPArgumentAttempt(
+                        label: "\(label) + \(cookieAttempt.label)",
+                        arguments: proxyArguments + cookieAttempt.arguments
+                    ))
+                }
             }
             return uniqueYTDLPArgumentAttempts(attempts)
         }
@@ -477,40 +480,46 @@ extension LibraryStore {
     }
 
     nonisolated static func ytdlpBrowserCookieAttempts() -> [YTDLPArgumentAttempt] {
-        struct BrowserCandidate {
-            var label: String
-            var name: String
-            var relativeProfilePath: String?
-        }
-
-        let candidates = [
-            BrowserCandidate(label: "Chrome Cookie", name: "chrome", relativeProfilePath: "Library/Application Support/Google/Chrome"),
-            BrowserCandidate(label: "Edge Cookie", name: "edge", relativeProfilePath: "Library/Application Support/Microsoft Edge"),
-            BrowserCandidate(label: "Brave Cookie", name: "brave", relativeProfilePath: "Library/Application Support/BraveSoftware/Brave-Browser"),
-            BrowserCandidate(label: "Firefox Cookie", name: "firefox", relativeProfilePath: "Library/Application Support/Firefox"),
-            BrowserCandidate(label: "Chromium Cookie", name: "chromium", relativeProfilePath: "Library/Application Support/Chromium"),
-            BrowserCandidate(label: "Safari Cookie", name: "safari", relativeProfilePath: "Library/Containers/com.apple.Safari/Data/Library/Cookies")
-        ]
-
         let homeURL = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = browserCookieCandidates()
         var attempts = candidates.compactMap { candidate -> YTDLPArgumentAttempt? in
-            if let relativeProfilePath = candidate.relativeProfilePath {
+            if let relativeProfilePath = ytdlpBrowserProfileRelativePath(for: candidate.browserName) {
                 let path = homeURL.appendingPathComponent(relativeProfilePath).path
                 guard FileManager.default.fileExists(atPath: path) else { return nil }
             }
             return YTDLPArgumentAttempt(
-                label: candidate.label,
-                arguments: ["--cookies-from-browser", candidate.name]
+                label: "\(candidate.label) Cookie",
+                arguments: ["--cookies-from-browser", candidate.browserName]
             )
         }
-
-        if !attempts.contains(where: { $0.arguments == ["--cookies-from-browser", "chrome"] }) {
-            attempts.insert(
-                YTDLPArgumentAttempt(label: "Chrome Cookie", arguments: ["--cookies-from-browser", "chrome"]),
-                at: 0
-            )
+        if attempts.isEmpty, let candidate = candidates.first {
+            attempts.append(YTDLPArgumentAttempt(
+                label: "\(candidate.label) Cookie",
+                arguments: ["--cookies-from-browser", candidate.browserName]
+            ))
         }
         return attempts
+    }
+
+    nonisolated static func ytdlpBrowserProfileRelativePath(for browserName: String) -> String? {
+        switch browserName {
+        case "safari":
+            return "Library/Containers/com.apple.Safari/Data/Library/Cookies"
+        case "chrome":
+            return "Library/Application Support/Google/Chrome"
+        case "edge":
+            return "Library/Application Support/Microsoft Edge"
+        case "brave":
+            return "Library/Application Support/BraveSoftware/Brave-Browser"
+        case "firefox":
+            return "Library/Application Support/Firefox"
+        case "chromium":
+            return "Library/Application Support/Chromium"
+        case "vivaldi":
+            return "Library/Application Support/Vivaldi"
+        default:
+            return nil
+        }
     }
 
     nonisolated static func uniqueYTDLPArgumentAttempts(_ attempts: [YTDLPArgumentAttempt]) -> [YTDLPArgumentAttempt] {

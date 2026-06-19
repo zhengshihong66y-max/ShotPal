@@ -1452,42 +1452,13 @@ extension LibraryStore {
         }
 
         do {
-            let cookieURL = try exportChromeCookiesToTemporaryFile()
+            let cookieURL = try exportPreferredBrowserCookiesToTemporaryFile()
             chromeCookieFileCache.finishRefresh(with: cookieURL)
             return cookieURL
         } catch {
             chromeCookieFileCache.finishRefresh(with: nil)
             throw error
         }
-    }
-
-    nonisolated static func exportChromeCookiesToTemporaryFile() throws -> URL {
-        guard let ytdlp = localYTDLPURL() else {
-            throw InstagramSavedImportError.chromeCookieUnavailable("未找到 yt-dlp，无法读取 Chrome Cookie")
-        }
-
-        let cookieURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("lapianbao-chrome-cookies-\(UUID().uuidString).txt")
-
-        let exportResult = runDownloaderSelfCheckProcess(
-            executableURL: ytdlp,
-            arguments: [
-                "--cookies-from-browser", "chrome",
-                "--cookies", cookieURL.path,
-                "--skip-download",
-                "--simulate",
-                "--no-warnings"
-            ],
-            timeout: 28
-        )
-        let cookieSize = ((try? cookieURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        guard FileManager.default.fileExists(atPath: cookieURL.path), cookieSize > 0 else {
-            throw InstagramSavedImportError.chromeCookieUnavailable(
-                selfCheckFailureMessage(from: exportResult, fallback: "无法导出 Chrome Cookie")
-            )
-        }
-
-        return cookieURL
     }
 
     nonisolated static func shouldRefreshChromeCookies(after error: Error) -> Bool {

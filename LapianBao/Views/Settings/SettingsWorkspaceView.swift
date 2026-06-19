@@ -11,7 +11,6 @@ import AppKit
 import Combine
 import Foundation
 import UniformTypeIdentifiers
-import WebKit
 
 private enum AccountLoginTarget: String, Identifiable {
     case instagram
@@ -51,7 +50,6 @@ private enum AccountLoginTarget: String, Identifiable {
 struct SettingsWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @State private var shortcutRevision = 0
-    @State private var accountLoginTarget: AccountLoginTarget?
 
     private static let rowHeight: CGFloat = MusicRowMetrics.rowHeight
     private static let rowHorizontalPadding: CGFloat = MusicRowMetrics.contentInsetX
@@ -99,13 +97,6 @@ struct SettingsWorkspaceView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .fadingVerticalScrollIndicators()
-        .sheet(item: $accountLoginTarget, onDismiss: {
-            libraryStore.refreshAccountCookieSummary()
-            libraryStore.prewarmSavedCollectionCookieCache()
-        }) { target in
-            AccountLoginSheet(target: target)
-                .environmentObject(libraryStore)
-        }
         .onAppear {
             removeDeprecatedSettings()
             libraryStore.refreshAccountCookieSummary()
@@ -129,7 +120,7 @@ struct SettingsWorkspaceView: View {
             HStack(spacing: 6) {
                 ForEach([AccountLoginTarget.instagram, .xiaohongshu, .youtube]) { target in
                     Button {
-                        accountLoginTarget = target
+                        openAccountLogin(target)
                     } label: {
                         Text(target.buttonTitle)
                             .font(.caption2.weight(.semibold))
@@ -141,13 +132,20 @@ struct SettingsWorkspaceView: View {
                     .foregroundStyle(.white.opacity(0.78))
                     .background(.white.opacity(0.07))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .help("打开\(target.title)")
+                    .help("用默认浏览器打开\(target.title)")
                 }
+
+                settingsActionButton(
+                    systemImage: "arrow.clockwise",
+                    tint: .white.opacity(0.70),
+                    help: "重新识别浏览器登录状态",
+                    action: { refreshAccountLoginStatus() }
+                )
 
                 settingsActionButton(
                     systemImage: "trash",
                     tint: libraryStore.isClearingAccountCookies ? .white.opacity(0.28) : .white.opacity(0.70),
-                    help: "清除拉片宝内部登录态",
+                    help: "清除拉片宝内部网页登录数据",
                     action: { libraryStore.clearInternalAccountCookies() }
                 )
                 .disabled(libraryStore.isClearingAccountCookies)
@@ -494,120 +492,27 @@ struct SettingsWorkspaceView: View {
         libraryStore.startMusicDownloadBatch(types: MusicDownloadJob.DownloadType.allCases)
     }
 
-    private func removeDeprecatedSettings() {
-        AppSettings.removeExternalAPISettings()
-        AppSettings.removeDeprecatedBatchAutomationSettings()
+    private func openAccountLogin(_ target: AccountLoginTarget) {
+        NSWorkspace.shared.open(target.startURL)
+        refreshAccountLoginStatus(after: 2.0)
     }
-}
 
-private struct AccountLoginSheet: View {
-    @EnvironmentObject private var libraryStore: LibraryStore
-    @Environment(\.dismiss) private var dismiss
-    let target: AccountLoginTarget
-    @State private var currentHost = ""
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "person.crop.circle.badge.checkmark")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Design.annotationAccent)
-                    .frame(width: 30, height: 30)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(target.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(currentHost.isEmpty ? (target.startURL.host ?? "") : currentHost)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                Spacer(minLength: 12)
-
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .help("关闭")
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Design.sidebarBg)
-
-            Divider()
-                .overlay(.white.opacity(0.07))
-
-            AccountLoginWebView(startURL: target.startURL) { url in
-                currentHost = url?.host ?? ""
-                libraryStore.refreshAccountCookieSummary()
-            }
-            .frame(minWidth: 860, minHeight: 620)
+    private func refreshAccountLoginStatus(after delay: TimeInterval = 0) {
+        if delay <= 0 {
+            libraryStore.refreshAccountCookieSummary()
+            libraryStore.prewarmSavedCollectionCookieCache()
+            return
         }
-        .frame(width: 900, height: 680)
-        .background(Design.contentBg)
-        .onDisappear {
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             libraryStore.refreshAccountCookieSummary()
             libraryStore.prewarmSavedCollectionCookieCache()
         }
     }
-}
 
-private struct AccountLoginWebView: NSViewRepresentable {
-    let startURL: URL
-    var onNavigation: (URL?) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onNavigation: onNavigation)
-    }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = true
-        webView.load(URLRequest(url: startURL))
-        return webView
-    }
-
-    func updateNSView(_ nsView: WKWebView, context: Context) {
-        context.coordinator.onNavigation = onNavigation
-    }
-
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-        var onNavigation: (URL?) -> Void
-
-        init(onNavigation: @escaping (URL?) -> Void) {
-            self.onNavigation = onNavigation
-        }
-
-        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            onNavigation(webView.url)
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            onNavigation(webView.url)
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            createWebViewWith configuration: WKWebViewConfiguration,
-            for navigationAction: WKNavigationAction,
-            windowFeatures: WKWindowFeatures
-        ) -> WKWebView? {
-            if navigationAction.targetFrame?.isMainFrame != true {
-                webView.load(navigationAction.request)
-            }
-            return nil
-        }
+    private func removeDeprecatedSettings() {
+        AppSettings.removeExternalAPISettings()
+        AppSettings.removeDeprecatedBatchAutomationSettings()
     }
 }
 
