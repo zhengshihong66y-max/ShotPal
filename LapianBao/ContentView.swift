@@ -155,8 +155,7 @@ struct ContentView: View {
         let activeMediaPanelWidth = resolvedMediaPanelWidth(containerWidth: containerWidth)
 
         HStack(spacing: Design.panelSpacing) {
-            if presentedAppWorkspace == .audio ||
-                presentedAppWorkspace == .frames ||
+            if presentedAppWorkspace == .frames ||
                 presentedAppWorkspace == .music ||
                 presentedAppWorkspace == .settings {
                 navigationRail
@@ -348,8 +347,6 @@ struct ContentView: View {
                 selectedFrameID: $frameSelectedFrameID,
                 goHome: jumpToVideo
             )
-        case .audio:
-            AudioWorkspaceView(goHome: jumpToVideo)
         case .music:
             MusicWorkspaceView(goHome: jumpToVideo)
         case .settings:

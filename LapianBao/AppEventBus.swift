@@ -20,10 +20,6 @@ nonisolated enum AppEventBus {
         let type: String?
     }
 
-    enum MusicPreviewSource {
-        static let audioWorkspace = "audioWorkspace"
-    }
-
     private enum UserInfoKey {
         static let path = "path"
         static let time = "time"

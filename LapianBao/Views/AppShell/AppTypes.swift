@@ -68,7 +68,6 @@ struct AnnotationEditorAnchor: Equatable {
 enum AppWorkspace: String, CaseIterable, Identifiable {
     case home
     case frames
-    case audio
     case music
     case settings
 
@@ -76,7 +75,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         railCases
     }
 
-    static let railCases: [AppWorkspace] = [.home, .frames, .audio, .music, .settings]
+    static let railCases: [AppWorkspace] = [.home, .frames, .music, .settings]
 
     var id: String { rawValue }
 
@@ -88,7 +87,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         switch self {
         case .home:
             return true
-        case .frames, .audio, .music, .settings:
+        case .frames, .music, .settings:
             return false
         }
     }
@@ -97,7 +96,6 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "主页"
         case .frames: return "画面"
-        case .audio: return "音效"
         case .music: return "AM 库"
         case .settings: return "设置"
         }
@@ -107,7 +105,6 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "play.rectangle.fill"
         case .frames: return "photo.on.rectangle.angled"
-        case .audio: return "waveform"
         case .music: return "music.note.list"
         case .settings: return "gearshape"
         }
@@ -115,7 +112,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
 
     var railIconOffset: CGFloat {
         switch self {
-        case .home, .audio, .settings:
+        case .home, .settings:
             return 0
         case .frames:
             return 0.25
@@ -130,8 +127,6 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
             return 15.5
         case .frames:
             return 16.5
-        case .audio:
-            return 17
         case .music:
             return 16
         case .settings:

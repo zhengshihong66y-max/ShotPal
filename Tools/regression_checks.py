@@ -310,7 +310,6 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
             "LapianBao/AppChrome.swift",
             "LapianBao/AppEventBus.swift",
             "LapianBao/PreviewController.swift",
-            "LapianBao/Views/Audio/AudioWorkspacePreview.swift",
             "LapianBao/Views/Music/AudioMusicComponents.swift",
             "LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift",
         },
