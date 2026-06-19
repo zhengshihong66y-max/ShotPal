@@ -106,18 +106,7 @@ extension LibraryStore {
     }
 
     nonisolated static let defaultVideoTagSuggestions: [String] = [
-        "参考",
-        "灵感",
-        "案例",
-        "画面",
-        "构图",
-        "色彩",
-        "光线",
-        "运镜",
-        "剪辑",
-        "节奏",
-        "文案",
-        "声音"
+        "平面设计"
     ]
 
     nonisolated static func cleanedVideoTagSuggestions(_ tags: [String]) -> [String] {
