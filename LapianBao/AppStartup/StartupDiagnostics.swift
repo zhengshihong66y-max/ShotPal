@@ -28,7 +28,7 @@ enum StartupDiagnostics {
     }
 
     private static let logger = Logger(
-        subsystem: "com.newtybei.LapianBao",
+        subsystem: "com.lapianbao.app",
         category: "Startup"
     )
 
@@ -39,7 +39,7 @@ enum StartupDiagnostics {
 
 nonisolated enum PerformanceDiagnostics {
     private static let logger = Logger(
-        subsystem: "com.newtybei.LapianBao",
+        subsystem: "com.lapianbao.app",
         category: "Performance"
     )
 

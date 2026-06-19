@@ -366,8 +366,6 @@ final class LibraryStore: ObservableObject {
     nonisolated static let supportedAudioExtensions = ["m4a", "mp3", "wav", "aac", "aif", "aiff", "flac", "opus", "ogg", "caf", "webm"]
     nonisolated static let supportedImageExtensions = ["jpg", "jpeg", "png", "heic", "heif", "webp", "tiff", "tif"]
 
-    nonisolated static let musicPythonPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/music-env/bin/python3"
-    nonisolated static let musicScriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/detect_music.py"
     nonisolated static let exportRootFolderName = "LapianBaoExports"
     nonisolated static let videoFolderName = "视频"
     nonisolated static let imageExportFolderName = "图片"
@@ -381,8 +379,8 @@ final class LibraryStore: ObservableObject {
     nonisolated static let downloaderNightlyExecutableURL = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp"
     nonisolated static let downloaderNightlyMacOSURL = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos"
     nonisolated static let externalSelfCheckPreflightCooldown: TimeInterval = 60 * 60
-    nonisolated static let instagramSavedCollectionURLString = "https://www.instagram.com/newtybeibei/saved/all-posts/"
-    nonisolated static let xiaohongshuSavedCollectionURLString = "https://www.xiaohongshu.com/user/profile/5eb7bea7000000000100540d?tab=fav&subTab=note"
+    nonisolated static let instagramSavedCollectionURLString = "https://www.instagram.com/"
+    nonisolated static let xiaohongshuSavedCollectionURLString = "https://www.xiaohongshu.com/explore"
 
     nonisolated static func normalizedProgress(_ progress: Double) -> Double {
         guard progress.isFinite else { return 0 }
@@ -419,21 +417,22 @@ final class LibraryStore: ObservableObject {
 
     nonisolated static func localToolURL(
         relativePath: String,
-        fallbackPath: String,
+        fallbackPath: String? = nil,
         mustBeExecutable: Bool = false,
         sourceFilePath: String = #filePath
     ) -> URL? {
         let fm = FileManager.default
-        let sourceRoot = URL(fileURLWithPath: sourceFilePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let currentDirectory = URL(fileURLWithPath: fm.currentDirectoryPath, isDirectory: true)
-
-        let candidates = [
-            URL(fileURLWithPath: fallbackPath),
-            sourceRoot.appendingPathComponent(relativePath),
-            currentDirectory.appendingPathComponent(relativePath)
-        ]
+        var candidates = [URL]()
+        if let fallbackPath, !fallbackPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            candidates.append(URL(fileURLWithPath: fallbackPath))
+        }
+        if let resourceURL = Bundle.main.resourceURL { candidates.append(resourceURL.appendingPathComponent(relativePath)) }
+        var ancestor = URL(fileURLWithPath: sourceFilePath).deletingLastPathComponent()
+        for _ in 0..<6 {
+            candidates.append(ancestor.appendingPathComponent(relativePath))
+            ancestor.deleteLastPathComponent()
+        }
+        candidates.append(URL(fileURLWithPath: fm.currentDirectoryPath, isDirectory: true).appendingPathComponent(relativePath))
 
         var checkedPaths = Set<String>()
         for url in candidates where checkedPaths.insert(url.path).inserted {

@@ -561,14 +561,12 @@ extension LibraryStore {
     ) async throws -> [MusicRecognitionItem] {
         guard let pythonURL = localToolURL(
             relativePath: "Tools/music-env/bin/python3",
-            fallbackPath: musicPythonPath,
             mustBeExecutable: true
         ) else {
             throw MusicDetectionError.envNotSetup
         }
         guard let scriptURL = localToolURL(
-            relativePath: "Tools/detect_music.py",
-            fallbackPath: musicScriptPath
+            relativePath: "Tools/detect_music.py"
         ) else {
             throw MusicDetectionError.scriptMissing
         }

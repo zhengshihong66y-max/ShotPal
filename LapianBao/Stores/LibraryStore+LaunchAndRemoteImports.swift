@@ -260,6 +260,9 @@ extension LibraryStore {
     }
 
     func defaultLibraryURL() -> URL? {
+        guard !defaultLibraryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
         let url = URL(fileURLWithPath: defaultLibraryPath)
         return isExistingDirectory(url) ? url : nil
     }

@@ -35,7 +35,7 @@ nonisolated enum AppSettings {
         }
     }
 
-    static let defaultLibraryPath = "/Users/zhengshihong/Downloads/通用资源/素材库"
+    static let defaultLibraryPath = ""
     static let defaultMediaPanelWidth = 340.0
 
     private static let defaults = UserDefaults.standard

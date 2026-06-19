@@ -1485,8 +1485,10 @@ extension LibraryStore {
     ) async throws -> [TranscriptSegment] {
         let task = Task.detached(priority: .utility) {
             progressCallback?(0.01, "准备字幕分析")
-            let scriptPath = "/Users/zhengshihong/Downloads/Newtybei知识库/进行项目/拉片宝/LapianBao/Tools/transcribe_with_whisper.sh"
-            guard FileManager.default.isExecutableFile(atPath: scriptPath) else {
+            guard let scriptURL = localToolURL(
+                relativePath: "Tools/transcribe_with_whisper.sh",
+                mustBeExecutable: true
+            ) else {
                 throw NSError(domain: "LapianBao", code: 1, userInfo: [NSLocalizedDescriptionKey: "找不到本地 Whisper 转写脚本"])
             }
 
@@ -1497,7 +1499,7 @@ extension LibraryStore {
             let outputBase = baseFolder.appendingPathComponent(safeFileStem(videoName))
 
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: scriptPath)
+            process.executableURL = scriptURL
             process.arguments = [video.url.path, outputBase.path, "auto"]
 
             var environment = ProcessInfo.processInfo.environment
