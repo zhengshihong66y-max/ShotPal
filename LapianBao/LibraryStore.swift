@@ -21,6 +21,27 @@ struct VideoLibrarySidebarMetrics: Equatable {
     var tagCountsByKey: [String: Int] = [:]
 }
 
+struct AccountCookieSummary: Equatable, Sendable {
+    var instagramCookieCount = 0
+    var xiaohongshuCookieCount = 0
+    var youtubeCookieCount = 0
+    var hasInstagramSession = false
+    var hasXiaohongshuSession = false
+    var hasYouTubeSession = false
+    var updatedAt: Date?
+
+    var hasAnySession: Bool {
+        hasInstagramSession || hasXiaohongshuSession || hasYouTubeSession
+    }
+
+    var detailText: String {
+        let instagram = hasInstagramSession ? "IG 已登录" : "IG 未登录"
+        let xiaohongshu = hasXiaohongshuSession ? "小红书已登录" : "小红书未登录"
+        let youtube = hasYouTubeSession ? "YouTube 已登录" : "YouTube 未登录"
+        return "\(instagram) · \(xiaohongshu) · \(youtube)"
+    }
+}
+
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published var libraryURL: URL?
@@ -128,6 +149,8 @@ final class LibraryStore: ObservableObject {
     var remoteImportJob: RemoteImportJob? { remoteImportJobs.last }
     @Published var instagramImportEndpoint = AppSettings.instagramImportEndpoint
     @Published var downloaderSelfCheckReport = LibraryStore.loadDownloaderSelfCheckReport()
+    @Published var accountCookieSummary = AccountCookieSummary()
+    @Published var isClearingAccountCookies = false
 
     let defaultLibraryPath = AppSettings.defaultLibraryPath
     let videoExtensions = LibraryStore.supportedVideoExtensions

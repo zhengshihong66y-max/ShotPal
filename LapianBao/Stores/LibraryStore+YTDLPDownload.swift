@@ -364,39 +364,58 @@ extension LibraryStore {
         var arguments: [String]
     }
 
+    nonisolated static func ytdlpAccountCookieAttempts() -> [YTDLPArgumentAttempt] {
+        guard let arguments = cachedAccountCookieYTDLPArguments() else { return [] }
+        return [YTDLPArgumentAttempt(label: "拉片宝登录态", arguments: arguments)]
+    }
+
     nonisolated static func ytdlpArgumentAttempts(for sourceURL: URL) -> [YTDLPArgumentAttempt] {
         if isYouTubeURL(sourceURL) {
             return ytdlpYouTubeArgumentAttempts()
         }
         if isInstagramURL(sourceURL) {
-            var attempts = [
-                YTDLPArgumentAttempt(label: "本地解析", arguments: []),
-                YTDLPArgumentAttempt(label: "Chrome Cookie", arguments: ["--cookies-from-browser", "chrome"])
-            ]
+            let accountCookieAttempts = ytdlpAccountCookieAttempts()
+            var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
+            attempts += accountCookieAttempts
+            attempts.append(YTDLPArgumentAttempt(label: "Chrome Cookie", arguments: ["--cookies-from-browser", "chrome"]))
             for proxyURL in currentYTDLPProxyURLs() {
                 let proxyArguments = ["--proxy", proxyURL]
                 let label = ytdlpProxyAttemptLabel(for: proxyURL)
                 attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
+                for cookieAttempt in accountCookieAttempts {
+                    attempts.append(YTDLPArgumentAttempt(
+                        label: "\(label) + \(cookieAttempt.label)",
+                        arguments: proxyArguments + cookieAttempt.arguments
+                    ))
+                }
                 attempts.append(YTDLPArgumentAttempt(
                     label: "\(label) + Chrome Cookie",
                     arguments: proxyArguments + ["--cookies-from-browser", "chrome"]
                 ))
             }
-            return attempts
+            return uniqueYTDLPArgumentAttempts(attempts)
         }
         return [YTDLPArgumentAttempt(arguments: [])]
     }
 
     nonisolated static func ytdlpYouTubeArgumentAttempts() -> [YTDLPArgumentAttempt] {
+        let accountCookieAttempts = ytdlpAccountCookieAttempts()
         let browserCookieAttempts = ytdlpBrowserCookieAttempts()
         let clientArguments = ytdlpYouTubeClientArguments()
         var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
+        attempts += accountCookieAttempts
         attempts += browserCookieAttempts
 
         for proxyURL in currentYTDLPProxyURLs() {
             let proxyArguments = ["--proxy", proxyURL]
             let label = ytdlpProxyAttemptLabel(for: proxyURL)
             attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
+            for cookieAttempt in accountCookieAttempts {
+                attempts.append(YTDLPArgumentAttempt(
+                    label: "\(label) + \(cookieAttempt.label)",
+                    arguments: proxyArguments + cookieAttempt.arguments
+                ))
+            }
             for cookieAttempt in browserCookieAttempts {
                 attempts.append(YTDLPArgumentAttempt(
                     label: "\(label) + \(cookieAttempt.label)",
@@ -407,6 +426,12 @@ extension LibraryStore {
         }
 
         attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
+        for cookieAttempt in accountCookieAttempts {
+            attempts.append(YTDLPArgumentAttempt(
+                label: "\(cookieAttempt.label) + 备用客户端",
+                arguments: cookieAttempt.arguments + clientArguments
+            ))
+        }
         for cookieAttempt in browserCookieAttempts {
             attempts.append(YTDLPArgumentAttempt(
                 label: "\(cookieAttempt.label) + 备用客户端",
@@ -418,6 +443,7 @@ extension LibraryStore {
     }
 
     nonisolated static func ytdlpYouTubeSelfCheckArgumentAttempts() -> [YTDLPArgumentAttempt] {
+        let accountCookieAttempts = Array(ytdlpAccountCookieAttempts().prefix(1))
         let browserCookieAttempts = Array(ytdlpBrowserCookieAttempts().prefix(1))
         let proxyURLs = currentYTDLPProxyURLs()
         let clientArguments = ytdlpYouTubeClientArguments()
@@ -426,6 +452,12 @@ extension LibraryStore {
         if let proxyURL = proxyURLs.first {
             let proxyArguments = ["--proxy", proxyURL]
             let proxyLabel = ytdlpProxyAttemptLabel(for: proxyURL)
+            for cookieAttempt in accountCookieAttempts {
+                attempts.append(YTDLPArgumentAttempt(
+                    label: "\(proxyLabel) + \(cookieAttempt.label)",
+                    arguments: proxyArguments + cookieAttempt.arguments
+                ))
+            }
             for cookieAttempt in browserCookieAttempts {
                 attempts.append(YTDLPArgumentAttempt(
                     label: "\(proxyLabel) + \(cookieAttempt.label)",
@@ -435,6 +467,7 @@ extension LibraryStore {
             attempts.append(YTDLPArgumentAttempt(label: proxyLabel, arguments: proxyArguments))
             attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel)备用客户端", arguments: proxyArguments + clientArguments))
         } else {
+            attempts += accountCookieAttempts
             attempts += browserCookieAttempts
             attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
         }
@@ -699,7 +732,7 @@ extension LibraryStore {
               isYouTubeBotVerificationFailure(concise)
         else { return concise }
 
-        return "YouTube 要求登录验证：请先在 Chrome、Edge、Brave 或 Firefox 登录 YouTube 后重试。若仍失败，请给拉片宝开启完全磁盘访问权限，以便读取浏览器 Cookie；也可以配置可用代理或手动 Cookie。"
+        return "YouTube 要求登录验证：请先在拉片宝设置里登录对应账号后重试。若仍失败，可以回退到 Chrome、Edge、Brave 或 Firefox 的登录态，或配置可用代理。"
     }
 
     nonisolated static func isYouTubeBotVerificationFailure(_ message: String) -> Bool {

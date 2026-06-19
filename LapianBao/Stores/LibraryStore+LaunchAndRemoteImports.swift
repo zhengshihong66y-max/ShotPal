@@ -289,7 +289,29 @@ extension LibraryStore {
     }
 
     func prewarmSavedCollectionCookieCache() {
-        Self.prewarmChromeCookieCache()
+        Self.prewarmAccountCookieCache()
+    }
+
+    func refreshAccountCookieSummary() {
+        Task { [weak self] in
+            let summary = await Self.currentAccountCookieSummary()
+            await MainActor.run { [weak self] in
+                self?.accountCookieSummary = summary
+            }
+        }
+    }
+
+    func clearInternalAccountCookies() {
+        guard !isClearingAccountCookies else { return }
+        isClearingAccountCookies = true
+        Task { [weak self] in
+            await Self.clearInternalAccountCookieData()
+            let summary = await Self.currentAccountCookieSummary()
+            await MainActor.run { [weak self] in
+                self?.accountCookieSummary = summary
+                self?.isClearingAccountCookies = false
+            }
+        }
     }
 
     func clearFinishedRemoteImports() {
@@ -1410,21 +1432,6 @@ extension LibraryStore {
         var url: String?
     }
 
-    nonisolated static func withExportedChromeCookies<T>(
-        seedURLString _: String,
-        _ body: (URL) throws -> T
-    ) throws -> T {
-        let cookieURL = try cachedOrExportedChromeCookieURL()
-        do {
-            return try body(cookieURL)
-        } catch {
-            guard shouldRefreshChromeCookies(after: error) else { throw error }
-            chromeCookieFileCache.invalidate(cookieURL)
-            let freshCookieURL = try cachedOrExportedChromeCookieURL(forceRefresh: true)
-            return try body(freshCookieURL)
-        }
-    }
-
     nonisolated static func prewarmChromeCookieCache() {
         Task.detached(priority: .utility) {
             _ = try? cachedOrExportedChromeCookieURL()
@@ -1733,7 +1740,7 @@ extension LibraryStore {
         limit: Int,
         knownContentKeys: Set<String>
     ) throws -> InstagramSavedScanResult {
-        try withExportedChromeCookies(seedURLString: "https://www.instagram.com/") { cookieURL in
+        try withExportedAccountCookies(seedURLString: "https://www.instagram.com/") { cookieURL in
             var seen = Set<String>()
             var links: [String] = []
             var metadataByLink: [String: SavedImportCandidateMetadata] = [:]
@@ -1989,7 +1996,7 @@ extension LibraryStore {
         limit: Int,
         excludingMetadataNoteIDs: Set<String> = []
     ) throws -> XiaohongshuSavedScanResult {
-        try withExportedChromeCookies(seedURLString: "https://www.xiaohongshu.com/") { cookieURL in
+        try withExportedAccountCookies(seedURLString: "https://www.xiaohongshu.com/") { cookieURL in
             let result = try runCurlFetch(
                 urlString: xiaohongshuSavedCollectionURLString,
                 cookieFileURL: cookieURL,

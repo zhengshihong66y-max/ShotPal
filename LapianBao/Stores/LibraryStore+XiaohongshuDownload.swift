@@ -119,7 +119,7 @@ extension LibraryStore {
 
     nonisolated static func xiaohongshuNoteHTML(from sourceURL: URL) async throws -> String {
         try await Task.detached(priority: .utility) {
-            try withExportedChromeCookies(seedURLString: "https://www.xiaohongshu.com/") { cookieURL in
+            try withExportedAccountCookies(seedURLString: "https://www.xiaohongshu.com/") { cookieURL in
                 var noteURLString = sourceURL.absoluteString
                 if sourceURL.query?.contains("xsec_token=") != true,
                    let noteID = xiaohongshuNoteID(from: sourceURL),

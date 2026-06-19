@@ -180,7 +180,7 @@ extension ContentView {
             }
 
             if isSavedImportRefreshing && pendingImportVideos.isEmpty {
-                Text("请保持 Chrome 中 IG 或对应网站的网页已登录")
+                Text("请先在设置里完成 IG 或小红书账号登录")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

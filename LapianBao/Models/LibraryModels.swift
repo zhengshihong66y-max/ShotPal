@@ -882,9 +882,9 @@ enum InstagramSavedImportError: LocalizedError {
         case .noLibrary:
             return "请先打开一个素材库文件夹"
         case .noLinks:
-            return "没有读到 Instagram 收藏链接，请确认 Chrome 已登录且收藏页可访问"
+            return "没有读到 Instagram 收藏链接，请先在拉片宝设置里登录 Instagram，并确认收藏页可访问"
         case .noXiaohongshuVideoLinks:
-            return "没有读到小红书收藏视频，请确认 Chrome 已登录且收藏页里有视频笔记"
+            return "没有读到小红书收藏视频，请先在拉片宝设置里登录小红书，并确认收藏页里有视频笔记"
         case .chromeCookieUnavailable(let message):
             return message
         case .timedOut:
