@@ -202,6 +202,7 @@ extension LibraryStore {
         let fileSize = asset.fileSize
         let modifiedAt = asset.modifiedAt
 
+        localMusicWaveformRenderingPaths.insert(path)
         localMusicWaveformTasks[path] = Task.detached(priority: .utility) { [weak self, fileURL, path, libraryURL, fileSize, modifiedAt] in
             let samples = await Self.makeWaveformSamples(
                 for: fileURL,
@@ -212,6 +213,7 @@ extension LibraryStore {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.localMusicWaveformTasks[path] = nil
+                self.localMusicWaveformRenderingPaths.remove(path)
 
                 guard let currentAsset = self.localMusicAssets.first(where: { $0.filePath == path }),
                       currentAsset.fileSize == fileSize,

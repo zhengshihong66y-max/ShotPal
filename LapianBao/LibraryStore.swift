@@ -135,6 +135,7 @@ final class LibraryStore: ObservableObject {
         didSet { rebuildAudioClipIndexes() }
     }
     @Published var localMusicWaveformSamplesByPath: [String: [Double]] = [:]
+    @Published var localMusicWaveformRenderingPaths = Set<String>()
     @Published var localAudioWaveformSamplesByPath: [String: [Double]] = [:]
     @Published var musicFileDurationsByPath: [String: Double] = [:]
     @Published var musicDetectionStatusByVideoPath: [String: TranscriptJobStatus] = [:]

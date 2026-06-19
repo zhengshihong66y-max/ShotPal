@@ -1839,17 +1839,18 @@ struct DownloadedMusicWaveformView: View {
 
             let midY = size.height / 2
             let clampedProgress = min(1, max(0, displayedProgress))
-            let maxHalfHeight = size.height * 0.43
+            let maxHalfHeight = size.height * 0.40
             let pointCount = displaySamples.count
             let xStep = pointCount > 1 ? size.width / CGFloat(pointCount - 1) : size.width
             var upperPath = Path()
             var lowerPath = Path()
             var shapePath = Path()
+            var tickPath = Path()
             var upperPoints: [CGPoint] = []
             var lowerPoints: [CGPoint] = []
 
             for (index, sample) in displaySamples.enumerated() {
-                let value = min(1, max(0.03, sample))
+                let value = min(1, max(0.02, sample))
                 let x = pointCount > 1 ? CGFloat(index) * xStep : size.width / 2
                 let halfHeight = max(1.2, CGFloat(value) * maxHalfHeight)
                 upperPoints.append(CGPoint(x: x, y: midY - halfHeight))
@@ -1877,24 +1878,34 @@ struct DownloadedMusicWaveformView: View {
             }
             shapePath.closeSubpath()
 
+            let tickStride = max(1, Int(ceil(CGFloat(4) / max(xStep, 0.5))))
+            for index in stride(from: 0, to: pointCount, by: tickStride) {
+                let upper = upperPoints[index]
+                let lower = lowerPoints[index]
+                tickPath.move(to: upper)
+                tickPath.addLine(to: lower)
+            }
+
+            let baseFillOpacity = isActive ? 0.18 : 0.11
+            let baseStrokeOpacity = isActive ? 0.86 : 0.62
+            context.fill(shapePath, with: .color(Color.white.opacity(baseFillOpacity)))
+
             var centerPath = Path()
             centerPath.move(to: CGPoint(x: 0, y: midY))
             centerPath.addLine(to: CGPoint(x: size.width, y: midY))
-            context.stroke(centerPath, with: .color(Color.white.opacity(0.08)), lineWidth: 1)
-
-            let baseFillOpacity = isActive ? 0.30 : 0.22
-            let baseStrokeOpacity = isActive ? 0.66 : 0.42
-            context.fill(shapePath, with: .color(Color.white.opacity(baseFillOpacity)))
-            context.stroke(upperPath, with: .color(Color.white.opacity(baseStrokeOpacity)), lineWidth: isCompact ? 0.9 : 1.05)
-            context.stroke(lowerPath, with: .color(Color.white.opacity(baseStrokeOpacity * 0.7)), lineWidth: isCompact ? 0.8 : 0.95)
+            context.stroke(centerPath, with: .color(Color.white.opacity(0.12)), lineWidth: 1)
+            context.stroke(tickPath, with: .color(Color.white.opacity(isActive ? 0.28 : 0.20)), lineWidth: isCompact ? 0.45 : 0.55)
+            context.stroke(upperPath, with: .color(Color.white.opacity(baseStrokeOpacity)), lineWidth: isCompact ? 1.05 : 1.25)
+            context.stroke(lowerPath, with: .color(Color.white.opacity(baseStrokeOpacity * 0.82)), lineWidth: isCompact ? 0.95 : 1.15)
 
             if isActive {
                 let playedWidth = size.width * CGFloat(clampedProgress)
                 var playedContext = context
                 playedContext.clip(to: Path(CGRect(x: 0, y: 0, width: playedWidth, height: size.height)))
-                playedContext.fill(shapePath, with: .color(Color.white.opacity(0.58)))
-                playedContext.stroke(upperPath, with: .color(Color.white.opacity(0.92)), lineWidth: isCompact ? 1.0 : 1.2)
-                playedContext.stroke(lowerPath, with: .color(Color.white.opacity(0.72)), lineWidth: isCompact ? 0.9 : 1.05)
+                playedContext.fill(shapePath, with: .color(Color.white.opacity(0.34)))
+                playedContext.stroke(tickPath, with: .color(Color.white.opacity(0.46)), lineWidth: isCompact ? 0.5 : 0.65)
+                playedContext.stroke(upperPath, with: .color(Color.white.opacity(0.96)), lineWidth: isCompact ? 1.15 : 1.35)
+                playedContext.stroke(lowerPath, with: .color(Color.white.opacity(0.84)), lineWidth: isCompact ? 1.0 : 1.2)
             }
 
             if isActive {
@@ -1911,7 +1922,7 @@ struct DownloadedMusicWaveformView: View {
 
     private func preparedSamples(for width: CGFloat) -> [Double] {
         guard !samples.isEmpty else { return [] }
-        let targetCount = max(24, min(samples.count, Int(max(24, width / (isCompact ? 3.2 : 2.6)))))
+        let targetCount = max(32, min(samples.count, Int(max(32, width / (isCompact ? 2.6 : 2.0)))))
         let reduced: [Double]
 
         if samples.count <= targetCount {
@@ -1924,7 +1935,7 @@ struct DownloadedMusicWaveformView: View {
                 let slice = samples[start..<end]
                 let peak = slice.max() ?? 0
                 let average = slice.reduce(0, +) / Double(slice.count)
-                return min(1, peak * 0.72 + average * 0.28)
+                return min(1, peak * 0.52 + average * 0.48)
             }
         }
 
@@ -1941,7 +1952,7 @@ struct DownloadedMusicWaveformView: View {
 
         return values.map { value in
             let normalized = min(1, max(0, value / high))
-            return 0.07 + pow(normalized, 0.78) * 0.93
+            return 0.05 + pow(normalized, 1.18) * 0.95
         }
     }
 

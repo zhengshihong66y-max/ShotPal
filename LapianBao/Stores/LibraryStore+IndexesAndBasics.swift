@@ -794,6 +794,7 @@ extension LibraryStore {
             localMusicWaveformSamplesByPath.removeValue(forKey: path)
             localMusicWaveformTasks[path]?.cancel()
             localMusicWaveformTasks[path] = nil
+            localMusicWaveformRenderingPaths.remove(path)
             let normalizedPath = Self.normalizedLocalFilePath(path)
             musicFileDurationsByPath.removeValue(forKey: normalizedPath)
             musicFileDurationTasks[normalizedPath]?.cancel()
@@ -811,6 +812,7 @@ extension LibraryStore {
 
     func pruneLocalWaveformCaches(musicPaths: Set<String>, audioPaths: Set<String>) {
         localMusicWaveformSamplesByPath = localMusicWaveformSamplesByPath.filter { musicPaths.contains($0.key) }
+        localMusicWaveformRenderingPaths = Set(localMusicWaveformRenderingPaths.filter { musicPaths.contains($0) })
         localAudioWaveformSamplesByPath = localAudioWaveformSamplesByPath.filter { audioPaths.contains($0.key) }
     }
 

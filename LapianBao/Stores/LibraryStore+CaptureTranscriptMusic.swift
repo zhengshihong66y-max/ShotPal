@@ -621,6 +621,9 @@ extension LibraryStore {
             musicsByVideoPath.removeValue(forKey: path)
             musicDetectionStatusByVideoPath.removeValue(forKey: path)
             localMusicWaveformSamplesByPath.removeValue(forKey: path)
+            localMusicWaveformTasks[path]?.cancel()
+            localMusicWaveformTasks[path] = nil
+            localMusicWaveformRenderingPaths.remove(path)
             knownLocalResourcePaths.remove(path)
 
             let enrichmentKeys = musicTagEnrichmentTasks.keys.filter { $0.hasPrefix("\(path)|") }

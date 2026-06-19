@@ -26,6 +26,7 @@ struct MusicWorkspaceView: View {
 
     var body: some View {
         let projection = viewModel.projection
+        let waveformRenderingCount = activeMusicWaveformCacheCount
 
         VStack(alignment: .leading, spacing: 12) {
             musicHeader()
@@ -59,6 +60,15 @@ struct MusicWorkspaceView: View {
         .padding(.top, Design.libraryToolbarTop)
         .padding(.bottom, 14)
         .background(Design.sidebarBg)
+        .overlay(alignment: .bottom) {
+            if waveformRenderingCount > 0 {
+                MusicWaveformCacheProgressOverlay(activeCount: waveformRenderingCount)
+                    .padding(.horizontal, Design.libraryContentInset)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: waveformRenderingCount)
         .onAppear {
             prepareMusicWorkspaceForDisplay()
         }
@@ -74,6 +84,9 @@ struct MusicWorkspaceView: View {
         .onChange(of: libraryStore.localMusicAssets) { _, _ in
             scheduleMusicProjectionRefresh()
             scheduleDeferredMusicWorkspaceMaintenance()
+        }
+        .onChange(of: libraryStore.localMusicWaveformSamplesByPath) { _, _ in
+            scheduleMusicProjectionRefresh()
         }
         .onChange(of: libraryStore.musicDownloadJobs) { _, _ in
             scheduleMusicProjectionRefresh()
@@ -909,6 +922,13 @@ struct MusicWorkspaceView: View {
         viewModel.selectedMusicTagFilterCount
     }
 
+    private var activeMusicWaveformCacheCount: Int {
+        let downloadCount = libraryStore.musicDownloadJobs.reduce(0) { count, job in
+            count + (job.isPreparingWaveform ? 1 : 0)
+        }
+        return downloadCount + libraryStore.localMusicWaveformRenderingPaths.count
+    }
+
     private func toggleMusicFilter(_ option: MusicFilterOption) {
         viewModel.toggleMusicFilter(option)
     }
@@ -944,6 +964,45 @@ struct MusicWorkspaceView: View {
         )
     }
 
+}
+
+private struct MusicWaveformCacheProgressOverlay: View {
+    let activeCount: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "waveform")
+                .font(.system(size: 11, weight: .semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(.white.opacity(0.86))
+                .frame(width: 14, height: 14)
+
+            ProgressView()
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+                .tint(.white.opacity(0.86))
+                .frame(width: 92)
+
+            Text("缓存渲染中")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+
+            Text("\(activeCount) 个")
+                .font(Design.numericCaption2(weight: .bold))
+                .foregroundStyle(.white.opacity(0.62))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.black.opacity(0.62), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(.white.opacity(0.15), lineWidth: 0.8)
+        }
+        .shadow(color: .black.opacity(0.28), radius: 12, y: 5)
+        .allowsHitTesting(false)
+    }
 }
 
 private struct EditableMusicTagStrip: View {
