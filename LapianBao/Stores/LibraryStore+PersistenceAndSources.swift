@@ -571,6 +571,7 @@ extension LibraryStore {
                   let key = Self.normalizedSubjectiveTagKey(tag),
                   !Self.looksLikeSourceMetadataFragment(tag),
                   Self.canonicalSourcePlatform(tag) == nil,
+                  !Self.isRemovedDefaultVideoTagSuggestion(tag),
                   !sourceValueKeys.contains(key),
                   seenKeys.insert(key).inserted
             else { return nil }

@@ -109,6 +109,26 @@ extension LibraryStore {
         "平面设计"
     ]
 
+    nonisolated static let removedDefaultVideoTagSuggestions: [String] = [
+        "参考",
+        "灵感",
+        "案例",
+        "画面",
+        "构图",
+        "色彩",
+        "光线",
+        "运镜",
+        "剪辑",
+        "节奏",
+        "文案",
+        "声音"
+    ]
+
+    nonisolated static func isRemovedDefaultVideoTagSuggestion(_ tag: String) -> Bool {
+        guard let key = normalizedSubjectiveTagKey(tag) else { return false }
+        return removedDefaultVideoTagSuggestionKeys.contains(key)
+    }
+
     nonisolated static func cleanedVideoTagSuggestions(_ tags: [String]) -> [String] {
         var seenKeys = Set<String>()
         return tags.compactMap { rawTag in
@@ -116,11 +136,16 @@ extension LibraryStore {
                   let key = normalizedSubjectiveTagKey(tag),
                   !looksLikeSourceMetadataFragment(tag),
                   canonicalSourcePlatform(tag) == nil,
+                  !removedDefaultVideoTagSuggestionKeys.contains(key),
                   seenKeys.insert(key).inserted
             else { return nil }
 
             return tag
         }
+    }
+
+    nonisolated private static var removedDefaultVideoTagSuggestionKeys: Set<String> {
+        Set(removedDefaultVideoTagSuggestions.compactMap(normalizedSubjectiveTagKey))
     }
 
     func videoPathSet(matchingSelectedTags selectedVideoTags: Set<String>) -> Set<String>? {
