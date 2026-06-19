@@ -624,6 +624,8 @@ extension LibraryStore {
             localMusicWaveformTasks[path]?.cancel()
             localMusicWaveformTasks[path] = nil
             localMusicWaveformRenderingPaths.remove(path)
+            localMusicWaveformQueuedPaths.remove(path)
+            queuedLocalMusicWaveformAssets.removeAll { $0.filePath == path }
             localMusicWaveformProgressByPath.removeValue(forKey: path)
             knownLocalResourcePaths.remove(path)
 

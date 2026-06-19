@@ -136,6 +136,7 @@ final class LibraryStore: ObservableObject {
     }
     @Published var localMusicWaveformSamplesByPath: [String: [Double]] = [:]
     @Published var localMusicWaveformRenderingPaths = Set<String>()
+    @Published var localMusicWaveformQueuedPaths = Set<String>()
     @Published var localMusicWaveformProgressByPath: [String: Double] = [:]
     @Published var musicDownloadWaveformProgressByID: [UUID: Double] = [:]
     @Published var isHydratingLocalWaveformCache = false
@@ -270,6 +271,7 @@ final class LibraryStore: ObservableObject {
     var localWaveformCacheSaveTask: Task<Void, Never>?
     var localWaveformCacheNeedsSave = false
     var localMusicWaveformTasks: [String: Task<Void, Never>] = [:]
+    var queuedLocalMusicWaveformAssets: [LocalMusicAsset] = []
     var musicFileDurationTasks: [String: Task<Void, Never>] = [:]
     var frameStripTasks: [String: Task<Void, Never>] = [:]
     var frameStripEmptyRetryCountsByPath: [String: Int] = [:]
@@ -334,6 +336,7 @@ final class LibraryStore: ObservableObject {
     nonisolated static let musicWaveformSampleCount = 720
     nonisolated static let localMusicWaveformSampleCount = 144
     nonisolated static let localAudioWaveformSampleCount = 96
+    nonisolated static let localMusicWaveformWorkerCount = 2
     nonisolated static let audioClipWaveformWorkerCount = 1
     nonisolated static let localWaveformCacheVersion = 1
     nonisolated static let launchMetadataPrefetchLimit = 0

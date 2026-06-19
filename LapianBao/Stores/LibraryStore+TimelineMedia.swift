@@ -186,20 +186,67 @@ extension LibraryStore {
                         self.scheduleLocalWaveformCacheSave()
                     }
                 }
+                self.startQueuedLocalMusicWaveforms()
             }
         }
     }
 
+    func ensureAllLocalMusicWaveformsIfNeeded() {
+        enqueueLocalMusicWaveforms(localMusicAssets)
+    }
+
     func ensureLocalMusicWaveformIfNeeded(_ asset: LocalMusicAsset) {
+        enqueueLocalMusicWaveforms([asset])
+    }
+
+    func enqueueLocalMusicWaveforms(_ assets: [LocalMusicAsset]) {
+        guard !isHydratingLocalWaveformCache else { return }
+        var didQueue = false
+        for asset in assets {
+            let path = asset.filePath
+            guard shouldGenerateLocalMusicWaveform(for: asset),
+                  localMusicWaveformTasks[path] == nil,
+                  !localMusicWaveformQueuedPaths.contains(path)
+            else { continue }
+
+            queuedLocalMusicWaveformAssets.append(asset)
+            localMusicWaveformQueuedPaths.insert(path)
+            didQueue = true
+        }
+
+        if didQueue || !queuedLocalMusicWaveformAssets.isEmpty {
+            startQueuedLocalMusicWaveforms()
+        }
+    }
+
+    func startQueuedLocalMusicWaveforms() {
+        guard !isHydratingLocalWaveformCache else { return }
+        while localMusicWaveformTasks.count < Self.localMusicWaveformWorkerCount,
+              !queuedLocalMusicWaveformAssets.isEmpty {
+            let queuedAsset = queuedLocalMusicWaveformAssets.removeFirst()
+            localMusicWaveformQueuedPaths.remove(queuedAsset.filePath)
+
+            guard let currentAsset = localMusicAssets.first(where: { $0.filePath == queuedAsset.filePath }),
+                  currentAsset.fileSize == queuedAsset.fileSize,
+                  currentAsset.modifiedAt == queuedAsset.modifiedAt,
+                  shouldGenerateLocalMusicWaveform(for: currentAsset),
+                  localMusicWaveformTasks[currentAsset.filePath] == nil
+            else { continue }
+
+            startLocalMusicWaveformTask(for: currentAsset)
+        }
+    }
+
+    func shouldGenerateLocalMusicWaveform(for asset: LocalMusicAsset) -> Bool {
         let path = asset.filePath
         if localMusicWaveformSamplesByPath[path]?.count == Self.localMusicWaveformSampleCount {
-            return
+            return false
         }
-        guard !isHydratingLocalWaveformCache else { return }
-        guard localMusicWaveformTasks[path] == nil,
-              FileManager.default.fileExists(atPath: path)
-        else { return }
+        return FileManager.default.fileExists(atPath: path)
+    }
 
+    func startLocalMusicWaveformTask(for asset: LocalMusicAsset) {
+        let path = asset.filePath
         let fileURL = URL(fileURLWithPath: path)
         let libraryURL = libraryURL
         let fileSize = asset.fileSize
@@ -225,6 +272,7 @@ extension LibraryStore {
                 store.localMusicWaveformTasks[path] = nil
                 store.localMusicWaveformRenderingPaths.remove(path)
                 store.localMusicWaveformProgressByPath.removeValue(forKey: path)
+                defer { store.startQueuedLocalMusicWaveforms() }
 
                 guard !wasCancelled,
                       let currentAsset = store.localMusicAssets.first(where: { $0.filePath == path }),

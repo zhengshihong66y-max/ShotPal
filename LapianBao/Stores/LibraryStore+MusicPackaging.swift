@@ -137,6 +137,8 @@ extension LibraryStore {
             localMusicWaveformTasks[oldPath]?.cancel()
             localMusicWaveformTasks[oldPath] = nil
             localMusicWaveformRenderingPaths.remove(oldPath)
+            localMusicWaveformQueuedPaths.remove(oldPath)
+            queuedLocalMusicWaveformAssets.removeAll { $0.filePath == oldPath }
             localMusicWaveformProgressByPath.removeValue(forKey: oldPath)
             knownLocalResourcePaths.remove(oldPath)
             let normalizedOldPath = Self.normalizedLocalFilePath(oldPath)
@@ -274,6 +276,8 @@ extension LibraryStore {
             localMusicWaveformTasks[oldPath]?.cancel()
             localMusicWaveformTasks[oldPath] = nil
             localMusicWaveformRenderingPaths.remove(oldPath)
+            localMusicWaveformQueuedPaths.remove(oldPath)
+            queuedLocalMusicWaveformAssets.removeAll { $0.filePath == oldPath }
             localMusicWaveformProgressByPath.removeValue(forKey: oldPath)
             knownLocalResourcePaths.remove(oldPath)
             knownLocalResourcePaths.insert(newPath)

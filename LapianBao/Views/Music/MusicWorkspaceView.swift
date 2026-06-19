@@ -89,6 +89,11 @@ struct MusicWorkspaceView: View {
         .onChange(of: libraryStore.localMusicWaveformSamplesByPath) { _, _ in
             scheduleMusicProjectionRefresh()
         }
+        .onChange(of: libraryStore.isHydratingLocalWaveformCache) { _, isHydrating in
+            if !isHydrating {
+                libraryStore.ensureAllLocalMusicWaveformsIfNeeded()
+            }
+        }
         .onChange(of: libraryStore.musicDownloadJobs) { _, _ in
             scheduleMusicProjectionRefresh()
             if viewModel.completedMusicDownloadLibraryChanged(
@@ -148,6 +153,7 @@ struct MusicWorkspaceView: View {
     private func scheduleDeferredMusicWorkspaceMaintenance() {
         viewModel.scheduleDeferredMaintenance {
             libraryStore.seedMusicFileDurations(from: libraryStore.localMusicAssets)
+            libraryStore.ensureAllLocalMusicWaveformsIfNeeded()
         }
     }
 
@@ -924,6 +930,7 @@ struct MusicWorkspaceView: View {
     }
 
     private var musicWaveformCacheProgress: MusicWaveformCacheProgress? {
+        let queuedLocalProgresses = libraryStore.localMusicWaveformQueuedPaths.map { _ in 0.0 }
         let localProgresses = libraryStore.localMusicWaveformRenderingPaths.map { path in
             libraryStore.localMusicWaveformProgressByPath[path] ?? 0
         }
@@ -931,7 +938,7 @@ struct MusicWorkspaceView: View {
             guard job.isPreparingWaveform else { return nil }
             return libraryStore.musicDownloadWaveformProgressByID[job.id] ?? 0
         }
-        let progressValues = localProgresses + downloadProgresses
+        let progressValues = queuedLocalProgresses + localProgresses + downloadProgresses
         guard !progressValues.isEmpty else { return nil }
 
         let averageProgress = progressValues.reduce(0, +) / Double(progressValues.count)
