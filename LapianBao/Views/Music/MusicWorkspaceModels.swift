@@ -48,7 +48,9 @@ final class MusicWorkspaceViewModel: ObservableObject {
     private var completedMusicDownloadLibrarySignature = Set<String>()
 
     var selectedMusicTagFilterCount: Int {
-        selectedMusicFilters.filter { $0.kind == .artist || $0.kind == .tag }.count
+        selectedMusicFilters.filter {
+            $0.kind == .local || $0.kind == .artist || $0.kind == .tag
+        }.count
     }
 
     func cancelTasks() {

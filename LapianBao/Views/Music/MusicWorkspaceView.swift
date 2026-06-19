@@ -35,6 +35,7 @@ struct MusicWorkspaceView: View {
                 if viewModel.isMusicTagFilterBarPresented {
                     musicQuickFilterArea(
                         filterValues: projection.filterValues,
+                        localMusicCount: projection.musicFilterCounts[.local, default: [:]][MusicFilterOption.local.value],
                         artistSongCounts: projection.musicFilterCounts[.artist, default: [:]],
                         musicTagCounts: projection.musicFilterCounts[.tag, default: [:]]
                     )
@@ -239,6 +240,7 @@ struct MusicWorkspaceView: View {
 
     private func musicQuickFilterArea(
         filterValues: [MusicFilterKind: [String]],
+        localMusicCount: Int?,
         artistSongCounts: [String: Int],
         musicTagCounts: [String: Int]
     ) -> some View {
@@ -257,7 +259,9 @@ struct MusicWorkspaceView: View {
                     kind: .tag,
                     values: filterValues[.tag, default: []],
                     counts: musicTagCounts,
-                    allSystemImage: "tag"
+                    allSystemImage: "tag",
+                    leadingOptions: [MusicFilterOption.local],
+                    leadingCounts: [MusicFilterOption.local.value: localMusicCount].compactMapValues { $0 }
                 )
             }
         }
@@ -271,6 +275,8 @@ struct MusicWorkspaceView: View {
         values: [String],
         counts: [String: Int] = [:],
         allSystemImage: String?,
+        leadingOptions: [MusicFilterOption] = [],
+        leadingCounts: [String: Int] = [:],
         emptyText: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -278,13 +284,25 @@ struct MusicWorkspaceView: View {
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.tertiary)
 
-            if values.isEmpty {
+            if values.isEmpty && leadingOptions.isEmpty {
                 Text(emptyText ?? "暂无\(title)")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .frame(minHeight: 28, alignment: .leading)
             } else {
                 WrappingFilterChipGroup {
+                    ForEach(leadingOptions) { option in
+                        QuickFilterChoiceChip(
+                            title: option.value,
+                            systemImage: "externaldrive",
+                            count: leadingCounts[option.value],
+                            isSelected: viewModel.selectedMusicFilters.contains(option),
+                            tint: Design.annotationAccent
+                        ) {
+                            toggleMusicFilter(option)
+                        }
+                    }
+
                     ForEach(values, id: \.self) { value in
                         let option = MusicFilterOption(kind: kind, value: value)
                         QuickFilterChoiceChip(

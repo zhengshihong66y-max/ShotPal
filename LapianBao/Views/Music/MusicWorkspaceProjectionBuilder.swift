@@ -799,6 +799,7 @@ struct MusicWorkspaceProjectionBuilder {
         } + localGroups.flatMap { musicFilterTags(for: $0) }
 
         return [
+            .local: [MusicFilterOption.local.value],
             .artist: cleanedMusicFilterValues(artistValues),
             .tag: cleanedMusicTagFilterValues(tagValues)
         ]
@@ -895,6 +896,7 @@ struct MusicWorkspaceProjectionBuilder {
             (artist, songKeysByArtist[artist, default: []].count)
         })
         return [
+            .local: [MusicFilterOption.local.value: localMusicCandidateCount(assets: assets, localGroups: localGroups)],
             .artist: artistCounts,
             .tag: tagCounts
         ]
@@ -907,13 +909,15 @@ struct MusicWorkspaceProjectionBuilder {
     ) -> Int {
         let candidateFilters = candidateMusicFilters(for: option)
         let matchingAssets = assets.filter { asset in
-            matchesMusicFilters(for: asset.song, filters: candidateFilters)
+            matchesMusicFilters(for: asset, filters: candidateFilters)
         }
         let matchingGroups = localGroups.filter { group in
             matchesMusicFilters(for: group, filters: candidateFilters)
         }
 
         switch option.kind {
+        case .local:
+            return matchingAssets.count + matchingGroups.count
         case .artist:
             return musicUniqueSongCount(assets: matchingAssets, localGroups: matchingGroups)
         case .tag:
@@ -955,6 +959,14 @@ struct MusicWorkspaceProjectionBuilder {
         return songKeys.count
     }
 
+    func localMusicCandidateCount(
+        assets: [RecognizedMusicAsset],
+        localGroups: [LocalMusicGroup]
+    ) -> Int {
+        assets.filter { hasLocalMusicFile(for: $0) }.count
+            + localGroups.filter { hasLocalMusicFile(for: $0) }.count
+    }
+
     func musicSongIdentityKey(title: String, artist: String) -> String? {
         let artistKey = normalizedSearch(artist)
         let titleKey = normalizedSearch(title)
@@ -963,7 +975,7 @@ struct MusicWorkspaceProjectionBuilder {
     }
 
     func matchesSelectedMusicFilters(for asset: RecognizedMusicAsset) -> Bool {
-        matchesSelectedMusicFilters(for: asset.song)
+        matchesMusicFilters(for: asset, filters: input.selectedMusicFilters)
     }
 
     func matchesSelectedMusicFilters(for group: LocalMusicGroup) -> Bool {
@@ -974,16 +986,55 @@ struct MusicWorkspaceProjectionBuilder {
         matchesMusicFilters(for: song, filters: input.selectedMusicFilters)
     }
 
+    func matchesMusicFilters(for asset: RecognizedMusicAsset, filters: Set<MusicFilterOption>) -> Bool {
+        matchesMusicFilters(
+            filters: filters,
+            isLocal: hasLocalMusicFile(for: asset),
+            options: Set(filterOptions(for: asset.song))
+        )
+    }
+
     func matchesMusicFilters(for group: LocalMusicGroup, filters: Set<MusicFilterOption>) -> Bool {
-        guard !filters.isEmpty else { return true }
-        let options = Set(filterOptions(for: group))
-        return filters.allSatisfy { options.contains($0) }
+        matchesMusicFilters(
+            filters: filters,
+            isLocal: hasLocalMusicFile(for: group),
+            options: Set(filterOptions(for: group))
+        )
     }
 
     func matchesMusicFilters(for song: MusicRecognitionItem, filters: Set<MusicFilterOption>) -> Bool {
+        matchesMusicFilters(
+            filters: filters,
+            isLocal: hasCompletedMusicDownload(musicDownloadJobs(for: song)),
+            options: Set(filterOptions(for: song))
+        )
+    }
+
+    func matchesMusicFilters(
+        filters: Set<MusicFilterOption>,
+        isLocal: Bool,
+        options: Set<MusicFilterOption>
+    ) -> Bool {
         guard !filters.isEmpty else { return true }
-        let options = Set(filterOptions(for: song))
-        return filters.allSatisfy { options.contains($0) }
+        return filters.allSatisfy { option in
+            switch option.kind {
+            case .local:
+                return isLocal
+            case .artist, .tag:
+                return options.contains(option)
+            }
+        }
+    }
+
+    func hasLocalMusicFile(for asset: RecognizedMusicAsset) -> Bool {
+        if localMusicFilePaths.contains(asset.videoPath), localMusicFileExists(at: asset.videoPath) {
+            return true
+        }
+        return hasCompletedMusicDownload(musicDownloadJobs(for: asset.song))
+    }
+
+    func hasLocalMusicFile(for group: LocalMusicGroup) -> Bool {
+        !localMusicFileURLs(for: group).isEmpty
     }
 
     func musicAssetMatchesSearch(_ asset: RecognizedMusicAsset, query: String) -> Bool {

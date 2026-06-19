@@ -13,11 +13,14 @@ import Foundation
 import UniformTypeIdentifiers
 
 enum MusicFilterKind: String, CaseIterable, Hashable {
+    case local = "本地"
     case artist = "作者"
     case tag = "类型"
 }
 
 struct MusicFilterOption: Identifiable, Hashable {
+    static let local = MusicFilterOption(kind: .local, value: "本地")
+
     var kind: MusicFilterKind
     var value: String
 
