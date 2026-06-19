@@ -42,22 +42,15 @@ struct MusicWorkspaceProjectionBuilder {
 
     func makeProjection() -> MusicWorkspaceProjection {
         let recognizedAssets = musicAssets
-        let localMusicAssets = folderLocalMusicAssets
-        let localMusicGroups = groupedLocalMusicAssets(from: localMusicAssets)
-        let recognizedMusicIdentityKeys = musicIdentityKeys(from: recognizedAssets)
-        let displayedLocalMusicGroups = localMusicGroups.filter {
-            shouldDisplayLocalMusicGroup($0, recognizedMusicIdentityKeys: recognizedMusicIdentityKeys)
-        }
-        let localMusicIdentityKeys = input.searchResults.isEmpty
-            ? Set<String>()
-            : localMusicLibraryIdentityKeys(from: localMusicGroups)
+        let displayedLocalMusicGroups: [LocalMusicGroup] = []
+        let localMusicIdentityKeys = Set<String>()
         let repeatedArtistTags = input.isMusicTagFilterBarPresented
-            ? repeatedMusicArtistTagLookup(from: recognizedAssets, localGroups: displayedLocalMusicGroups)
+            ? repeatedMusicArtistTagLookup(from: recognizedAssets, localGroups: [])
             : [:]
         let filterValues = input.isMusicTagFilterBarPresented
             ? musicFilterValues(
                 from: recognizedAssets,
-                localGroups: displayedLocalMusicGroups,
+                localGroups: [],
                 repeatedArtistTags: repeatedArtistTags
             )
             : [:]
@@ -65,23 +58,19 @@ struct MusicWorkspaceProjectionBuilder {
             ? musicDynamicFilterCounts(
                 filterValues: filterValues,
                 assets: recognizedAssets,
-                localGroups: displayedLocalMusicGroups
+                localGroups: []
             )
             : [:]
         let filteredRecognizedAssets = filteredRecognizedMusicAssets(from: recognizedAssets)
-        let filteredLocalMusicGroups = filteredLocalMusicGroups(from: displayedLocalMusicGroups)
         let filteredMusicEntries = sortedMusicLibraryEntries(
             recognizedAssets: filteredRecognizedAssets,
-            localGroups: filteredLocalMusicGroups
+            localGroups: []
         )
-        let sourceVideoNamesByMusicKey = filteredMusicEntries.contains(where: isLocalMusicEntry)
-            ? recognizedSourceVideoNamesByMusicKey(from: recognizedAssets)
-            : [:]
         let filteredSearchItems = sortedAppleMusicSearchResults(
             filteredSearchResults(localMusicIdentityKeys: localMusicIdentityKeys)
         )
         let filteredMusicRows = filteredMusicEntries.map {
-            musicLibraryRowProjection(for: $0, sourceVideoNamesByMusicKey: sourceVideoNamesByMusicKey)
+            musicLibraryRowProjection(for: $0, sourceVideoNamesByMusicKey: [:])
         }
         let filteredSearchRows = filteredSearchItems.map(appleMusicSearchResultRowProjection(for:))
 

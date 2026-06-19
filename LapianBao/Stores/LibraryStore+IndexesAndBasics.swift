@@ -313,10 +313,7 @@ extension LibraryStore {
         let recognizedTags = musicsByVideoPath.values.flatMap { songs in
             songs.flatMap(\.displayTags)
         }
-        let localMusicTags = localMusicAssets.flatMap { asset in
-            MusicRecognitionItem.cleanedMusicTags(asset.tags, title: asset.title)
-        }
-        musicTagsCache = Array(Set(recognizedTags + localMusicTags)).sorted()
+        musicTagsCache = Array(Set(recognizedTags)).sorted()
     }
 
     func refreshFilteredVideos() {
@@ -731,18 +728,26 @@ extension LibraryStore {
 
     func applyResourceLibrarySnapshot(_ snapshot: ResourceLibrarySnapshot, libraryPath: String) {
         guard let libraryURL, libraryURL.path == libraryPath else { return }
-        let musicPaths = Set(snapshot.music.map(\.filePath))
+        let visibleMusic = visibleMusicAssetsAfterPackaging(snapshot.music, libraryURL: libraryURL)
+        let visibleSnapshot = ResourceLibrarySnapshot(music: visibleMusic, audio: snapshot.audio)
+        if visibleMusic != snapshot.music {
+            Self.saveCachedResourceLibrarySnapshot(visibleSnapshot, in: libraryURL)
+            Task.detached(priority: .background) {
+                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: visibleSnapshot.music, audio: visibleSnapshot.audio)
+            }
+        }
+        let musicPaths = Set(visibleMusic.map(\.filePath))
         let audioPaths = Set(snapshot.audio.map(\.filePath))
         knownLocalResourcePaths = musicPaths.union(audioPaths)
         hydrateLocalWaveformCaches(from: snapshot, libraryURL: libraryURL)
-        seedMusicFileDurations(from: snapshot.music)
+        seedMusicFileDurations(from: visibleMusic)
 
         let previousMusicAssets = localMusicAssets
-        let musicChanged = previousMusicAssets != snapshot.music
+        let musicChanged = previousMusicAssets != visibleMusic
         let audioChanged = localAudioAssets != snapshot.audio
         if musicChanged {
-            resetLocalMusicRecognitionStateIfNeeded(previousAssets: previousMusicAssets, nextAssets: snapshot.music)
-            localMusicAssets = snapshot.music
+            resetLocalMusicRecognitionStateIfNeeded(previousAssets: previousMusicAssets, nextAssets: visibleMusic)
+            localMusicAssets = visibleMusic
         }
         if audioChanged {
             localAudioAssets = snapshot.audio
@@ -751,7 +756,7 @@ extension LibraryStore {
         if musicChanged || audioChanged {
             pruneLocalWaveformCaches(musicPaths: musicPaths, audioPaths: audioPaths)
             cleanupInvalidGeneratedAudioClipRecords()
-            reconcileMusicDownloadJobsWithLocalAssets(snapshot.music)
+            reconcileMusicDownloadJobsWithLocalAssets(visibleMusic)
         }
     }
 

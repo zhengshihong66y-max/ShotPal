@@ -740,7 +740,8 @@ extension LibraryStore {
         let musicFiles = collectMediaFiles(
             sourceRoots: [musicRoot, legacyMusicRoot],
             extensions: Set(supportedAudioExtensions + supportedVideoExtensions),
-            extraTagsBySourcePath: [legacyMusicRoot.path: ["导出"]]
+            extraTagsBySourcePath: [legacyMusicRoot.path: ["导出"]],
+            excludedDirectoryNames: [nonRecognizedMusicPackageFolderName]
         )
         let audioFiles = collectMediaFiles(
             sourceRoots: [audioRoot, legacyAudioRoot],
@@ -807,6 +808,7 @@ extension LibraryStore {
                 targetRoot: musicRoot,
                 extensions: Set(supportedAudioExtensions + supportedVideoExtensions),
                 extraTagsBySourcePath: [legacyMusicRoot.path: ["导出"]],
+                excludedDirectoryNames: [nonRecognizedMusicPackageFolderName],
                 deleteDuplicateFiles: true
             )
             let audioFiles = flattenMediaFiles(
@@ -903,7 +905,8 @@ extension LibraryStore {
         sourceRoots: [URL],
         extensions: Set<String>,
         extraTagsBySourcePath: [String: [String]] = [:],
-        skipGeneratedAudioClipFiles: Bool = false
+        skipGeneratedAudioClipFiles: Bool = false,
+        excludedDirectoryNames: Set<String> = []
     ) -> [FlattenedResourceFile] {
         let fm = FileManager.default
         var results: [FlattenedResourceFile] = []
@@ -920,6 +923,7 @@ extension LibraryStore {
 
             for url in urls {
                 guard extensions.contains(url.pathExtension.lowercased()) else { continue }
+                if isResourceURL(url, underExcludedDirectoryNames: excludedDirectoryNames, sourceRoot: sourceRoot) { continue }
                 if skipGeneratedAudioClipFiles, isGeneratedAudioClipFile(url) { continue }
                 let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey, .contentModificationDateKey])
                 guard values?.isRegularFile == true else { continue }
@@ -942,6 +946,7 @@ extension LibraryStore {
         targetRoot: URL,
         extensions: Set<String>,
         extraTagsBySourcePath: [String: [String]] = [:],
+        excludedDirectoryNames: Set<String> = [],
         skipGeneratedAudioClipFiles: Bool = false,
         deleteTinyGeneratedAudioClipFiles: Bool = false,
         deleteDuplicateFiles: Bool = false
@@ -969,6 +974,7 @@ extension LibraryStore {
 
             for originalURL in urls {
                 guard extensions.contains(originalURL.pathExtension.lowercased()) else { continue }
+                if isResourceURL(originalURL, underExcludedDirectoryNames: excludedDirectoryNames, sourceRoot: sourceRoot) { continue }
                 let values = try? originalURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
                 guard values?.isRegularFile == true else { continue }
                 let fileSize = Int64(values?.fileSize ?? 0)
@@ -1032,6 +1038,20 @@ extension LibraryStore {
             removeEmptyDirectories(under: sourceRoot, preserving: [targetRoot, sourceRoot])
         }
         return results
+    }
+
+    nonisolated static func isResourceURL(
+        _ url: URL,
+        underExcludedDirectoryNames excludedDirectoryNames: Set<String>,
+        sourceRoot: URL
+    ) -> Bool {
+        guard !excludedDirectoryNames.isEmpty else { return false }
+        let sourceRootPath = sourceRoot.standardizedFileURL.path
+        let urlPath = url.standardizedFileURL.path
+        guard urlPath.hasPrefix(sourceRootPath + "/") else { return false }
+        let relativePath = String(urlPath.dropFirst(sourceRootPath.count + 1))
+        let components = relativePath.split(separator: "/").map(String.init)
+        return components.dropLast().contains { excludedDirectoryNames.contains($0) }
     }
 
     nonisolated static func flattenMediaFilePriority(for url: URL, targetRoot: URL) -> Int {

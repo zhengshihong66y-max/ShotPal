@@ -25,20 +25,30 @@ struct AccountCookieSummary: Equatable, Sendable {
     var instagramCookieCount = 0
     var xiaohongshuCookieCount = 0
     var youtubeCookieCount = 0
+    var bilibiliCookieCount = 0
+    var douyinCookieCount = 0
     var hasInstagramSession = false
     var hasXiaohongshuSession = false
     var hasYouTubeSession = false
+    var hasBilibiliSession = false
+    var hasDouyinSession = false
     var updatedAt: Date?
 
     var hasAnySession: Bool {
-        hasInstagramSession || hasXiaohongshuSession || hasYouTubeSession
+        hasInstagramSession
+            || hasXiaohongshuSession
+            || hasYouTubeSession
+            || hasBilibiliSession
+            || hasDouyinSession
     }
 
     var detailText: String {
         let instagram = hasInstagramSession ? "IG 已登录" : "IG 未登录"
         let xiaohongshu = hasXiaohongshuSession ? "小红书已登录" : "小红书未登录"
         let youtube = hasYouTubeSession ? "YouTube 已登录" : "YouTube 未登录"
-        return "\(instagram) · \(xiaohongshu) · \(youtube)"
+        let bilibili = hasBilibiliSession ? "B站已登录" : "B站未登录"
+        let douyin = hasDouyinSession ? "抖音已登录" : "抖音未登录"
+        return "\(instagram) · \(xiaohongshu) · \(youtube) · \(bilibili) · \(douyin)"
     }
 }
 
@@ -357,6 +367,7 @@ final class LibraryStore: ObservableObject {
     nonisolated static let legacySoundEffectExportFolderName = "音效"
     nonisolated static let transcriptExportFolderName = "字幕"
     nonisolated static let musicExportFolderName = "音乐"
+    nonisolated static let nonRecognizedMusicPackageFolderName = "非识别音乐打包"
     nonisolated static let unknownSourcePlatformName = "其他"
     nonisolated static let knownSourcePlatforms = ["Instagram", "YouTube", "小红书", "Bilibili", "抖音", unknownSourcePlatformName]
     nonisolated static let downloaderNightlyExecutableURL = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp"

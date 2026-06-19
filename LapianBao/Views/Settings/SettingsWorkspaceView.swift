@@ -16,6 +16,8 @@ private enum AccountLoginTarget: String, Identifiable {
     case instagram
     case xiaohongshu
     case youtube
+    case bilibili
+    case douyin
 
     var id: String { rawValue }
 
@@ -24,6 +26,8 @@ private enum AccountLoginTarget: String, Identifiable {
         case .instagram: return "Instagram 登录"
         case .xiaohongshu: return "小红书登录"
         case .youtube: return "YouTube 登录"
+        case .bilibili: return "Bilibili 登录"
+        case .douyin: return "抖音登录"
         }
     }
 
@@ -32,6 +36,19 @@ private enum AccountLoginTarget: String, Identifiable {
         case .instagram: return "IG"
         case .xiaohongshu: return "小红书"
         case .youtube: return "YouTube"
+        case .bilibili: return "B站"
+        case .douyin: return "抖音"
+        }
+    }
+
+    var buttonWidth: CGFloat {
+        switch self {
+        case .xiaohongshu, .douyin:
+            return 42
+        case .youtube:
+            return 50
+        case .instagram, .bilibili:
+            return 44
         }
     }
 
@@ -43,8 +60,20 @@ private enum AccountLoginTarget: String, Identifiable {
             return URL(string: "https://www.xiaohongshu.com/explore")!
         case .youtube:
             return URL(string: "https://accounts.google.com/ServiceLogin?service=youtube")!
+        case .bilibili:
+            return URL(string: "https://passport.bilibili.com/login")!
+        case .douyin:
+            return URL(string: "https://www.douyin.com/")!
         }
     }
+
+    static let allLoginTargets: [AccountLoginTarget] = [
+        .instagram,
+        .xiaohongshu,
+        .youtube,
+        .bilibili,
+        .douyin
+    ]
 }
 
 struct SettingsWorkspaceView: View {
@@ -64,31 +93,6 @@ struct SettingsWorkspaceView: View {
             VStack(alignment: .leading, spacing: 8) {
                 accountLoginCard()
                 downloaderSelfCheckCard()
-
-                settingsTaskCard(
-                    title: "画面切分",
-                    icon: "rectangle.on.rectangle",
-                    countText: sceneCountText,
-                    job: libraryStore.sceneBatchJob,
-                    action: continueSceneBatch
-                )
-
-                settingsTaskCard(
-                    title: "字幕识别",
-                    icon: "text.bubble",
-                    countText: transcriptCountText,
-                    job: libraryStore.transcriptBatchJob,
-                    action: continueTranscriptBatch
-                )
-
-                settingsTaskCard(
-                    title: "音乐下载",
-                    icon: "music.note.list",
-                    countText: musicDownloadCountText,
-                    job: libraryStore.musicDownloadBatchJob,
-                    action: continueMusicDownloadBatch
-                )
-
                 shortcutSettingsCard()
             }
             .padding(.horizontal, Design.libraryContentInset)
@@ -118,7 +122,7 @@ struct SettingsWorkspaceView: View {
             )
 
             HStack(spacing: 6) {
-                ForEach([AccountLoginTarget.instagram, .xiaohongshu, .youtube]) { target in
+                ForEach(AccountLoginTarget.allLoginTargets) { target in
                     Button {
                         openAccountLogin(target)
                     } label: {
@@ -126,7 +130,7 @@ struct SettingsWorkspaceView: View {
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
-                            .frame(width: target == .xiaohongshu ? 42 : 46, height: Self.rowActionButtonSize)
+                            .frame(width: target.buttonWidth, height: Self.rowActionButtonSize)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white.opacity(0.78))
@@ -134,21 +138,6 @@ struct SettingsWorkspaceView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .help("用默认浏览器打开\(target.title)")
                 }
-
-                settingsActionButton(
-                    systemImage: "arrow.clockwise",
-                    tint: .white.opacity(0.70),
-                    help: "重新识别浏览器登录状态",
-                    action: { refreshAccountLoginStatus() }
-                )
-
-                settingsActionButton(
-                    systemImage: "trash",
-                    tint: libraryStore.isClearingAccountCookies ? .white.opacity(0.28) : .white.opacity(0.70),
-                    help: "清除拉片宝内部网页登录数据",
-                    action: { libraryStore.clearInternalAccountCookies() }
-                )
-                .disabled(libraryStore.isClearingAccountCookies)
             }
         }
         .padding(.horizontal, Self.rowHorizontalPadding)
@@ -289,27 +278,6 @@ struct SettingsWorkspaceView: View {
         shortcutRevision += 1
     }
 
-    private func settingsTaskCard(
-        title: String,
-        icon: String,
-        countText: String,
-        job: TranscriptBatchJob,
-        action: @escaping () -> Void
-    ) -> some View {
-        let running = isBatchRunning(job)
-
-        return settingsCompactRow(
-            icon: icon,
-            iconTint: Design.annotationAccent,
-            title: title,
-            detail: batchProgressText(job, countText: countText),
-            actionIcon: "play.fill",
-            help: "继续进行",
-            isDisabled: running,
-            action: action
-        )
-    }
-
     private func settingsCompactRow(
         icon: String,
         iconTint: Color,
@@ -419,77 +387,6 @@ struct SettingsWorkspaceView: View {
             return "当前版本：未检测"
         }
         return "当前版本：\(version)"
-    }
-
-    private var sceneCountText: String {
-        let completed = libraryStore.videos.filter { libraryStore.hasSceneRecognitionResult(for: $0) }.count
-        return "\(completed)/\(libraryStore.videos.count)"
-    }
-
-    private var transcriptCountText: String {
-        let completed = libraryStore.videos.filter { !libraryStore.transcriptSegmentsByVideoPath[$0.url.path, default: []].isEmpty }.count
-        return "\(completed)/\(libraryStore.videos.count)"
-    }
-
-    private var musicDownloadCountText: String {
-        let completed = libraryStore.musicDownloadJobs.filter { job in
-            if case .succeeded = job.status { return true }
-            return false
-        }.count
-        return "\(completed) 个文件"
-    }
-
-    private func isBatchRunning(_ job: TranscriptBatchJob) -> Bool {
-        if case .running = job.status { return true }
-        return false
-    }
-
-    private func isBatchPaused(_ job: TranscriptBatchJob) -> Bool {
-        if case .paused = job.status { return true }
-        return false
-    }
-
-    private func batchProgressText(_ job: TranscriptBatchJob, countText: String) -> String {
-        switch job.status {
-        case .idle:
-            return "进度：\(countText)"
-        case .running:
-            return "进度：\(batchCompletionText(job)) · \(batchPercentText(job))"
-        case .paused:
-            return "进度：\(batchCompletionText(job)) · 已暂停"
-        case .completed:
-            return job.total == 0 ? "进度：无需处理" : "进度：已完成"
-        case .failed(let message):
-            return message.isEmpty ? "进度：失败" : "进度：失败：\(message)"
-        }
-    }
-
-    private func batchCompletionText(_ job: TranscriptBatchJob) -> String {
-        "\(job.completed)/\(max(job.total, job.completed))"
-    }
-
-    private func batchPercentText(_ job: TranscriptBatchJob) -> String {
-        "\(Int((normalizedProgressFraction(job.progress) * 100).rounded()))%"
-    }
-
-    private func continueSceneBatch() {
-        if isBatchPaused(libraryStore.sceneBatchJob) {
-            libraryStore.resumeSceneBatch()
-        } else {
-            libraryStore.startSceneBatch(onlyMissing: true)
-        }
-    }
-
-    private func continueTranscriptBatch() {
-        if isBatchPaused(libraryStore.transcriptBatchJob) {
-            libraryStore.resumeTranscriptBatch()
-        } else {
-            libraryStore.startTranscriptBatch(onlyMissing: true)
-        }
-    }
-
-    private func continueMusicDownloadBatch() {
-        libraryStore.startMusicDownloadBatch(types: MusicDownloadJob.DownloadType.allCases)
     }
 
     private func openAccountLogin(_ target: AccountLoginTarget) {

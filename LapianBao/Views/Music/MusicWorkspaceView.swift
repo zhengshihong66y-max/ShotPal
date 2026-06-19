@@ -330,7 +330,7 @@ struct MusicWorkspaceView: View {
         VStack(alignment: .leading, spacing: 8) {
             if allAssets.isEmpty && allLocalGroups.isEmpty {
                 AppEmptyState(
-                    title: "音乐文件夹暂无音乐文件",
+                    title: "主页暂无识别音乐",
                     systemImage: "music.note.list",
                     style: .compact,
                     minHeight: 90

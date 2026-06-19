@@ -255,7 +255,13 @@ extension LibraryStore {
             "xiaohongshu.com",
             "xhslink.com",
             "youtube.com",
-            "google.com"
+            "google.com",
+            "bilibili.com",
+            "biliapi.net",
+            "douyin.com",
+            "iesdouyin.com",
+            "snssdk.com",
+            "amemv.com"
         ]
         return supportedDomains.first { normalized == $0 || normalized.hasSuffix(".\($0)") }
     }
@@ -270,10 +276,20 @@ extension LibraryStore {
         let youtubeCookies = cookies.filter { cookie in
             accountCookieDomain(cookie.domain).map { $0 == "youtube.com" || $0 == "google.com" } == true
         }
+        let bilibiliCookies = cookies.filter { cookie in
+            accountCookieDomain(cookie.domain).map { $0 == "bilibili.com" || $0 == "biliapi.net" } == true
+        }
+        let douyinCookies = cookies.filter { cookie in
+            accountCookieDomain(cookie.domain).map {
+                ["douyin.com", "iesdouyin.com", "snssdk.com", "amemv.com"].contains($0)
+            } == true
+        }
         return AccountCookieSummary(
             instagramCookieCount: instagramCookies.count,
             xiaohongshuCookieCount: xiaohongshuCookies.count,
             youtubeCookieCount: youtubeCookies.count,
+            bilibiliCookieCount: bilibiliCookies.count,
+            douyinCookieCount: douyinCookies.count,
             hasInstagramSession: instagramCookies.contains { ["sessionid", "ds_user_id"].contains($0.name) },
             hasXiaohongshuSession: xiaohongshuCookies.contains { ["web_session", "webId"].contains($0.name) },
             hasYouTubeSession: youtubeCookies.contains {
@@ -288,6 +304,18 @@ extension LibraryStore {
                     "__Secure-3PSID"
                 ].contains($0.name)
             },
+            hasBilibiliSession: bilibiliCookies.contains {
+                ["SESSDATA", "DedeUserID", "bili_jct"].contains($0.name)
+            },
+            hasDouyinSession: douyinCookies.contains {
+                [
+                    "sessionid",
+                    "sid_guard",
+                    "passport_csrf_token",
+                    "s_v_web_id",
+                    "LOGIN_STATUS"
+                ].contains($0.name)
+            },
             updatedAt: Date()
         )
     }
@@ -296,9 +324,13 @@ extension LibraryStore {
         var instagramCookieCount = 0
         var xiaohongshuCookieCount = 0
         var youtubeCookieCount = 0
+        var bilibiliCookieCount = 0
+        var douyinCookieCount = 0
         var hasInstagramSession = false
         var hasXiaohongshuSession = false
         var hasYouTubeSession = false
+        var hasBilibiliSession = false
+        var hasDouyinSession = false
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
             var line = String(rawLine)
@@ -333,6 +365,22 @@ extension LibraryStore {
                     "__Secure-1PSID",
                     "__Secure-3PSID"
                 ].contains(name)
+            case "bilibili.com", "biliapi.net":
+                bilibiliCookieCount += 1
+                hasBilibiliSession = hasBilibiliSession || [
+                    "SESSDATA",
+                    "DedeUserID",
+                    "bili_jct"
+                ].contains(name)
+            case "douyin.com", "iesdouyin.com", "snssdk.com", "amemv.com":
+                douyinCookieCount += 1
+                hasDouyinSession = hasDouyinSession || [
+                    "sessionid",
+                    "sid_guard",
+                    "passport_csrf_token",
+                    "s_v_web_id",
+                    "LOGIN_STATUS"
+                ].contains(name)
             default:
                 continue
             }
@@ -342,9 +390,13 @@ extension LibraryStore {
             instagramCookieCount: instagramCookieCount,
             xiaohongshuCookieCount: xiaohongshuCookieCount,
             youtubeCookieCount: youtubeCookieCount,
+            bilibiliCookieCount: bilibiliCookieCount,
+            douyinCookieCount: douyinCookieCount,
             hasInstagramSession: hasInstagramSession,
             hasXiaohongshuSession: hasXiaohongshuSession,
             hasYouTubeSession: hasYouTubeSession,
+            hasBilibiliSession: hasBilibiliSession,
+            hasDouyinSession: hasDouyinSession,
             updatedAt: Date()
         )
     }
@@ -358,9 +410,13 @@ extension LibraryStore {
             instagramCookieCount: lhs.instagramCookieCount + rhs.instagramCookieCount,
             xiaohongshuCookieCount: lhs.xiaohongshuCookieCount + rhs.xiaohongshuCookieCount,
             youtubeCookieCount: lhs.youtubeCookieCount + rhs.youtubeCookieCount,
+            bilibiliCookieCount: lhs.bilibiliCookieCount + rhs.bilibiliCookieCount,
+            douyinCookieCount: lhs.douyinCookieCount + rhs.douyinCookieCount,
             hasInstagramSession: lhs.hasInstagramSession || rhs.hasInstagramSession,
             hasXiaohongshuSession: lhs.hasXiaohongshuSession || rhs.hasXiaohongshuSession,
             hasYouTubeSession: lhs.hasYouTubeSession || rhs.hasYouTubeSession,
+            hasBilibiliSession: lhs.hasBilibiliSession || rhs.hasBilibiliSession,
+            hasDouyinSession: lhs.hasDouyinSession || rhs.hasDouyinSession,
             updatedAt: [lhs.updatedAt, rhs.updatedAt].compactMap { $0 }.max()
         )
     }
