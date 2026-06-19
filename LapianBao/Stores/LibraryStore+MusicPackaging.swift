@@ -29,16 +29,24 @@ extension LibraryStore {
         libraryURL: URL
     ) -> [LocalMusicAsset] {
         let packageRoot = Self.nonRecognizedMusicPackageFolder(in: libraryURL)
-        Self.migrateLegacyNonRecognizedMusicPackageIfNeeded(
+        let migratedPackagePaths = Self.migrateLegacyNonRecognizedMusicPackageIfNeeded(
             libraryURL: libraryURL,
             packageRoot: packageRoot
         )
-        guard !assets.isEmpty else { return assets }
+        if !migratedPackagePaths.isEmpty {
+            updateMusicDownloadJobPaths(migratedPackagePaths)
+        }
+        let restoredAssets = restorePackagedMusicDownloadsIfNeeded(
+            libraryURL: libraryURL,
+            packageRoot: packageRoot
+        )
+        guard !assets.isEmpty else { return restoredAssets }
 
         let recognizedLookup = recognizedMusicDownloadLookup()
         let packageRootPath = packageRoot.standardizedFileURL.path
         let packageRootPrefix = packageRootPath.hasSuffix("/") ? packageRootPath : packageRootPath + "/"
-        var visibleAssets: [LocalMusicAsset] = []
+        var visibleAssets: [LocalMusicAsset] = restoredAssets
+        var visiblePaths = Set(restoredAssets.map(\.filePath))
         var movedPaths: [String: String] = [:]
 
         for asset in assets {
@@ -48,7 +56,9 @@ extension LibraryStore {
             }
 
             if recognizedLookup.shouldKeep(asset) {
-                visibleAssets.append(asset)
+                if visiblePaths.insert(asset.filePath).inserted {
+                    visibleAssets.append(asset)
+                }
                 continue
             }
 
@@ -72,24 +82,14 @@ extension LibraryStore {
     }
 
     private func recognizedMusicDownloadLookup() -> RecognizedMusicDownloadLookup {
-        let recognizedSongKeys = recognizedHomepageMusicSongKeys()
         let jobs = musicDownloadJobs.filter { job in
-            recognizedSongKeys.contains(job.songKey) || Self.isActiveDownloadStatus(job.status)
+            if Self.isActiveDownloadStatus(job.status) { return true }
+            if case .succeeded = job.status { return true }
+            return job.filePath.map { FileManager.default.fileExists(atPath: $0) } ?? false
         }
         return RecognizedMusicDownloadLookup(jobs: jobs, filenameCandidates: { [weak self] job in
             self?.musicDownloadFilenameCandidates(for: job) ?? []
         })
-    }
-
-    private func recognizedHomepageMusicSongKeys() -> Set<String> {
-        let videoPaths = Set(videos.map(\.url.path))
-        var keys = Set<String>()
-        for (path, songs) in musicsByVideoPath where videoPaths.contains(path) {
-            for song in songs where Self.hasRecognizedTitleAndArtist(song) {
-                keys.insert("\(song.title)|\(song.artist)")
-            }
-        }
-        return keys
     }
 
     private func moveMusicAssetToNonRecognizedPackage(
@@ -130,33 +130,168 @@ extension LibraryStore {
     }
 
     private func finishPackagingMovedMusicFiles(_ movedPaths: [String: String]) {
-        for (oldPath, newPath) in movedPaths {
+        for (oldPath, _) in movedPaths {
             musicsByVideoPath.removeValue(forKey: oldPath)
             musicDetectionStatusByVideoPath.removeValue(forKey: oldPath)
             localMusicWaveformSamplesByPath.removeValue(forKey: oldPath)
             localMusicWaveformTasks[oldPath]?.cancel()
             localMusicWaveformTasks[oldPath] = nil
             knownLocalResourcePaths.remove(oldPath)
-
             let normalizedOldPath = Self.normalizedLocalFilePath(oldPath)
-            for index in musicDownloadJobs.indices {
-                guard let filePath = musicDownloadJobs[index].filePath,
-                      Self.normalizedLocalFilePath(filePath) == normalizedOldPath
-                else { continue }
-                musicDownloadJobs[index].filePath = newPath
-            }
+            musicFileDurationsByPath.removeValue(forKey: normalizedOldPath)
+            musicFileDurationTasks[normalizedOldPath]?.cancel()
+            musicFileDurationTasks[normalizedOldPath] = nil
         }
         saveProjectData()
+    }
+
+    @discardableResult
+    private func restorePackagedMusicDownloadsIfNeeded(
+        libraryURL: URL,
+        packageRoot: URL
+    ) -> [LocalMusicAsset] {
+        let packageRootPath = packageRoot.standardizedFileURL.path
+        let packageRootPrefix = packageRootPath.hasSuffix("/") ? packageRootPath : packageRootPath + "/"
+        let musicRoot = Self.mediaFolder(in: libraryURL, named: Self.musicExportFolderName)
+        let packageFileLookup = Self.musicPackageFileLookup(in: packageRoot)
+        var restoredAssets: [LocalMusicAsset] = []
+        var movedPaths: [String: String] = [:]
+
+        for index in musicDownloadJobs.indices {
+            let sourceURL: URL?
+            if let filePath = musicDownloadJobs[index].filePath,
+               Self.normalizedLocalFilePath(filePath).hasPrefix(packageRootPrefix),
+               FileManager.default.fileExists(atPath: filePath) {
+                sourceURL = URL(fileURLWithPath: filePath)
+            } else {
+                sourceURL = packagedMusicDownloadURL(
+                    for: musicDownloadJobs[index],
+                    packageFileLookup: packageFileLookup
+                )
+            }
+            guard let sourceURL else { continue }
+
+            do {
+                try FileManager.default.createDirectory(at: musicRoot, withIntermediateDirectories: true)
+                let destinationURL = Self.availableMusicPackageURL(for: sourceURL, packageRoot: musicRoot)
+                try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+                musicDownloadJobs[index].filePath = destinationURL.path
+                musicDownloadJobs[index].status = .succeeded(destinationURL.lastPathComponent)
+                musicDownloadJobs[index].downloadProgress = 1
+                movedPaths[sourceURL.path] = destinationURL.path
+                restoredAssets.append(restoredMusicAsset(for: musicDownloadJobs[index], fileURL: destinationURL))
+            } catch {
+                continue
+            }
+        }
+
+        guard !movedPaths.isEmpty else { return restoredAssets }
+        Self.removeEmptyDirectories(under: packageRoot, preserving: [])
+        updateMovedMusicMetadataPaths(movedPaths)
+        saveProjectData()
+        return restoredAssets
+    }
+
+    private func packagedMusicDownloadURL(
+        for job: MusicDownloadJob,
+        packageFileLookup: MusicPackageFileLookup
+    ) -> URL? {
+        for candidate in musicDownloadFilenameCandidates(for: job) {
+            if let url = packageFileLookup.urlByFilename[candidate] {
+                return url
+            }
+
+            let stem = URL(fileURLWithPath: candidate).deletingPathExtension().lastPathComponent
+            guard !stem.isEmpty else { continue }
+            if let url = packageFileLookup.urlByStem[stem] {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private func restoredMusicAsset(for job: MusicDownloadJob, fileURL: URL) -> LocalMusicAsset {
+        let values = try? fileURL.resourceValues(forKeys: [
+            .fileSizeKey,
+            .creationDateKey,
+            .contentModificationDateKey
+        ])
+        let song = Self.musicRecognitionItem(fromSongKey: job.songKey, tags: [])
+        let filenameTitle = fileURL.deletingPathExtension().lastPathComponent
+        let title = song?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayTitle = title.flatMap { $0.isEmpty ? nil : $0 } ?? filenameTitle
+        let tags = MusicRecognitionItem.cleanedMusicTags(
+            song?.displayTags ?? [],
+            title: song?.title ?? displayTitle,
+            artist: song?.artist ?? ""
+        )
+        let normalizedPath = Self.normalizedLocalFilePath(fileURL.path)
+        return LocalMusicAsset(
+            filePath: fileURL.path,
+            title: displayTitle,
+            fileExtension: fileURL.pathExtension.lowercased(),
+            role: Self.localMusicRole(for: job.type),
+            tags: tags,
+            duration: musicFileDurationsByPath[normalizedPath] ?? 0,
+            fileSize: Int64(values?.fileSize ?? 0),
+            createdAt: values?.creationDate ?? job.createdAt,
+            modifiedAt: values?.contentModificationDate
+        )
+    }
+
+    private func updateMusicDownloadJobPaths(_ movedPaths: [String: String]) {
+        guard !movedPaths.isEmpty else { return }
+        var didChange = false
+        let normalizedMovedPaths = Dictionary(uniqueKeysWithValues: movedPaths.map {
+            (Self.normalizedLocalFilePath($0.key), $0.value)
+        })
+        for index in musicDownloadJobs.indices {
+            guard let filePath = musicDownloadJobs[index].filePath,
+                  let newPath = normalizedMovedPaths[Self.normalizedLocalFilePath(filePath)]
+            else { continue }
+            musicDownloadJobs[index].filePath = newPath
+            didChange = true
+        }
+        if didChange {
+            updateMovedMusicMetadataPaths(movedPaths)
+            saveProjectData()
+        }
+    }
+
+    private func updateMovedMusicMetadataPaths(_ movedPaths: [String: String]) {
+        for (oldPath, newPath) in movedPaths {
+            if let songs = musicsByVideoPath.removeValue(forKey: oldPath) {
+                musicsByVideoPath[newPath] = songs
+            }
+            if let status = musicDetectionStatusByVideoPath.removeValue(forKey: oldPath) {
+                musicDetectionStatusByVideoPath[newPath] = status
+            }
+            if let samples = localMusicWaveformSamplesByPath.removeValue(forKey: oldPath) {
+                localMusicWaveformSamplesByPath[newPath] = samples
+            }
+            localMusicWaveformTasks[oldPath]?.cancel()
+            localMusicWaveformTasks[oldPath] = nil
+            knownLocalResourcePaths.remove(oldPath)
+            knownLocalResourcePaths.insert(newPath)
+
+            let oldKey = Self.normalizedLocalFilePath(oldPath)
+            let newKey = Self.normalizedLocalFilePath(newPath)
+            if let duration = musicFileDurationsByPath.removeValue(forKey: oldKey) {
+                musicFileDurationsByPath[newKey] = duration
+            }
+            musicFileDurationTasks[oldKey]?.cancel()
+            musicFileDurationTasks[oldKey] = nil
+        }
     }
 
     nonisolated static func migrateLegacyNonRecognizedMusicPackageIfNeeded(
         libraryURL: URL,
         packageRoot: URL
-    ) {
+    ) -> [String: String] {
         let legacyRoot = legacyNonRecognizedMusicPackageFolder(in: libraryURL)
         guard legacyRoot.standardizedFileURL.path != packageRoot.standardizedFileURL.path,
               directoryExists(legacyRoot)
-        else { return }
+        else { return [:] }
 
         let fm = FileManager.default
         try? fm.createDirectory(at: packageRoot, withIntermediateDirectories: true)
@@ -165,17 +300,51 @@ extension LibraryStore {
             includingPropertiesForKeys: [.isRegularFileKey],
             options: [.skipsHiddenFiles]
         )?.compactMap { $0 as? URL } ?? []
+        var movedPaths: [String: String] = [:]
 
         for url in urls {
             let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
             guard values?.isRegularFile == true else { continue }
             let destinationURL = availableMusicPackageURL(for: url, packageRoot: packageRoot)
-            try? fm.moveItem(at: url, to: destinationURL)
+            do {
+                try fm.moveItem(at: url, to: destinationURL)
+                movedPaths[url.path] = destinationURL.path
+            } catch {
+                continue
+            }
         }
 
         removeEmptyDirectories(under: legacyRoot, preserving: [])
         try? fm.removeItem(at: legacyRoot)
+        return movedPaths
     }
+
+    static func musicPackageFileLookup(in packageRoot: URL) -> MusicPackageFileLookup {
+        let fm = FileManager.default
+        guard directoryExists(packageRoot) else { return MusicPackageFileLookup() }
+        let urls = fm.enumerator(
+            at: packageRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )?.compactMap { $0 as? URL } ?? []
+
+        var lookup = MusicPackageFileLookup()
+        for url in urls {
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values?.isRegularFile == true else { continue }
+            lookup.urlByFilename[url.lastPathComponent] = lookup.urlByFilename[url.lastPathComponent] ?? url
+            let stem = url.deletingPathExtension().lastPathComponent
+            if !stem.isEmpty {
+                lookup.urlByStem[stem] = lookup.urlByStem[stem] ?? url
+            }
+        }
+        return lookup
+    }
+}
+
+struct MusicPackageFileLookup: Sendable {
+    var urlByFilename: [String: URL] = [:]
+    var urlByStem: [String: URL] = [:]
 }
 
 private struct RecognizedMusicDownloadLookup {

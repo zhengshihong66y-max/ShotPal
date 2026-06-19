@@ -32,7 +32,8 @@
 - **音频导出路径：** 声音片段仍导出到项目导出目录下的音效/音频文件夹，不受独立音效管理页删除影响。
 - **账号登录：** 设置页支持 Instagram、小红书、YouTube、Bilibili 和抖音，点击后使用默认浏览器打开登录页，并优先识别默认浏览器或常见浏览器的登录态。
 - **音乐识别结果：** 音乐界面只保留主页中能够识别出来的音乐，下载完成后继续关联对应识别结果。
-- **非识别音乐打包：** 不是由主页视频识别出来的音乐文件会移入素材库同级的 `素材库名-非识别音乐打包` 文件夹，不再留在素材库内部，也不进入音乐工作区列表。
+- **下载音乐保留：** 由主页识别结果触发下载的原曲和伴奏会保留或恢复到素材库内的 `音乐` 文件夹，并继续被音乐界面识别、播放和生成波形。
+- **非识别音乐打包：** 没有下载任务关联的外部音乐文件会移入素材库同级的 `素材库名-非识别音乐打包` 文件夹，不再留在素材库内部，也不进入音乐工作区列表。
 
 ## 交付前验证
 
@@ -49,3 +50,5 @@ xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -configuration Debug -
 
 - `904a898 feat: prepare delivery 1.0 branch`
 - `732bc6b chore: remove audio management workspace`
+- `67669f8 docs: split delivery readme`
+- `0fda347 fix: package external music and repair music previews`
