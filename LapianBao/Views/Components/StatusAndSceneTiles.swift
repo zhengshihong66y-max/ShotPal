@@ -137,6 +137,18 @@ struct RecognitionProgressRow: View {
     }
 }
 
+struct RecognitionFailureIndicator: View {
+    var minHeight: CGFloat = 32
+
+    var body: some View {
+        Text("!")
+            .font(.system(size: 18, weight: .heavy, design: .rounded))
+            .foregroundStyle(Color.red.opacity(0.88))
+            .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .center)
+            .accessibilityLabel("识别失败")
+    }
+}
+
 func normalizedProgressFraction(_ progress: Double) -> Double {
     guard progress.isFinite else { return 0 }
     return min(1, max(0, progress))

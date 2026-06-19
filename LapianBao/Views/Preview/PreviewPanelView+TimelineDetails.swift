@@ -75,14 +75,8 @@ extension PreviewPanelView {
     @ViewBuilder
     func contentRecognitionStartBlock(for video: VideoItem, status: TranscriptJobStatus?) -> some View {
         if case let .failed(message) = status {
-            Label(message, systemImage: "exclamationmark.triangle")
-                .font(.caption)
-                .foregroundStyle(Color.red.opacity(0.86))
-                .multilineTextAlignment(.center)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.white.opacity(0.045))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            RecognitionFailureIndicator(minHeight: 34)
+                .help(message.isEmpty ? "识别失败" : message)
         } else {
             EmptyView()
         }
@@ -102,10 +96,8 @@ extension PreviewPanelView {
             } else if segments.isEmpty {
                 VStack(spacing: 10) {
                     if case let .failed(message) = status {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(Color.red.opacity(0.86))
-                            .multilineTextAlignment(.center)
+                        RecognitionFailureIndicator(minHeight: 28)
+                            .help(message.isEmpty ? "识别失败" : message)
                     } else {
                         AppEmptyState(
                             title: "暂无字幕",

@@ -129,8 +129,8 @@ extension ContentView {
             return message
         case .completed:
             return "已完成"
-        case .failed(let message):
-            return message.isEmpty ? "失败" : message
+        case .failed:
+            return "失败"
         }
     }
 

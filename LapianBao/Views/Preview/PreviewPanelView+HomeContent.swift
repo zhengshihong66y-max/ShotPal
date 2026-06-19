@@ -226,26 +226,11 @@ extension PreviewPanelView {
 
             if let message = libraryStore.audioClipExportErrorByVideoPath[video.url.path],
                libraryStore.audioClipExportProgressByVideoPath[video.url.path] == nil {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(message)
-                        .font(.caption2.weight(.medium))
-                        .lineLimit(2)
-                    Spacer(minLength: 0)
-                    Button {
+                RecognitionFailureIndicator(minHeight: 28)
+                    .help(message)
+                    .onTapGesture {
                         libraryStore.audioClipExportErrorByVideoPath[video.url.path] = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .semibold))
                     }
-                    .buttonStyle(.plain)
-                    .help("关闭提示")
-                }
-                .foregroundStyle(.red.opacity(0.92))
-                .padding(9)
-                .background(.red.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
             if clips.isEmpty {
@@ -435,13 +420,9 @@ extension PreviewPanelView {
                 if !songs.isEmpty {
                     homeMusicRows(songs: songs, videoPath: path)
                 }
-            } else if case .failed = status {
-                AppEmptyState(
-                    title: "暂无音乐识别结果",
-                    style: .compact,
-                    minHeight: 82,
-                    showsBackground: true
-                )
+            } else if case let .failed(message) = status {
+                RecognitionFailureIndicator(minHeight: 82)
+                    .help(message.isEmpty ? "识别失败" : message)
             } else if status == .completed, songs.isEmpty {
                 AppEmptyState(
                     title: "暂无音乐识别结果",

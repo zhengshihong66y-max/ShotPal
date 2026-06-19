@@ -1021,13 +1021,9 @@ extension PreviewPanelView {
                     controller.seekToSeconds(song.detectedAt)
                 }
             }
-        } else if case .failed = status {
-            AppEmptyState(
-                title: "暂无音乐识别结果",
-                style: .compact,
-                minHeight: 82,
-                showsBackground: true
-            )
+        } else if case let .failed(message) = status {
+            RecognitionFailureIndicator(minHeight: 82)
+                .help(message.isEmpty ? "识别失败" : message)
         } else if status == .completed, songs.isEmpty {
             AppEmptyState(
                 title: "暂无音乐识别结果",
