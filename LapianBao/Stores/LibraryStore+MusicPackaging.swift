@@ -10,6 +10,16 @@ import Foundation
 
 extension LibraryStore {
     nonisolated static func nonRecognizedMusicPackageFolder(in libraryURL: URL) -> URL {
+        let libraryName = libraryURL.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let packageName = libraryName.isEmpty
+            ? nonRecognizedMusicPackageFolderName
+            : "\(libraryName)-\(nonRecognizedMusicPackageFolderName)"
+        return libraryURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(packageName, isDirectory: true)
+    }
+
+    nonisolated static func legacyNonRecognizedMusicPackageFolder(in libraryURL: URL) -> URL {
         mediaFolder(in: libraryURL, named: musicExportFolderName)
             .appendingPathComponent(nonRecognizedMusicPackageFolderName, isDirectory: true)
     }
@@ -18,10 +28,14 @@ extension LibraryStore {
         _ assets: [LocalMusicAsset],
         libraryURL: URL
     ) -> [LocalMusicAsset] {
+        let packageRoot = Self.nonRecognizedMusicPackageFolder(in: libraryURL)
+        Self.migrateLegacyNonRecognizedMusicPackageIfNeeded(
+            libraryURL: libraryURL,
+            packageRoot: packageRoot
+        )
         guard !assets.isEmpty else { return assets }
 
         let recognizedLookup = recognizedMusicDownloadLookup()
-        let packageRoot = Self.nonRecognizedMusicPackageFolder(in: libraryURL)
         let packageRootPath = packageRoot.standardizedFileURL.path
         let packageRootPrefix = packageRootPath.hasSuffix("/") ? packageRootPath : packageRootPath + "/"
         var visibleAssets: [LocalMusicAsset] = []
@@ -133,6 +147,34 @@ extension LibraryStore {
             }
         }
         saveProjectData()
+    }
+
+    nonisolated static func migrateLegacyNonRecognizedMusicPackageIfNeeded(
+        libraryURL: URL,
+        packageRoot: URL
+    ) {
+        let legacyRoot = legacyNonRecognizedMusicPackageFolder(in: libraryURL)
+        guard legacyRoot.standardizedFileURL.path != packageRoot.standardizedFileURL.path,
+              directoryExists(legacyRoot)
+        else { return }
+
+        let fm = FileManager.default
+        try? fm.createDirectory(at: packageRoot, withIntermediateDirectories: true)
+        let urls = fm.enumerator(
+            at: legacyRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )?.compactMap { $0 as? URL } ?? []
+
+        for url in urls {
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values?.isRegularFile == true else { continue }
+            let destinationURL = availableMusicPackageURL(for: url, packageRoot: packageRoot)
+            try? fm.moveItem(at: url, to: destinationURL)
+        }
+
+        removeEmptyDirectories(under: legacyRoot, preserving: [])
+        try? fm.removeItem(at: legacyRoot)
     }
 }
 

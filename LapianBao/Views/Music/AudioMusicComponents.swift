@@ -71,9 +71,18 @@ func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {
     guard
         let job,
         case .succeeded = job.status,
-        let filePath = job.filePath
+        let filePath = job.filePath,
+        FileManager.default.fileExists(atPath: filePath)
     else { return nil }
     return URL(fileURLWithPath: filePath)
+}
+
+func musicPreviewTimeText(duration: Double, progress: Double, isActive: Bool) -> String? {
+    guard duration.isFinite, duration > 0 else { return nil }
+    let totalText = clockText(duration)
+    guard isActive else { return totalText }
+    let current = duration * min(1, max(0, progress))
+    return "\(clockText(current)) / \(totalText)"
 }
 
 func hasCompletedMusicDownload(_ jobs: [MusicDownloadJob]) -> Bool {
@@ -928,14 +937,8 @@ struct MusicDownloadWaveformPanel: View {
 
     private var audioTimeText: String? {
         let duration = effectiveAudioDuration
-        guard duration > 0 else { return nil }
-
-        if isPreviewActive {
-            let progress = min(1, max(0, previewScrubProgress ?? previewProgress))
-            return clockText(duration * progress)
-        }
-
-        return clockText(duration)
+        let progress = previewScrubProgress ?? previewProgress
+        return musicPreviewTimeText(duration: duration, progress: progress, isActive: isPreviewActive)
     }
 
     var body: some View {
@@ -1185,7 +1188,10 @@ struct MusicDownloadWaveformPanel: View {
         ) { time in
             let elapsed = time.seconds
             guard elapsed.isFinite else { return }
-            let duration = item.duration.seconds
+            let itemDuration = item.duration.seconds
+            let duration = itemDuration.isFinite && itemDuration > 0
+                ? itemDuration
+                : loadedAudioDuration
             if duration.isFinite, duration > 0 {
                 previewDuration = duration
                 previewProgress = min(1, max(0, elapsed / duration))
@@ -1220,6 +1226,10 @@ struct MusicDownloadWaveformPanel: View {
             previewDuration = 0
         }
         previewScrubProgress = nil
+
+        if libraryStore.activeMusicPreviewJobID == job?.id {
+            libraryStore.activeMusicPreviewJobID = nil
+        }
 
         if let previewEndObserver {
             NotificationCenter.default.removeObserver(previewEndObserver)
@@ -1442,14 +1452,8 @@ struct MusicDownloadStatusView: View {
 
     private var audioTimeText: String? {
         let duration = effectiveAudioDuration
-        guard duration > 0 else { return nil }
-
-        if isPreviewActive {
-            let progress = min(1, max(0, previewScrubProgress ?? previewProgress))
-            return clockText(duration * progress)
-        }
-
-        return clockText(duration)
+        let progress = previewScrubProgress ?? previewProgress
+        return musicPreviewTimeText(duration: duration, progress: progress, isActive: isPreviewActive)
     }
 
     var body: some View {
@@ -1576,6 +1580,9 @@ struct MusicDownloadStatusView: View {
         }
         .itemProviderDrag(audioFileDragProvider)
         .help(canPreviewAudio ? (isPreviewing ? "暂停\(job.type.label)预览，可拖出音频文件" : "播放\(job.type.label)预览，可拖出音频文件") : (job.filePath ?? ""))
+        .onAppear {
+            requestDownloadedMediaInfoIfNeeded()
+        }
         .onDisappear {
             stopAudioPreview()
             if libraryStore.activeMusicPreviewJobID == job.id {
@@ -1585,8 +1592,10 @@ struct MusicDownloadStatusView: View {
         .onChange(of: job.filePath) { _, _ in
             stopAudioPreview()
             loadedAudioDuration = 0
+            requestDownloadedMediaInfoIfNeeded()
         }
         .onChange(of: job.status) { _, _ in
+            requestDownloadedMediaInfoIfNeeded()
             if !canPreviewAudio {
                 stopAudioPreview()
             }
@@ -1647,6 +1656,14 @@ struct MusicDownloadStatusView: View {
         }
     }
 
+    private func requestDownloadedMediaInfoIfNeeded() {
+        guard completedMusicFileURL(for: job) != nil else { return }
+        libraryStore.ensureMusicDownloadWaveformIfNeeded(job)
+        if let filePath = job.filePath {
+            libraryStore.ensureMusicFileDurationIfNeeded(filePath: filePath)
+        }
+    }
+
     private func sanitizedMusicFilenameStem(_ name: String) -> String {
         let forbidden = CharacterSet(charactersIn: "/\\:?%*|\"<>")
         let sanitized = name
@@ -1687,7 +1704,10 @@ struct MusicDownloadStatusView: View {
         ) { time in
             let elapsed = time.seconds
             guard elapsed.isFinite else { return }
-            let duration = item.duration.seconds
+            let itemDuration = item.duration.seconds
+            let duration = itemDuration.isFinite && itemDuration > 0
+                ? itemDuration
+                : loadedAudioDuration
             if duration.isFinite, duration > 0 {
                 previewDuration = duration
                 previewProgress = min(1, max(0, elapsed / duration))
@@ -1722,6 +1742,10 @@ struct MusicDownloadStatusView: View {
             previewDuration = 0
         }
         previewScrubProgress = nil
+
+        if libraryStore.activeMusicPreviewJobID == job.id {
+            libraryStore.activeMusicPreviewJobID = nil
+        }
 
         if let previewEndObserver {
             NotificationCenter.default.removeObserver(previewEndObserver)

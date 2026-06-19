@@ -739,7 +739,7 @@ extension LibraryStore {
         let musicPaths = Set(visibleMusic.map(\.filePath))
         let audioPaths = Set(snapshot.audio.map(\.filePath))
         knownLocalResourcePaths = musicPaths.union(audioPaths)
-        hydrateLocalWaveformCaches(from: snapshot, libraryURL: libraryURL)
+        hydrateLocalWaveformCaches(from: visibleSnapshot, libraryURL: libraryURL)
         seedMusicFileDurations(from: visibleMusic)
 
         let previousMusicAssets = localMusicAssets
