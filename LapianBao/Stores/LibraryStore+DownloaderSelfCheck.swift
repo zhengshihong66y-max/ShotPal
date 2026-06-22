@@ -25,14 +25,16 @@ extension LibraryStore {
         for path in localYTDLPCandidatePaths() {
             guard FileManager.default.isExecutableFile(atPath: path) else { continue }
             let url = URL(fileURLWithPath: path)
-            let result = ExternalProcessRunner.run(
+            let versionResult = ExternalProcessRunner.run(
                 executableURL: url,
                 arguments: ["--version"],
                 environment: downloaderProcessEnvironment(),
                 timeout: timeout
             )
-            guard result.succeeded else { continue }
-            return (url, firstNonEmptyLine(in: result.outputText))
+            guard versionResult.succeeded,
+                  isOperationalYTDLP(at: url, timeout: timeout)
+            else { continue }
+            return (url, firstNonEmptyLine(in: versionResult.outputText))
         }
         return nil
     }
@@ -43,9 +45,6 @@ extension LibraryStore {
             paths.append(appManagedPath)
         }
         paths += [
-            // Conda 版保留为回退，适合 Homebrew Python 兼容性异常的机器。
-            "/opt/miniconda3/bin/yt-dlp",
-            "/opt/anaconda3/bin/yt-dlp",
             // Homebrew 版常见，但如果 Python 环境异常会卡住；下面会做短超时健康检查。
             "/opt/homebrew/bin/yt-dlp",
             "/usr/local/bin/yt-dlp",
@@ -73,9 +72,20 @@ extension LibraryStore {
     }
 
     nonisolated static func isResponsiveYTDLP(at url: URL, timeout: TimeInterval = 5) -> Bool {
-        ExternalProcessRunner.run(
+        let versionResult = ExternalProcessRunner.run(
             executableURL: url,
             arguments: ["--version"],
+            environment: downloaderProcessEnvironment(),
+            timeout: timeout
+        )
+        guard versionResult.succeeded else { return false }
+        return isOperationalYTDLP(at: url, timeout: timeout)
+    }
+
+    nonisolated static func isOperationalYTDLP(at url: URL, timeout: TimeInterval = 5) -> Bool {
+        ExternalProcessRunner.run(
+            executableURL: url,
+            arguments: ["--help"],
             environment: downloaderProcessEnvironment(),
             timeout: timeout
         ).succeeded
@@ -105,6 +115,7 @@ extension LibraryStore {
 
     nonisolated enum DownloaderSelfCheckRepairMode: Sendable {
         case afterFailure
+        case checkLatestAndRepair
         case always
     }
 
@@ -240,12 +251,13 @@ extension LibraryStore {
             let deadline: Date? = nil
             publish(0.04, "正在检查 yt-dlp 可用性")
             _ = removeStaleAppManagedYTDLPArtifactsIfPossible()
+            _ = removeUnresponsiveAppManagedYTDLP()
 
             let currentYTDLPInfo = localYTDLPInfo()
             let currentYTDLP = currentYTDLPInfo?.url
             let currentVersion = currentYTDLPInfo?.version
 
-            if repairMode != .always,
+            if repairMode == .afterFailure,
                currentYTDLP != nil {
                 let versionText = currentVersion ?? "未知版本"
                 publish(1.0, "yt-dlp 可用")
@@ -368,12 +380,12 @@ extension LibraryStore {
                     : "yt-dlp 最新版替换未完成；当前版本仍可用：\(currentVersion ?? "未知版本")"
             }
             let report = DownloaderSelfCheckReport(
-                status: installSucceeded || currentYTDLP != nil ? .succeeded : .failed,
+                status: installSucceeded || (repairMode == .afterFailure && currentYTDLP != nil) ? .succeeded : .failed,
                 checkedAt: startedAt,
                 message: message,
                 ytdlpPath: installSucceeded ? managedYTDLP?.path : currentYTDLP?.path,
                 ytdlpVersion: installSucceeded ? installedVersion : currentVersion,
-                problemLocation: installSucceeded || currentYTDLP != nil ? nil : downloaderProblemYTDLP,
+                problemLocation: installSucceeded || (repairMode == .afterFailure && currentYTDLP != nil) ? nil : downloaderProblemYTDLP,
                 repairSummary: repairResult.summary,
                 progress: 1
             )

@@ -104,7 +104,8 @@ extension LibraryStore {
             musicsByVideoPath: musicsByVideoPath.isEmpty ? nil : musicsByVideoPath,
             musicDownloadJobs: musicDownloadJobs.isEmpty ? nil : persistedMusicDownloadJobs()
         )
-        return dataFile
+        guard let libraryURL else { return dataFile }
+        return Self.projectDataFile(dataFile, storingRelativeTo: libraryURL)
     }
 
     nonisolated static func writeProjectData(_ dataFile: ProjectDataFile, to url: URL) throws {
@@ -119,6 +120,7 @@ extension LibraryStore {
         projectDataDirty = false
         guard
             let url = projectDataURL(),
+            let libraryURL,
             let decoded = Self.readProjectData(from: url)
         else {
             clearProjectData()
@@ -126,8 +128,9 @@ extension LibraryStore {
             runStartupAutomationIfNeeded()
             return
         }
-        let shouldPersistMigration = !pendingVideoPathRemap.isEmpty
-        let migrated = migrateProjectDataVideoPaths(decoded)
+        let restored = Self.projectDataFile(decoded, resolvingRelativeTo: libraryURL)
+        let shouldPersistMigration = restored.didChange || !pendingVideoPathRemap.isEmpty
+        let migrated = migrateProjectDataVideoPaths(restored.dataFile)
         projectDataLoadState = .loaded
         applyProjectData(migrated)
         projectDataDirty = false
@@ -144,13 +147,13 @@ extension LibraryStore {
         projectDataLoadState = .loading
         projectDataDirty = false
         clearProjectData()
-        guard let url = projectDataURL() else {
+        guard let url = projectDataURL(), let libraryURL else {
             projectDataLoadState = .loaded
             return
         }
 
         let priority: TaskPriority = delayNanoseconds > 0 ? .utility : .userInitiated
-        projectLoadTask = Task.detached(priority: priority) { [weak self, url] in
+        projectLoadTask = Task.detached(priority: priority) { [weak self, url, libraryURL] in
             if delayNanoseconds > 0 {
                 try? await Task.sleep(nanoseconds: delayNanoseconds)
                 guard !Task.isCancelled else { return }
@@ -160,8 +163,9 @@ extension LibraryStore {
             await MainActor.run { [weak self] in
                 guard let self, self.projectLoadGeneration == generation else { return }
                 if let decoded {
-                    let shouldPersistMigration = !self.pendingVideoPathRemap.isEmpty
-                    let migrated = self.migrateProjectDataVideoPaths(decoded)
+                    let restored = Self.projectDataFile(decoded, resolvingRelativeTo: libraryURL)
+                    let shouldPersistMigration = restored.didChange || !self.pendingVideoPathRemap.isEmpty
+                    let migrated = self.migrateProjectDataVideoPaths(restored.dataFile)
                     self.projectDataLoadState = .loaded
                     self.applyProjectData(migrated)
                     self.projectDataDirty = false
@@ -181,6 +185,199 @@ extension LibraryStore {
 
     nonisolated static func readProjectData(from url: URL) -> ProjectDataFile? {
         ProjectRepository.readProjectData(from: url)
+    }
+
+    nonisolated static func projectDataFile(
+        _ dataFile: ProjectDataFile,
+        storingRelativeTo libraryURL: URL
+    ) -> ProjectDataFile {
+        var stored = dataFile
+
+        stored.sampledFrames = dataFile.sampledFrames.map { frame in
+            var item = frame
+            item.videoPath = projectRelativePath(item.videoPath, libraryURL: libraryURL)
+            return item
+        }
+        stored.annotations = dataFile.annotations.map { annotation in
+            var item = annotation
+            item.videoPath = projectRelativePath(item.videoPath, libraryURL: libraryURL)
+            return item
+        }
+        stored.audioClips = dataFile.audioClips.map { clip in
+            var item = clip
+            item.videoPath = projectRelativePath(item.videoPath, libraryURL: libraryURL)
+            item.filePath = item.filePath.map { projectRelativePath($0, libraryURL: libraryURL) }
+            return item
+        }
+        stored.transcripts = projectDataDictionary(dataFile.transcripts, libraryURL: libraryURL, makeKey: projectRelativePath).mapValues { segments in
+            segments.map { segment in
+                var item = segment
+                item.videoPath = projectRelativePath(item.videoPath, libraryURL: libraryURL)
+                return item
+            }
+        }
+        stored.transcriptExports = dataFile.transcriptExports?.map { export in
+            var item = export
+            item.videoPath = projectRelativePath(item.videoPath, libraryURL: libraryURL)
+            item.filePath = projectRelativePath(item.filePath, libraryURL: libraryURL)
+            return item
+        }
+        if let musicsByVideoPath = dataFile.musicsByVideoPath {
+            stored.musicsByVideoPath = projectDataDictionary(musicsByVideoPath, libraryURL: libraryURL, makeKey: projectRelativePath)
+        }
+        stored.musicDownloadJobs = dataFile.musicDownloadJobs?.map { job in
+            var item = job
+            item.filePath = item.filePath.map { projectRelativePath($0, libraryURL: libraryURL) }
+            return item
+        }
+
+        return stored
+    }
+
+    nonisolated static func projectDataFile(
+        _ dataFile: ProjectDataFile,
+        resolvingRelativeTo libraryURL: URL
+    ) -> (dataFile: ProjectDataFile, didChange: Bool) {
+        var restored = dataFile
+        var didChange = false
+
+        func resolve(_ path: String) -> String {
+            let result = projectAbsolutePath(path, libraryURL: libraryURL)
+            didChange = didChange || result != path
+            return result
+        }
+
+        restored.sampledFrames = dataFile.sampledFrames.map { frame in
+            var item = frame
+            item.videoPath = resolve(item.videoPath)
+            return item
+        }
+        restored.annotations = dataFile.annotations.map { annotation in
+            var item = annotation
+            item.videoPath = resolve(item.videoPath)
+            return item
+        }
+        restored.audioClips = dataFile.audioClips.map { clip in
+            var item = clip
+            item.videoPath = resolve(item.videoPath)
+            item.filePath = item.filePath.map(resolve)
+            return item
+        }
+        restored.transcripts = projectDataDictionary(dataFile.transcripts, makeKey: resolve).mapValues { segments in
+            segments.map { segment in
+                var item = segment
+                item.videoPath = resolve(item.videoPath)
+                return item
+            }
+        }
+        restored.transcriptExports = dataFile.transcriptExports?.map { export in
+            var item = export
+            item.videoPath = resolve(item.videoPath)
+            item.filePath = resolve(item.filePath)
+            return item
+        }
+        if let musicsByVideoPath = dataFile.musicsByVideoPath {
+            restored.musicsByVideoPath = projectDataDictionary(musicsByVideoPath, makeKey: resolve)
+        }
+        restored.musicDownloadJobs = dataFile.musicDownloadJobs?.map { job in
+            var item = job
+            item.filePath = item.filePath.map(resolve)
+            return item
+        }
+
+        return (restored, didChange)
+    }
+
+    nonisolated static func projectRelativePath(_ path: String, libraryURL: URL) -> String {
+        guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return path }
+        return ProjectRepository.relativePath(for: path, base: libraryURL)
+    }
+
+    nonisolated static func projectAbsolutePath(_ path: String, libraryURL: URL) -> String {
+        guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return path }
+        if path.hasPrefix("/") {
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+            if let relocated = relocatedProjectPath(forAbsolutePath: path, libraryURL: libraryURL) {
+                return relocated
+            }
+            return path
+        }
+        return libraryURL.appendingPathComponent(path).standardizedFileURL.path
+    }
+
+    nonisolated static func relocatedProjectPath(forAbsolutePath path: String, libraryURL: URL) -> String? {
+        let components = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        let anchors = Set([
+            videoFolderName,
+            legacyVideoFolderName,
+            imageExportFolderName,
+            legacyImageExportFolderName,
+            soundEffectExportFolderName,
+            legacyAudioExportFolderName,
+            legacySoundEffectExportFolderName,
+            transcriptExportFolderName,
+            legacyTranscriptExportFolderName,
+            musicExportFolderName,
+            legacyMusicExportFolderName,
+            exportRootFolderName,
+            "Imports"
+        ])
+
+        for index in components.indices.reversed() where anchors.contains(components[index]) {
+            let relativeComponents = components[index...]
+            let candidate = relativeComponents.reduce(libraryURL) { partial, component in
+                partial.appendingPathComponent(component)
+            }
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate.standardizedFileURL.path
+            }
+        }
+
+        let filename = URL(fileURLWithPath: path).lastPathComponent
+        guard !filename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        let fallbackRoots = [
+            libraryURL,
+            mediaFolder(in: libraryURL, named: videoFolderName),
+            mediaFolder(in: libraryURL, named: legacyVideoFolderName),
+            mediaFolder(in: libraryURL, named: imageExportFolderName),
+            mediaFolder(in: libraryURL, named: legacyImageExportFolderName),
+            mediaFolder(in: libraryURL, named: soundEffectExportFolderName),
+            mediaFolder(in: libraryURL, named: legacyAudioExportFolderName),
+            mediaFolder(in: libraryURL, named: legacySoundEffectExportFolderName),
+            mediaFolder(in: libraryURL, named: musicExportFolderName),
+            mediaFolder(in: libraryURL, named: legacyMusicExportFolderName),
+            exportFolder(in: libraryURL, named: transcriptExportFolderName),
+            legacyExportFolder(in: libraryURL, named: legacyImageExportFolderName),
+            legacyExportFolder(in: libraryURL, named: legacySoundEffectExportFolderName),
+            legacyExportFolder(in: libraryURL, named: legacyTranscriptExportFolderName),
+            legacyExportFolder(in: libraryURL, named: legacyMusicExportFolderName)
+        ]
+        let matches = fallbackRoots
+            .map { $0.appendingPathComponent(filename).standardizedFileURL }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        return matches.count == 1 ? matches[0].path : nil
+    }
+
+    nonisolated static func projectDataDictionary<Value>(
+        _ dictionary: [String: Value],
+        libraryURL: URL,
+        makeKey: (String, URL) -> String
+    ) -> [String: Value] {
+        projectDataDictionary(dictionary) { makeKey($0, libraryURL) }
+    }
+
+    nonisolated static func projectDataDictionary<Value>(
+        _ dictionary: [String: Value],
+        makeKey: (String) -> String
+    ) -> [String: Value] {
+        var mapped: [String: Value] = [:]
+        for (key, value) in dictionary {
+            mapped[makeKey(key)] = value
+        }
+        return mapped
     }
 
     func clearProjectData() {

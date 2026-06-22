@@ -78,7 +78,6 @@ extension PreviewPanelView {
                 )
         }
         .buttonStyle(.plain)
-        .help(help)
     }
 
     // MARK: – Timeline & content areas
@@ -107,10 +106,8 @@ extension PreviewPanelView {
         if activePreviewTab == .audio {
             HStack(spacing: 8) {
                 Button("In") { setAudioInPoint() }
-                    .help("设置声音 In 点")
 
                 Button("Out") { setAudioOutPoint() }
-                    .help("设置声音 Out 点")
 
                 Divider().frame(height: 14)
 
@@ -124,7 +121,6 @@ extension PreviewPanelView {
                 }
                 .buttonStyle(.plain)
                 .disabled(audioInPoint == nil || audioOutPoint == nil || libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
-                .help("导出选区音频")
 
                 Spacer()
 
@@ -167,7 +163,9 @@ extension PreviewPanelView {
                 sampledFrames: libraryStore.sampledFrames(for: video),
                 activeItemID: activeSceneItemID(for: video),
                 activeProgressTick: nil,
-                openStoryboardBoard: { openStoryboardBoard(video) }
+                openStoryboardBoard: { openStoryboardBoard(video) },
+                exportStoryboard: { exportCurrentStoryboard(for: video) },
+                storyboardExportTitle: storyboardExportButtonTitle(for: video)
             )
             .equatable()
         case .audio:
@@ -203,7 +201,6 @@ extension PreviewPanelView {
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
-                    .help("清除当前声音选区")
                 }
             }
 
@@ -226,8 +223,7 @@ extension PreviewPanelView {
 
             if let message = libraryStore.audioClipExportErrorByVideoPath[video.url.path],
                libraryStore.audioClipExportProgressByVideoPath[video.url.path] == nil {
-                RecognitionFailureIndicator(minHeight: 28)
-                    .help(message)
+                RecognitionFailureIndicator(message: message, minHeight: 28)
                     .onTapGesture {
                         libraryStore.audioClipExportErrorByVideoPath[video.url.path] = nil
                     }
@@ -287,7 +283,6 @@ extension PreviewPanelView {
             }
             .buttonStyle(.plain)
             .disabled(!canExport || isExporting)
-            .help("导出当前声音选区")
         }
         .padding(9)
         .background(.white.opacity(0.075))
@@ -327,7 +322,6 @@ extension PreviewPanelView {
             .onTapGesture {
                 toggleExportAudioClipPlayback(clip)
             }
-            .help(isPlaying ? "暂停声音片段" : "播放声音片段")
             .itemProviderDrag(audioClipDragProvider(for: clip))
 
             exportItemActionColumn(
@@ -357,7 +351,6 @@ extension PreviewPanelView {
         .onAppear {
             libraryStore.loadAudioClipWaveformIfNeeded(clip)
         }
-        .help("选中并跳到该声音片段")
         .itemProviderDrag(audioClipDragProvider(for: clip))
     }
 
@@ -421,8 +414,7 @@ extension PreviewPanelView {
                     homeMusicRows(songs: songs, videoPath: path)
                 }
             } else if case let .failed(message) = status {
-                RecognitionFailureIndicator(minHeight: 82)
-                    .help(message.isEmpty ? "识别失败" : message)
+                RecognitionFailureIndicator(message: message, minHeight: 82)
             } else if status == .completed, songs.isEmpty {
                 AppEmptyState(
                     title: "暂无音乐识别结果",

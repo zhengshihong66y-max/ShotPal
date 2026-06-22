@@ -102,7 +102,6 @@ extension PreviewPanelView {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(0.88))
-        .help(help)
     }
 
     var exportFilterPicker: some View {
@@ -366,7 +365,6 @@ extension PreviewPanelView {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("跳到这张画面")
 
             exportItemActionColumn(
                 showInFinderURL: libraryStore.imageExportURL(for: frame),
@@ -575,7 +573,6 @@ extension PreviewPanelView {
             .onTapGesture {
                 toggleExportAudioClipPlayback(clip)
             }
-            .help(isPlaying ? "暂停声音片段" : "播放导出的声音片段")
             .itemProviderDrag(audioClipDragProvider(for: clip))
 
             exportItemActionColumn(
@@ -629,7 +626,7 @@ extension PreviewPanelView {
                         .foregroundStyle(isFailed ? tint.opacity(0.86) : .white.opacity(0.58))
                 }
 
-                Text(job.errorMessage ?? "正在生成分镜字幕索引")
+                Text(isFailed ? "字幕导出失败：\(job.errorMessage ?? "未知错误")" : "正在生成分镜字幕索引")
                     .font(.caption2)
                     .foregroundStyle(isFailed ? tint.opacity(0.78) : .white.opacity(0.48))
                     .lineLimit(1)
@@ -651,7 +648,6 @@ extension PreviewPanelView {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: tint.opacity(0.22)), lineWidth: 0.8 + 0.4 * highlight)
         }
-        .help(isFailed ? "字幕导出失败" : "字幕导出中")
     }
 
     func transcriptExportFileURL(for export: TranscriptExportItem) -> URL? {
@@ -735,7 +731,6 @@ extension PreviewPanelView {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("跳到字幕起点")
 
             exportItemActionColumn(
                 showInFinderURL: transcriptExportFileURL(for: export),
@@ -789,7 +784,6 @@ extension PreviewPanelView {
         }
         .buttonStyle(.plain)
         .disabled(!FileManager.default.fileExists(atPath: clip.videoPath))
-        .help(isPlaying ? "暂停声音片段" : "播放导出的声音片段")
     }
 
     func jumpToExportLocation(path: String, time: Double) {
@@ -832,19 +826,16 @@ extension PreviewPanelView {
             }
             .buttonStyle(.plain)
             .disabled(showInFinderURL == nil)
-            .help(showInFinderURL == nil ? "文件不存在" : showInFinderHelp)
 
             Button(action: onJump) {
                 exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70), size: buttonSize)
             }
             .buttonStyle(.plain)
-            .help(jumpHelp)
 
             Button(role: .destructive, action: onDelete) {
                 exportItemActionIcon("trash", tint: .white.opacity(0.70), size: buttonSize)
             }
             .buttonStyle(.plain)
-            .help(deleteHelp)
         }
         .frame(width: buttonSize)
         .frame(height: Self.exportRowContentHeight, alignment: .center)
@@ -1014,39 +1005,128 @@ extension PreviewPanelView {
         let status = libraryStore.musicDetectionStatusByVideoPath[path]
         let songs = libraryStore.musicsByVideoPath[path, default: []]
 
-        if case .running = status {
-            ForEach(songs) { song in
-                ExportMusicRecognitionRow(song: song, videoPath: path) {
-                    controller.pause()
-                    controller.seekToSeconds(song.detectedAt)
+        Group {
+            if case .running = status {
+                ForEach(songs) { song in
+                    ExportMusicRecognitionRow(song: song, videoPath: path) {
+                        controller.pause()
+                        controller.seekToSeconds(song.detectedAt)
+                    }
                 }
-            }
-        } else if case let .failed(message) = status {
-            RecognitionFailureIndicator(minHeight: 82)
-                .help(message.isEmpty ? "识别失败" : message)
-        } else if status == .completed, songs.isEmpty {
-            AppEmptyState(
-                title: "暂无音乐识别结果",
-                style: .compact,
-                minHeight: 82,
-                showsBackground: true
-            )
-        } else if songs.isEmpty {
-            AppEmptyState(
-                title: "暂无音乐识别记录",
-                systemImage: "music.note",
-                description: "选择音乐后会自动开始识别。",
-                style: .compact,
-                minHeight: 82
-            )
-        } else {
-            ForEach(songs) { song in
-                ExportMusicRecognitionRow(song: song, videoPath: path) {
-                    controller.pause()
-                    controller.seekToSeconds(song.detectedAt)
+            } else if case let .failed(message) = status {
+                RecognitionFailureIndicator(message: message, minHeight: 82)
+            } else if status == .completed, songs.isEmpty {
+                AppEmptyState(
+                    title: "暂无音乐识别结果",
+                    style: .compact,
+                    minHeight: 82,
+                    showsBackground: true
+                )
+            } else if songs.isEmpty {
+                AppEmptyState(
+                    title: "暂无音乐识别记录",
+                    systemImage: "music.note",
+                    description: "选择音乐后会自动开始识别。",
+                    style: .compact,
+                    minHeight: 82
+                )
+            } else {
+                ForEach(songs) { song in
+                    ExportMusicRecognitionRow(song: song, videoPath: path) {
+                        controller.pause()
+                        controller.seekToSeconds(song.detectedAt)
+                    }
                 }
             }
         }
+        .background(alignment: .topLeading) {
+            exportMusicWaveformRenderPrewarmProbe(songs: songs)
+        }
+    }
+
+    private func exportMusicWaveformRenderPrewarmProbe(songs: [MusicRecognitionItem]) -> some View {
+        GeometryReader { proxy in
+            let signature = exportMusicWaveformRenderPrewarmSignature(
+                songs: songs,
+                panelWidth: proxy.size.width
+            )
+
+            Color.clear
+                .task(id: signature) {
+                    guard proxy.size.width > 0 else { return }
+                    let requests = exportMusicWaveformRenderPrewarmRequests(
+                        songs: songs,
+                        panelWidth: proxy.size.width
+                    )
+                    guard !requests.isEmpty else { return }
+                    await DownloadedMusicWaveformRenderPrewarmQueue.shared.prewarm(requests)
+                }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func exportMusicWaveformRenderPrewarmSignature(
+        songs: [MusicRecognitionItem],
+        panelWidth: CGFloat
+    ) -> Int {
+        guard panelWidth > 0 else { return 0 }
+
+        let contentWidth = max(0, panelWidth - 14)
+        guard contentWidth > 0 else { return 0 }
+
+        var hasher = Hasher()
+        hasher.combine(Int(contentWidth.rounded(.up)))
+
+        for song in songs {
+            for job in musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs) where completedMusicFileURL(for: job) != nil {
+                hasher.combine(job.id)
+                hasher.combine(job.filePath)
+                hasher.combine(exportMusicWaveformSamplesForRenderPrewarm(job)?.count ?? 0)
+            }
+        }
+
+        return hasher.finalize()
+    }
+
+    private func exportMusicWaveformRenderPrewarmRequests(
+        songs: [MusicRecognitionItem],
+        panelWidth: CGFloat
+    ) -> [DownloadedMusicWaveformRenderPrewarmRequest] {
+        let contentWidth = max(0, panelWidth - 14)
+        guard contentWidth > 0 else { return [] }
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        return songs.flatMap { song in
+            musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs).compactMap { job in
+                guard completedMusicFileURL(for: job) != nil else { return nil }
+                guard let samples = exportMusicWaveformSamplesForRenderPrewarm(job), !samples.isEmpty else { return nil }
+                return DownloadedMusicWaveformRenderPrewarmRequest(
+                    samples: samples,
+                    size: CGSize(width: contentWidth, height: 32),
+                    scale: scale,
+                    isCompact: true
+                )
+            }
+        }
+    }
+
+    private func exportMusicWaveformSamplesForRenderPrewarm(_ job: MusicDownloadJob) -> [Double]? {
+        if let samples = job.waveformSamples, !samples.isEmpty {
+            return samples
+        }
+
+        guard let filePath = job.filePath else { return nil }
+        if let samples = libraryStore.localMusicWaveformSamplesByPath[filePath], !samples.isEmpty {
+            return samples
+        }
+
+        let normalizedPath = LibraryStore.normalizedLocalFilePath(filePath)
+        guard
+            let localAsset = libraryStore.localMusicAssets.first(where: {
+                LibraryStore.normalizedLocalFilePath($0.filePath) == normalizedPath
+            })
+        else { return nil }
+        return libraryStore.localMusicWaveformSamplesByPath[localAsset.filePath]
     }
 
 }

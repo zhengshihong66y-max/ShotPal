@@ -883,7 +883,6 @@ struct FrameScrubberView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help(isPlaying ? "暂停" : "播放")
 
                 navButton(icon: "goforward.1",      help: "前进一帧",   action: stepForward)
                 navButton(icon: "forward.end.fill", help: "下一个场景", action: nextScene)
@@ -903,14 +902,12 @@ struct FrameScrubberView: View {
                         Image(systemName: "camera.fill")
                             .frame(width: 22, height: 22)
                     }
-                    .help("截取当前帧")
                 }
                 if let fn = onAnnotate {
                     Button(action: fn) {
                         Image(systemName: "text.bubble.fill")
                             .frame(width: 22, height: 22)
                     }
-                    .help("添加批注")
                 }
             }
             .frame(maxWidth: .infinity)
@@ -929,7 +926,6 @@ struct FrameScrubberView: View {
         .buttonStyle(.plain)
         .foregroundStyle(action == nil ? .quaternary : .secondary)
         .disabled(action == nil)
-        .help(help)
     }
 
     private func globalProgress(from location: CGPoint, width: CGFloat) -> Double {

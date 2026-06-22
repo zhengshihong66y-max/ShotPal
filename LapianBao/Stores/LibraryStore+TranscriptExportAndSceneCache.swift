@@ -27,7 +27,11 @@ extension LibraryStore {
         } catch {
             return false
         }
-        let url = folder.appendingPathComponent("\(Self.safeFileStem(video.name))-transcript.md")
+        let url = Self.uniqueExportURL(
+            in: folder,
+            baseName: "\(Self.safeFileStem(video.name))_脚本",
+            preferredExtension: "md"
+        )
         let sceneCutTimes = sceneCutsByVideoPath[path, default: []].map(\.time)
         let duration = durationByVideoPath[path]
         let videoName = video.name
@@ -120,6 +124,437 @@ extension LibraryStore {
         guard transcriptExports.count != originalCount else { return true }
         saveProjectData()
         return true
+    }
+
+    @discardableResult
+    func exportStoryboardDocument(video: VideoItem) -> Bool {
+        guard let libraryURL else { return false }
+        let path = video.url.path
+        loadCachedSceneCuts(for: video)
+        guard let cuts = sceneCutsByVideoPath[path], !cuts.isEmpty else {
+            detectSceneCuts(for: video)
+            return false
+        }
+
+        let folder = Self.exportFolder(in: libraryURL, named: Self.storyboardExportFolderName)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            return false
+        }
+
+        let outputURL = Self.uniqueExportURL(
+            in: folder,
+            baseName: "\(Self.safeFileStem(video.name))_分镜表",
+            preferredExtension: "docx"
+        )
+        let orderedCuts = cuts.sorted { $0.time < $1.time }
+        let duration = storyboardExportDuration(
+            videoPath: path,
+            cuts: orderedCuts,
+            segments: transcriptSegmentsByVideoPath[path, default: []]
+        )
+        let shots = storyboardExportShots(
+            video: video,
+            cuts: orderedCuts,
+            duration: duration,
+            segments: transcriptSegmentsByVideoPath[path, default: []],
+            musics: musicsByVideoPath[path, default: []]
+        )
+
+        Task.detached(priority: .utility) {
+            do {
+                try Self.writeStoryboardDocx(
+                    shots: shots,
+                    duration: duration,
+                    outputURL: outputURL
+                )
+                await MainActor.run {
+                    NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                }
+            } catch {
+                NSLog("LapianBao storyboard export failed: %@ %@", outputURL.path, String(describing: error))
+                try? FileManager.default.removeItem(at: outputURL)
+            }
+        }
+
+        return true
+    }
+
+    func storyboardExportDuration(videoPath: String, cuts: [SceneCut], segments: [TranscriptSegment]) -> Double {
+        let metadataDuration = durationByVideoPath[videoPath].flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 0
+        let subtitleEnd = segments.map(\.end).max() ?? 0
+        let cutEnd = cuts.map(\.time).max() ?? 0
+        return max(metadataDuration, subtitleEnd, cutEnd)
+    }
+
+    func storyboardExportShots(
+        video: VideoItem,
+        cuts: [SceneCut],
+        duration: Double,
+        segments: [TranscriptSegment],
+        musics: [MusicRecognitionItem]
+    ) -> [StoryboardExportShot] {
+        let finalEnd = max(duration, cuts.last?.time ?? 0)
+        return cuts.enumerated().map { index, cut in
+            let start = max(0, cut.time)
+            let end: Double
+            if cuts.indices.contains(index + 1) {
+                end = max(start, cuts[index + 1].time)
+            } else {
+                end = max(finalEnd, start)
+            }
+            let subtitles = segments
+                .filter { Self.transcriptSegment($0, overlapsSceneStart: start, end: end) }
+                .map { Self.singleLineMarkdownText($0.text) }
+                .filter { !$0.isEmpty }
+            let image = displaySceneCutImage(for: video, cut: cut) ?? cut.thumbnailImage
+            return StoryboardExportShot(
+                index: index + 1,
+                start: start,
+                end: end,
+                script: subtitles.joined(separator: " "),
+                music: Self.storyboardMusicLabel(start: start, end: end, videoDuration: duration, musics: musics),
+                imageData: Self.sceneCacheThumbnailData(from: image)
+            )
+        }
+    }
+
+    nonisolated struct StoryboardExportShot: Sendable {
+        var index: Int
+        var start: Double
+        var end: Double
+        var script: String
+        var music: String
+        var imageData: Data?
+    }
+
+    nonisolated static func storyboardMusicLabel(
+        start: Double,
+        end: Double,
+        videoDuration: Double,
+        musics: [MusicRecognitionItem]
+    ) -> String {
+        let labels = musics.compactMap { music -> String? in
+            let musicStart = max(0, music.detectedAt)
+            let musicEnd: Double
+            if music.duration.isFinite && music.duration > 0 {
+                musicEnd = min(max(videoDuration, end), musicStart + music.duration)
+            } else {
+                musicEnd = max(videoDuration, end)
+            }
+            guard max(0, min(end, musicEnd) - max(start, musicStart)) > 0.01 else { return nil }
+            let title = music.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let artist = music.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty || !artist.isEmpty else { return nil }
+            return artist.isEmpty ? title : "\(title) - \(artist)"
+        }
+
+        var seen = Set<String>()
+        let unique = labels.filter { seen.insert($0).inserted }
+        return unique.joined(separator: "；")
+    }
+
+    nonisolated static func writeStoryboardDocx(
+        shots: [StoryboardExportShot],
+        duration: Double,
+        outputURL: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let packageURL = fileManager.temporaryDirectory
+            .appendingPathComponent("LapianBaoStoryboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: packageURL) }
+
+        try fileManager.createDirectory(at: packageURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: packageURL.appendingPathComponent("_rels", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: packageURL.appendingPathComponent("word/_rels", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: packageURL.appendingPathComponent("word/media", isDirectory: true), withIntermediateDirectories: true)
+
+        for shot in shots {
+            guard let imageData = shot.imageData else { continue }
+            let imageURL = packageURL
+                .appendingPathComponent("word/media", isDirectory: true)
+                .appendingPathComponent("shot-\(String(format: "%03d", shot.index)).jpg")
+            try imageData.write(to: imageURL, options: .atomic)
+        }
+
+        try storyboardContentTypesXML.write(
+            to: packageURL.appendingPathComponent("[Content_Types].xml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try storyboardPackageRelationshipsXML.write(
+            to: packageURL.appendingPathComponent("_rels/.rels"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try storyboardDocumentRelationshipsXML(shots: shots).write(
+            to: packageURL.appendingPathComponent("word/_rels/document.xml.rels"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try storyboardDocumentXML(shots: shots, duration: duration).write(
+            to: packageURL.appendingPathComponent("word/document.xml"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try? fileManager.removeItem(at: outputURL)
+        let result = ExternalProcessRunner.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/ditto"),
+            arguments: ["-c", "-k", "--sequesterRsrc", packageURL.path, outputURL.path],
+            qualityOfService: .utility,
+            timeout: 20
+        )
+        guard result.succeeded, fileManager.fileExists(atPath: outputURL.path) else {
+            throw NSError(
+                domain: "LapianBao.StoryboardExport",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: result.errorText.isEmpty ? "无法生成分镜表 Word 文件" : result.errorText]
+            )
+        }
+    }
+
+    nonisolated static var storyboardContentTypesXML: String {
+        """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+          <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+          <Default Extension="xml" ContentType="application/xml"/>
+          <Default Extension="jpg" ContentType="image/jpeg"/>
+          <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+        </Types>
+        """
+    }
+
+    nonisolated static var storyboardPackageRelationshipsXML: String {
+        """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+        </Relationships>
+        """
+    }
+
+    nonisolated static func storyboardDocumentRelationshipsXML(shots: [StoryboardExportShot]) -> String {
+        let relationships = shots
+            .filter { $0.imageData != nil }
+            .map {
+                """
+                  <Relationship Id="rId\($0.index)" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/shot-\(String(format: "%03d", $0.index)).jpg"/>
+                """
+            }
+            .joined(separator: "\n")
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        \(relationships)
+        </Relationships>
+        """
+    }
+
+    nonisolated static func storyboardDocumentXML(shots: [StoryboardExportShot], duration: Double) -> String {
+        let columns = [605, 2664, 1613, 893, 1080, 5544, 2333, 1152]
+        let headers = ["镜号", "画面", "起止时间", "长度", "景别", "对应脚本/字幕", "音乐/声音", "备注"]
+        let grid = columns.map { #"      <w:gridCol w:w="\#($0)"/>"# }.joined(separator: "\n")
+        let headerCells = zip(headers, columns).map { title, width in
+            storyboardTableCell(
+                width: width,
+                fill: "EDF2F7",
+                content: storyboardParagraph(title, size: 14, bold: true, color: "5F6B7A", alignment: "center")
+            )
+        }.joined()
+        let shotRows = shots.map { shot in
+            let cells = [
+                storyboardTableCell(width: columns[0], content: storyboardParagraph(String(format: "%02d", shot.index), size: 15, bold: true, alignment: "center")),
+                storyboardTableCell(width: columns[1], fill: "F8FAFC", content: shot.imageData == nil ? storyboardParagraph("", size: 14) : storyboardImageParagraph(relationshipID: "rId\(shot.index)")),
+                storyboardTableCell(width: columns[2], content: storyboardParagraph("\(storyboardClockText(shot.start))\n-\n\(storyboardClockText(shot.end))", size: 13, alignment: "center")),
+                storyboardTableCell(width: columns[3], content: storyboardParagraph(String(format: "%.2fs", max(0, shot.end - shot.start)), size: 14, alignment: "center")),
+                storyboardTableCell(width: columns[4], content: storyboardParagraph("", size: 14)),
+                storyboardTableCell(width: columns[5], content: storyboardParagraph(shot.script, size: 14)),
+                storyboardTableCell(width: columns[6], content: storyboardParagraph(shot.music, size: 14)),
+                storyboardTableCell(width: columns[7], content: storyboardParagraph("", size: 14))
+            ].joined()
+            return """
+              <w:tr>
+                <w:trPr><w:cantSplit/><w:trHeight w:val="1642" w:hRule="atLeast"/></w:trPr>
+            \(cells)
+              </w:tr>
+            """
+        }.joined(separator: "\n")
+
+        return """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+          <w:body>
+            \(storyboardParagraph("分镜填写版", size: 32, bold: true, spacingAfter: 100))
+            <w:tbl>
+              <w:tblPr>
+                <w:tblW w:w="15884" w:type="dxa"/>
+                <w:tblLayout w:type="fixed"/>
+                <w:tblBorders>
+                  <w:top w:val="single" w:sz="6" w:space="0" w:color="C9D1DB"/>
+                  <w:left w:val="single" w:sz="6" w:space="0" w:color="C9D1DB"/>
+                  <w:bottom w:val="single" w:sz="6" w:space="0" w:color="C9D1DB"/>
+                  <w:right w:val="single" w:sz="6" w:space="0" w:color="C9D1DB"/>
+                  <w:insideH w:val="single" w:sz="6" w:space="0" w:color="C9D1DB"/>
+                  <w:insideV w:val="single" w:sz="6" w:space="0" w:color="C9D1DB"/>
+                </w:tblBorders>
+              </w:tblPr>
+              <w:tblGrid>
+        \(grid)
+              </w:tblGrid>
+              <w:tr>
+                <w:trPr><w:cantSplit/><w:trHeight w:val="403" w:hRule="atLeast"/></w:trPr>
+                \(storyboardTableCell(width: 7942, fill: "EDF2F7", content: storyboardParagraph("总时长：\(storyboardClockText(duration))", size: 15, bold: true, color: "5F6B7A", alignment: "center"), gridSpan: 4))
+                \(storyboardTableCell(width: 7942, fill: "EDF2F7", content: storyboardParagraph("总分镜数：\(shots.count)", size: 15, bold: true, color: "5F6B7A", alignment: "center"), gridSpan: 4))
+              </w:tr>
+              <w:tr>
+                <w:trPr><w:tblHeader/><w:cantSplit/><w:trHeight w:val="461" w:hRule="atLeast"/></w:trPr>
+        \(headerCells)
+              </w:tr>
+        \(shotRows)
+            </w:tbl>
+            <w:sectPr>
+              <w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>
+              <w:pgMar w:top="518" w:right="475" w:bottom="461" w:left="475" w:header="288" w:footer="259" w:gutter="0"/>
+            </w:sectPr>
+          </w:body>
+        </w:document>
+        """
+    }
+
+    nonisolated static func storyboardTableCell(width: Int, fill: String? = nil, content: String, gridSpan: Int? = nil) -> String {
+        let fillXML = fill.map { #"<w:shd w:fill="\#($0)"/>"# } ?? ""
+        let spanXML = gridSpan.map { #"<w:gridSpan w:val="\#($0)"/>"# } ?? ""
+        return """
+            <w:tc>
+              <w:tcPr>
+                <w:tcW w:w="\(width)" w:type="dxa"/>
+                \(spanXML)
+                \(fillXML)
+                <w:tcMar>
+                  <w:top w:w="70" w:type="dxa"/>
+                  <w:start w:w="80" w:type="dxa"/>
+                  <w:bottom w:w="70" w:type="dxa"/>
+                  <w:end w:w="80" w:type="dxa"/>
+                </w:tcMar>
+                <w:vAlign w:val="center"/>
+              </w:tcPr>
+              \(content)
+            </w:tc>
+        """
+    }
+
+    nonisolated static func storyboardParagraph(
+        _ text: String,
+        size: Int,
+        bold: Bool = false,
+        color: String = "111827",
+        alignment: String = "left",
+        spacingAfter: Int = 0
+    ) -> String {
+        let runs = storyboardTextRuns(text, size: size, bold: bold, color: color)
+        return """
+        <w:p>
+          <w:pPr>
+            <w:jc w:val="\(alignment)"/>
+            <w:spacing w:before="0" w:after="\(spacingAfter)"/>
+          </w:pPr>
+          \(runs)
+        </w:p>
+        """
+    }
+
+    nonisolated static func storyboardTextRuns(_ text: String, size: Int, bold: Bool, color: String) -> String {
+        let parts = text.components(separatedBy: .newlines)
+        guard !parts.isEmpty else {
+            return storyboardRun("", size: size, bold: bold, color: color)
+        }
+        return parts.enumerated().map { index, part in
+            let prefix = index == 0 ? "" : "<w:br/>"
+            return storyboardRun(part, size: size, bold: bold, color: color, prefix: prefix)
+        }.joined()
+    }
+
+    nonisolated static func storyboardRun(
+        _ text: String,
+        size: Int,
+        bold: Bool,
+        color: String,
+        prefix: String = ""
+    ) -> String {
+        let boldXML = bold ? "<w:b/>" : ""
+        return """
+        <w:r>
+          <w:rPr>
+            <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="PingFang SC"/>
+            \(boldXML)
+            <w:color w:val="\(color)"/>
+            <w:sz w:val="\(size)"/>
+          </w:rPr>
+          \(prefix)<w:t xml:space="preserve">\(xmlEscaped(text))</w:t>
+        </w:r>
+        """
+    }
+
+    nonisolated static func storyboardImageParagraph(relationshipID: String) -> String {
+        """
+        <w:p>
+          <w:pPr><w:jc w:val="center"/><w:spacing w:before="0" w:after="0"/></w:pPr>
+          <w:r>
+            <w:drawing>
+              <wp:inline distT="0" distB="0" distL="0" distR="0">
+                <wp:extent cx="1600200" cy="900000"/>
+                <wp:docPr id="1" name="Shot"/>
+                <a:graphic>
+                  <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                    <pic:pic>
+                      <pic:nvPicPr>
+                        <pic:cNvPr id="0" name="shot.jpg"/>
+                        <pic:cNvPicPr/>
+                      </pic:nvPicPr>
+                      <pic:blipFill>
+                        <a:blip r:embed="\(relationshipID)"/>
+                        <a:stretch><a:fillRect/></a:stretch>
+                      </pic:blipFill>
+                      <pic:spPr>
+                        <a:xfrm>
+                          <a:off x="0" y="0"/>
+                          <a:ext cx="1600200" cy="900000"/>
+                        </a:xfrm>
+                        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                      </pic:spPr>
+                    </pic:pic>
+                  </a:graphicData>
+                </a:graphic>
+              </wp:inline>
+            </w:drawing>
+          </w:r>
+        </w:p>
+        """
+    }
+
+    nonisolated static func storyboardClockText(_ seconds: Double) -> String {
+        let safeSeconds = max(0, seconds)
+        let total = Int(safeSeconds.rounded(.down))
+        let minutes = (total % 3600) / 60
+        let hours = total / 3600
+        let wholeSeconds = total % 60
+        let fraction = Int(((safeSeconds - Double(total)) * 100).rounded())
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d.%02d", hours, minutes, wholeSeconds, fraction)
+        }
+        return String(format: "%02d:%02d.%02d", minutes, wholeSeconds, fraction)
+    }
+
+    nonisolated static func xmlEscaped(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
     }
 
     nonisolated static func transcriptExportMarkdown(

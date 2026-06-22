@@ -17,12 +17,17 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject var libraryStore: LibraryStore
     @StateObject var previewController = PreviewController()
+    @StateObject var musicWorkspaceViewModel = MusicWorkspaceViewModel()
     @AppStorage(AppSettings.Key.appWorkspace) var appWorkspaceRawValue = AppWorkspace.home.rawValue
     @AppStorage(AppSettings.Key.isSidebarCollapsed) var isSidebarCollapsed = false
+    @AppStorage(AppSettings.Key.musicSortOption) var launchMusicSortOptionRawValue = MusicSortOption.title.rawValue
+    @AppStorage(AppSettings.Key.musicSortDirection) var launchMusicSortDirectionRawValue = VideoSortDirection.ascending.rawValue
     @State var mediaPanelWidth = AppSettings.mediaPanelWidth
     @State var frameMediaPanelWidth = AppSettings.frameMediaPanelWidth
-    @State var renamingTag: String? = nil
-    @State var renameInput = ""
+    @State var isLibraryTagEditing = false
+    @State var libraryTagRenameTarget: String?
+    @State var libraryTagRenameInput = ""
+    @FocusState var focusedLibraryTagRenameTarget: String?
     @State var isImportSheetPresented = false
     @State var importURLText = ""
     @State var importEndpointText = ""
@@ -46,12 +51,14 @@ struct ContentView: View {
     @State var isTagFilterMenuPresented = false
     @State var frameFilterVideoPath: String?
     @State var frameSelectedFrameID: UUID?
+    @State var frameBoardMode: FramesBoardMode = .collection
     @State var pendingHomeSeekRequest: AppEventBus.SeekRequest?
     @State var mediaPanelDragStartWidth: Double?
     @State var mediaPanelDragStartX: CGFloat?
     @State var isDividerHovered = false
     @State var canRestorePersistedWorkspace = false
     @State var pendingStoryboardOpenPath: String?
+    @State var hasMountedMusicWorkspace = false
 
     var appWorkspace: AppWorkspace {
         get {
@@ -95,21 +102,6 @@ struct ContentView: View {
         )
         .onReceive(Self.clipboardProbeTimer) { _ in
             handleClipboardChangeIfNeeded()
-        }
-        .alert("重命名标签", isPresented: Binding(
-            get: { renamingTag != nil },
-            set: { if !$0 { renamingTag = nil } }
-        )) {
-            TextField("新标签名", text: $renameInput)
-            Button("确认") {
-                if let old = renamingTag {
-                    libraryStore.renameGlobalTag(old, to: renameInput)
-                }
-                renamingTag = nil
-            }
-            Button("取消", role: .cancel) { renamingTag = nil }
-        } message: {
-            Text("重命名后，所有含此标签的视频都会同步更新")
         }
         .onAppear {
             restorePersistedWorkspaceAfterFirstFrame()
@@ -193,6 +185,9 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: musicWorkspaceLaunchPreparationID(containerWidth: containerWidth)) {
+            startMusicWorkspaceLaunchPreparation(containerWidth: containerWidth)
+        }
     }
 
     func resolvedMediaPanelWidth(containerWidth: CGFloat) -> CGFloat {
@@ -270,21 +265,27 @@ struct ContentView: View {
 
     func navigationRailButton(_ workspace: AppWorkspace) -> some View {
         let isSelected = presentedAppWorkspace == workspace
+        let isMusicPreparing = workspace == .music && musicWorkspaceViewModel.launchPreparationStatus.isLoading
+        let iconColor = isMusicPreparing
+            ? Color.gray.opacity(0.62)
+            : (isSelected ? Color.white.opacity(0.94) : Color.white.opacity(0.40))
 
         return Button {
+            if workspace == .frames {
+                frameBoardMode = .collection
+            }
             switchWorkspace(to: workspace)
         } label: {
             Image(systemName: workspace.icon)
                 .font(.system(size: workspace.railIconSize, weight: isSelected ? .semibold : .regular))
                 .symbolRenderingMode(.monochrome)
-                .foregroundStyle(isSelected ? Color.white.opacity(0.94) : Color.white.opacity(0.40))
+                .foregroundStyle(iconColor)
                 .frame(width: Design.railIconBoxSize, height: Design.railIconBoxSize)
                 .offset(x: Design.railIconAlignmentOffsetX + workspace.railIconOffset)
                 .frame(width: Design.railWidth, height: Design.railButtonHeight, alignment: .center)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(workspace.title)
     }
 
     func mediaPanelDivider(containerWidth: CGFloat) -> some View {
@@ -329,28 +330,51 @@ struct ContentView: View {
                     mediaPanelDragStartX = nil
                 }
         )
-        .help("拖动调整素材库和预览区比例")
     }
 
     @ViewBuilder
     var workspaceView: some View {
-        switch presentedAppWorkspace {
-        case .home:
-            PreviewPanelView(
-                controller: previewController,
-                openStoryboardBoard: openFrameStoryboard,
-                pendingSeekRequest: $pendingHomeSeekRequest
-            )
-        case .frames:
-            FramesWorkspaceView(
-                selectedVideoPath: $frameFilterVideoPath,
-                selectedFrameID: $frameSelectedFrameID,
-                goHome: jumpToVideo
-            )
-        case .music:
-            MusicWorkspaceView(goHome: jumpToVideo)
-        case .settings:
-            SettingsWorkspaceView()
+        ZStack {
+            switch presentedAppWorkspace {
+            case .home:
+                PreviewPanelView(
+                    controller: previewController,
+                    openStoryboardBoard: openFrameStoryboard,
+                    pendingSeekRequest: $pendingHomeSeekRequest
+                )
+            case .frames:
+                FramesWorkspaceView(
+                    selectedVideoPath: $frameFilterVideoPath,
+                    selectedFrameID: $frameSelectedFrameID,
+                    boardMode: $frameBoardMode,
+                    previewController: previewController,
+                    goHome: jumpToVideo
+                )
+            case .music:
+                Color.clear
+            case .settings:
+                SettingsWorkspaceView()
+            }
+
+            if hasMountedMusicWorkspace || presentedAppWorkspace == .music {
+                MusicWorkspaceView(
+                    viewModel: musicWorkspaceViewModel,
+                    goHome: jumpToVideo
+                )
+                .opacity(presentedAppWorkspace == .music ? 1 : 0)
+                .allowsHitTesting(presentedAppWorkspace == .music)
+                .accessibilityHidden(presentedAppWorkspace != .music)
+            }
+        }
+        .onAppear {
+            if presentedAppWorkspace == .music {
+                hasMountedMusicWorkspace = true
+            }
+        }
+        .onChange(of: presentedAppWorkspace) { _, workspace in
+            if workspace == .music {
+                hasMountedMusicWorkspace = true
+            }
         }
     }
 
@@ -392,6 +416,7 @@ struct ContentView: View {
         libraryStore.selectVideo(path: video.url.path)
         frameFilterVideoPath = video.url.path
         frameSelectedFrameID = nil
+        frameBoardMode = .storyboard
         switchWorkspace(to: .frames)
     }
 
@@ -455,7 +480,8 @@ struct ContentView: View {
                 sidebarItem(
                     icon: workspace.icon,
                     label: workspace.title,
-                    isSelected: presentedAppWorkspace == workspace
+                    isSelected: presentedAppWorkspace == workspace,
+                    isLoading: workspace == .music && musicWorkspaceViewModel.launchPreparationStatus.isLoading
                 ) {
                     switchWorkspace(to: workspace)
                 }
@@ -489,7 +515,6 @@ struct ContentView: View {
                 }
         }
         .buttonStyle(.plain)
-        .help(isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏")
     }
 
     @ViewBuilder
@@ -506,6 +531,7 @@ struct ContentView: View {
         icon: String,
         label: String,
         isSelected: Bool,
+        isLoading: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -513,18 +539,18 @@ struct ContentView: View {
                 if isSidebarCollapsed {
                     Image(systemName: icon)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(isSelected ? .primary : .secondary)
+                        .foregroundStyle(isLoading ? Color.gray.opacity(0.62) : (isSelected ? .primary : .secondary))
                         .frame(width: 36, height: 32)
                 } else {
                     HStack(spacing: 9) {
                         Image(systemName: icon)
                             .font(.system(size: 13, weight: .medium))
                             .frame(width: 18)
+                            .foregroundStyle(isLoading ? Color.gray.opacity(0.62) : (isSelected ? .primary : .secondary))
+                        Text(label)
+                            .lineLimit(1)
                             .foregroundStyle(isSelected ? .primary : .secondary)
-                    Text(label)
-                        .lineLimit(1)
-                        .foregroundStyle(isSelected ? .primary : .secondary)
-                    Spacer()
+                        Spacer()
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)

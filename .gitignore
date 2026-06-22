@@ -11,6 +11,8 @@ Tools/*-env/
 ExportReadinessCheck/
 Tools/whisper_test/
 video_rename_plan.tsv
+tmp/
+output/
 
 # Xcode local user state
 *.xcodeproj/xcuserdata/

@@ -16,6 +16,7 @@ nonisolated enum ProjectRepository {
         static let localWaveforms = ".lapianbao_waveforms.json"
         static let videoCache = ".lapianbao_videos_cache.json"
         static let resourceCache = ".lapianbao_resource_cache.json"
+        static let musicWorkspaceCache = ".lapianbao_music_workspace_cache.json"
         static let resourceAssetTags = ".lapianbao_asset_tags.json"
         static let instagramSavedBaseline = ".lapianbao_ig_saved_baseline.json"
         static let xiaohongshuSavedBaseline = ".lapianbao_xhs_saved_baseline.json"
@@ -51,6 +52,10 @@ nonisolated enum ProjectRepository {
 
     static func resourceCacheURL(in libraryURL: URL) -> URL {
         url(in: libraryURL, fileName: FileName.resourceCache)
+    }
+
+    static func musicWorkspaceCacheURL(in libraryURL: URL) -> URL {
+        url(in: libraryURL, fileName: FileName.musicWorkspaceCache)
     }
 
     static func resourceAssetTagsURL(in libraryURL: URL) -> URL {

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="170" y1="118" x2="850" y2="910" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7DDCFF"/>
+      <stop offset="0.46" stop-color="#007AFF"/>
+      <stop offset="1" stop-color="#0A55C6"/>
+    </linearGradient>
+    <radialGradient id="bgGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(382 250) rotate(64) scale(620)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.50"/>
+      <stop offset="0.42" stop-color="#BEEBFF" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#0A55C6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="112" y1="362" x2="914" y2="684" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="0.46" stop-color="#F6FDFF" stop-opacity="0.68"/>
+      <stop offset="1" stop-color="#D7F5FF" stop-opacity="0.50"/>
+    </linearGradient>
+    <linearGradient id="stroke" x1="42" y1="362" x2="980" y2="672" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.90"/>
+      <stop offset="0.56" stop-color="#E8FAFF" stop-opacity="0.54"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.24"/>
+    </linearGradient>
+    <linearGradient id="leftColor" x1="-84" y1="342" x2="416" y2="682" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF453A"/>
+      <stop offset="0.42" stop-color="#FF9F0A"/>
+      <stop offset="1" stop-color="#FFD60A"/>
+    </linearGradient>
+    <linearGradient id="middleColor" x1="468" y1="342" x2="796" y2="682" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64D2FF"/>
+      <stop offset="0.45" stop-color="#0A84FF"/>
+      <stop offset="1" stop-color="#30D158"/>
+    </linearGradient>
+    <linearGradient id="rightColor" x1="838" y1="342" x2="1198" y2="682" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#BF5AF2"/>
+      <stop offset="0.48" stop-color="#FF2D55"/>
+      <stop offset="1" stop-color="#64D2FF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-35%" width="140%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="26" stdDeviation="32" flood-color="#003D98" flood-opacity="0.23"/>
+      <feDropShadow dx="0" dy="-6" stdDeviation="12" flood-color="#FFFFFF" flood-opacity="0.12"/>
+    </filter>
+    <clipPath id="middleProgressClip">
+      <rect x="468" y="342" width="328" height="340" rx="76"/>
+    </clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="224" fill="url(#bgGlow)"/>
+  <g filter="url(#shadow)">
+    <rect x="-84" y="342" width="500" height="340" rx="76" fill="url(#leftColor)" stroke="url(#stroke)" stroke-width="4"/>
+    <rect x="468" y="342" width="328" height="340" rx="76" fill="url(#middleColor)" stroke="url(#stroke)" stroke-width="4"/>
+    <rect x="838" y="342" width="360" height="340" rx="76" fill="url(#rightColor)" stroke="url(#stroke)" stroke-width="4"/>
+  </g>
+  <rect x="468" y="342" width="164" height="340" fill="#FFFFFF" fill-opacity="1" clip-path="url(#middleProgressClip)"/>
+  <rect x="456" y="330" width="352" height="364" rx="88" fill="none" stroke="#FF3B30" stroke-opacity="1" stroke-width="24"/>
+</svg>

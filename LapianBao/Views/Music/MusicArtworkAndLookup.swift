@@ -9,13 +9,62 @@ import SwiftUI
 import AppKit
 import Foundation
 
-enum MusicArtworkCache {
+nonisolated enum MusicArtworkCache {
     static let shared: NSCache<NSURL, NSImage> = {
         let cache = NSCache<NSURL, NSImage>()
-        cache.countLimit = 256
-        cache.totalCostLimit = 96 * 1024 * 1024
+        cache.countLimit = 2_048
+        cache.totalCostLimit = 384 * 1024 * 1024
         return cache
     }()
+
+    static func prewarmCachedArtwork(urls: [URL]) async {
+        var seen = Set<String>()
+        let uniqueURLs = urls.filter { url in
+            seen.insert(url.absoluteString).inserted
+        }
+        guard !uniqueURLs.isEmpty else { return }
+
+        await withTaskGroup(of: Void.self) { group in
+            for url in uniqueURLs {
+                group.addTask {
+                    await prewarmCachedArtwork(url)
+                }
+            }
+            await group.waitForAll()
+        }
+    }
+
+    private static func prewarmCachedArtwork(_ artworkURL: URL) async {
+        let cacheKey = artworkURL as NSURL
+        if shared.object(forKey: cacheKey) != nil {
+            return
+        }
+
+        var request = URLRequest(url: artworkURL)
+        request.timeoutInterval = 8
+        request.cachePolicy = .returnCacheDataDontLoad
+        request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+        await MusicArtworkLoadGate.shared.acquire()
+        defer {
+            Task {
+                await MusicArtworkLoadGate.shared.release()
+            }
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<300).contains(httpResponse.statusCode) {
+                return
+            }
+            guard let image = NSImage(data: data) else { return }
+            shared.setObject(image, forKey: cacheKey, cost: data.count)
+        } catch {
+            return
+        }
+    }
 }
 
 actor MusicArtworkLoadGate {
@@ -197,6 +246,13 @@ struct MusicArtworkView: View {
     }
 
     private func loadArtwork() async {
+        if let artworkURL,
+           let cached = MusicArtworkCache.shared.object(forKey: artworkURL as NSURL) {
+            image = cached
+            didFail = false
+            return
+        }
+
         image = nil
         didFail = false
 

@@ -40,7 +40,9 @@ extension PreviewPanelView {
             sampledFrames: libraryStore.sampledFrames(for: video),
             activeItemID: activeSceneItemID(for: video),
             activeProgressTick: activeProgressTick,
-            openStoryboardBoard: { openStoryboardBoard(video) }
+            openStoryboardBoard: { openStoryboardBoard(video) },
+            exportStoryboard: { exportCurrentStoryboard(for: video) },
+            storyboardExportTitle: storyboardExportButtonTitle(for: video)
         )
         .equatable()
     }
@@ -64,7 +66,7 @@ extension PreviewPanelView {
                 subtitleTimelineBlock(for: video)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-                transcriptExportOverlayButton(for: video)
+                contentTimelineExportButtons(for: video)
                     .padding(.trailing, 8)
                     .padding(.bottom, 8)
             }
@@ -75,8 +77,7 @@ extension PreviewPanelView {
     @ViewBuilder
     func contentRecognitionStartBlock(for video: VideoItem, status: TranscriptJobStatus?) -> some View {
         if case let .failed(message) = status {
-            RecognitionFailureIndicator(minHeight: 34)
-                .help(message.isEmpty ? "识别失败" : message)
+            RecognitionFailureIndicator(message: message, minHeight: 34)
         } else {
             EmptyView()
         }
@@ -96,8 +97,7 @@ extension PreviewPanelView {
             } else if segments.isEmpty {
                 VStack(spacing: 10) {
                     if case let .failed(message) = status {
-                        RecognitionFailureIndicator(minHeight: 28)
-                            .help(message.isEmpty ? "识别失败" : message)
+                        RecognitionFailureIndicator(message: message, minHeight: 28)
                     } else {
                         AppEmptyState(
                             title: "暂无字幕",
@@ -129,32 +129,60 @@ extension PreviewPanelView {
         .recognitionProgressCard()
     }
 
+    func contentTimelineExportButtons(for video: VideoItem) -> some View {
+        HStack(spacing: 7) {
+            transcriptExportOverlayButton(for: video)
+        }
+    }
+
     func transcriptExportOverlayButton(for video: VideoItem) -> some View {
         Button {
             exportCurrentTranscript(for: video)
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 11, weight: .semibold))
-                    .symbolRenderingMode(.monochrome)
-
-                Text("导出字幕")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(.white.opacity(0.86))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(.black.opacity(0.48))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(.white.opacity(0.13), lineWidth: 0.7)
-            }
+            contentTimelineExportButtonLabel(systemImage: "square.and.arrow.up", title: "导出字幕")
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .help("导出字幕")
+    }
+
+    func storyboardExportButtonTitle(for video: VideoItem) -> String {
+        let path = video.url.path
+        if pendingStoryboardExportPath == path {
+            if let progress = libraryStore.sceneDetectionProgress[path] {
+                return "导出中 \(progressPercentText(progress))"
+            }
+            return "等待导出"
+        }
+        return libraryStore.hasSceneRecognitionResult(for: video) ? "导出分镜表" : "识别后导出"
+    }
+
+    func storyboardExportButtonHelp(for video: VideoItem) -> String {
+        let path = video.url.path
+        if pendingStoryboardExportPath == path {
+            return "分镜识别完成后自动导出 Word"
+        }
+        return libraryStore.hasSceneRecognitionResult(for: video) ? "导出分镜表 Word" : "先识别分镜，完成后自动导出 Word"
+    }
+
+    func contentTimelineExportButtonLabel(systemImage: String, title: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .symbolRenderingMode(.monochrome)
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white.opacity(0.86))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.48))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.white.opacity(0.13), lineWidth: 0.7)
+        }
     }
 
     func subtitleSegmentList(_ segments: [TranscriptSegment]) -> some View {

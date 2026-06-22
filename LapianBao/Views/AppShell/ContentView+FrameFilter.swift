@@ -72,7 +72,6 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help("全部画面")
     }
 
     func frameFilterVideoRow(_ video: VideoItem) -> some View {
@@ -83,6 +82,7 @@ extension ContentView {
                 video: video,
                 displayName: videoDisplayName(for: video),
                 thumbnailImage: thumbnailImage(for: video),
+                thumbnailRevision: thumbnailRevision(for: video),
                 durationText: durationTextIfReady(for: video),
                 sourcePlatform: sourcePlatformName(for: video),
                 tags: libraryStore.videoTags(for: video),
@@ -98,6 +98,9 @@ extension ContentView {
                 onRemoveTag: { tag in
                     libraryStore.removeTag(tag, from: video)
                 },
+                onSetSourcePlatform: { platform in
+                    libraryStore.setSourcePlatform(platform, for: video)
+                },
                 onDelete: {
                     libraryStore.removeVideo(video)
                 },
@@ -105,7 +108,6 @@ extension ContentView {
             )
             .equatable()
             .frame(width: 122)
-            .help("筛选这个视频的画面")
 
             framePreviewColumn(frames)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -159,7 +161,6 @@ extension ContentView {
                 .fullResolutionImageDrag {
                     libraryStore.fullResolutionFrameProvider(for: frame)
                 }
-                .help("\(frame.videoName) · \(clockText(frame.time))")
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)

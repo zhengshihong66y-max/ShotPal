@@ -1,14 +1,32 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Setup the Python environment for music recognition.
 # Run once from the repo root: bash Tools/setup_music_env.sh
 
-set -e
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_DIR="$SCRIPT_DIR/music-env"
+REQUIREMENTS_FILE="$SCRIPT_DIR/requirements-music.txt"
 
 PYTHON_BIN=""
-PIP_BIN=""
-for candidate in /opt/miniconda3/bin/python /opt/anaconda3/bin/python python3.13 python3.12 python3.11 python3; do
+ARCH="$(uname -m)"
+PYTHON_CANDIDATES=()
+case "$ARCH" in
+    arm64)
+        PYTHON_CANDIDATES+=(
+            "$SCRIPT_DIR/python/cpython-3.11-aarch64-apple-darwin/bin/python3.11"
+            "$SCRIPT_DIR/../LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/python/cpython-3.11-aarch64-apple-darwin/bin/python3.11"
+        )
+        ;;
+    x86_64)
+        PYTHON_CANDIDATES+=(
+            "$SCRIPT_DIR/python/cpython-3.11-x86_64-apple-darwin/bin/python3.11"
+            "$SCRIPT_DIR/../LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/python/cpython-3.11-x86_64-apple-darwin/bin/python3.11"
+        )
+        ;;
+esac
+PYTHON_CANDIDATES+=(python3.12 python3.11 python3.13 python3)
+
+for candidate in "${PYTHON_CANDIDATES[@]}"; do
     if [ -x "$candidate" ]; then
         PYTHON_BIN="$candidate"
         break
@@ -20,32 +38,22 @@ for candidate in /opt/miniconda3/bin/python /opt/anaconda3/bin/python python3.13
 done
 
 if [ -z "$PYTHON_BIN" ]; then
-    echo "未找到 Python 3，请先安装 Python 3.11/3.12/3.13。"
+    echo "未找到 Python 3.11 以上版本。"
     exit 1
 fi
 
-for candidate in /opt/miniconda3/bin/pip /opt/anaconda3/bin/pip pip3.13 pip3.12 pip3.11 pip3; do
-    if [ -x "$candidate" ]; then
-        PIP_BIN="$candidate"
-        break
-    fi
-    if command -v "$candidate" >/dev/null 2>&1; then
-        PIP_BIN="$(command -v "$candidate")"
-        break
-    fi
-done
-
-if [ -z "$PIP_BIN" ]; then
-    echo "未找到 pip。请先安装 pip，或修复当前 Python 的 ensurepip。"
+if [ ! -f "$REQUIREMENTS_FILE" ]; then
+    echo "缺少依赖清单：$REQUIREMENTS_FILE"
     exit 1
 fi
 
-echo "Creating virtual environment at $ENV_DIR …"
-"$PYTHON_BIN" -m venv --clear --without-pip "$ENV_DIR"
+export PYTHONDONTWRITEBYTECODE=1
+echo "Creating virtual environment at $ENV_DIR"
+"$PYTHON_BIN" -m venv --clear "$ENV_DIR"
 
-echo "Installing dependencies …"
-"$PIP_BIN" --python "$ENV_DIR/bin/python3" install --upgrade pip -q
-"$ENV_DIR/bin/python3" -m pip install shazamio aiohttp requests audioop-lts -q
+echo "Installing dependencies"
+"$ENV_DIR/bin/python3" -m pip install --upgrade pip setuptools wheel
+"$ENV_DIR/bin/python3" -m pip install -r "$REQUIREMENTS_FILE"
 
 echo ""
 echo "Done! Interpreter: $ENV_DIR/bin/python3"

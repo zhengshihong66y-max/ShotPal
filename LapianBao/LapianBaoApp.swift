@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     )
 
     static func main() {
+        runCommandLineMusicWaveformCachePrewarmIfRequested()
         runCommandLineSelfCheckIfRequested()
         StartupDiagnostics.mark(.mainEntered)
         let app = NSApplication.shared
@@ -69,6 +70,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 FileHandle.standardOutput.write(Data("\n".utf8))
             }
             exitBox.code = report.status == .succeeded ? 0 : 1
+            semaphore.signal()
+        }
+        semaphore.wait()
+        Darwin.exit(exitBox.code)
+    }
+
+    nonisolated private static func runCommandLineMusicWaveformCachePrewarmIfRequested() {
+        let arguments = CommandLine.arguments
+        guard MusicWaveformRenderCachePrewarmer.shouldRun(arguments: arguments) else { return }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        let exitBox = CommandLineSelfCheckExitBox()
+        Task.detached(priority: .utility) {
+            exitBox.code = await MusicWaveformRenderCachePrewarmer.runAndPrintReport(arguments: arguments)
             semaphore.signal()
         }
         semaphore.wait()
@@ -149,7 +164,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func processPreviewKeyboardEvent(_ event: NSEvent) -> NSEvent? {
         let isPlainShortcut = PreviewKeyboardEventRouter.isPlainShortcutEvent(event)
         let hasActiveHandler = PreviewKeyboardEventRouter.hasActiveHandler
-        let isMusicPreviewSpace = isPlainShortcut && event.keyCode == 49 && libraryStore.activeMusicPreviewJobID != nil
+        let musicPreviewKeyboardTargetJobID = isPlainShortcut && event.keyCode == 49
+            ? libraryStore.musicPreviewKeyboardTargetJobID
+            : nil
+        let isMusicPreviewSpace = musicPreviewKeyboardTargetJobID != nil
 
         if event.type == .keyUp {
             if isMusicPreviewSpace,
@@ -180,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if isMusicPreviewSpace {
-            if !event.isARepeat, let id = libraryStore.activeMusicPreviewJobID {
+            if !event.isARepeat, let id = musicPreviewKeyboardTargetJobID {
                 AppEventBus.postMusicPreviewToggleRequest(id: id)
             }
             return nil

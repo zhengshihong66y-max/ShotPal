@@ -54,7 +54,6 @@ struct VideoTagChip: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("移除标签")
             }
         }
         .foregroundStyle(Design.tagChipForeground)
@@ -120,10 +119,6 @@ struct QuickFilterChoiceChip: View {
                         .foregroundStyle(isSelected ? .white.opacity(0.86) : .secondary.opacity(0.82))
                 }
 
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .heavy))
-                }
             }
             .foregroundStyle(isSelected ? .white.opacity(0.94) : .secondary)
             .padding(.horizontal, 9)
@@ -283,58 +278,31 @@ private struct TagEditorChoiceChip: View {
     let horizontalPadding: CGFloat
     let isSelected: Bool
     let isRecent: Bool
-    let canRemove: Bool
     let isEnabled: Bool
     let action: () -> Void
 
-    @State private var isHovered = false
-
     var body: some View {
         Button(action: action) {
-            ZStack(alignment: .topTrailing) {
-                Text(title)
-                    .font(font)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .allowsTightening(true)
-                    .frame(maxWidth: textMaxWidth, minHeight: rowHeight, maxHeight: rowHeight, alignment: .center)
-                    .foregroundStyle(foreground)
-                    .padding(.horizontal, horizontalPadding)
-                    .background(fill)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(stroke, lineWidth: isSelected || isRecent ? 0.8 : 0.7)
-                    }
-                    .contentShape(Capsule())
-
-                if canRemove {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 6.6, weight: .heavy))
-                        .foregroundStyle(.white.opacity(0.88))
-                        .frame(width: 10, height: 10)
-                        .background(.black.opacity(0.46))
-                        .clipShape(Circle())
-                        .overlay {
-                            Circle()
-                                .stroke(.white.opacity(0.24), lineWidth: 0.6)
-                        }
-                        .offset(x: 2, y: -2)
-                        .opacity(isHovered ? 1 : 0)
-                        .scaleEffect(isHovered ? 1 : 0.82)
-                        .accessibilityHidden(true)
+            Text(title)
+                .font(font)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .allowsTightening(true)
+                .frame(maxWidth: textMaxWidth, minHeight: rowHeight, maxHeight: rowHeight, alignment: .center)
+                .foregroundStyle(foreground)
+                .padding(.horizontal, horizontalPadding)
+                .background(fill)
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(stroke, lineWidth: isSelected || isRecent ? 0.8 : 0.7)
                 }
-            }
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.58)
         .fixedSize(horizontal: true, vertical: false)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .animation(.easeOut(duration: 0.12), value: isHovered)
-        .help(canRemove ? "移除标签" : "添加标签")
     }
 
     private var foreground: Color {
@@ -453,6 +421,9 @@ struct TagEditorSection: View {
     var emptyTitle = "暂无标签"
     var chipSize: VideoTagChipSize = .regular
     var suggestionLimit = 12
+    var verticalSpacing: CGFloat = 10
+    var inputSpacing: CGFloat = 6
+    var gridVerticalPadding: CGFloat?
     var onAdd: ((String) -> Void)? = nil
     var onRemove: ((String) -> Void)? = nil
 
@@ -618,7 +589,7 @@ struct TagEditorSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: verticalSpacing) {
             if let title {
                 Text(title)
                     .font(.caption.weight(.semibold))
@@ -626,7 +597,7 @@ struct TagEditorSection: View {
             }
 
             if onAdd != nil {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: inputSpacing) {
                     TextField("添加标签", text: $draftTag)
                         .textFieldStyle(.roundedBorder)
                         .focused($isTagFieldFocused)
@@ -682,7 +653,7 @@ struct TagEditorSection: View {
                 tagChoiceButton(for: tag)
             }
         }
-        .padding(.vertical, layout.verticalPadding)
+        .padding(.vertical, gridVerticalPadding ?? layout.verticalPadding)
         .frame(width: tagPanelWidth, alignment: .topLeading)
     }
 
@@ -701,7 +672,6 @@ struct TagEditorSection: View {
             horizontalPadding: tagChoiceHorizontalPadding,
             isSelected: isSelected,
             isRecent: isRecent,
-            canRemove: canRemove,
             isEnabled: isEnabled
         ) {
             toggleTag(tag, isSelected: isSelected)
@@ -795,7 +765,6 @@ struct InlineTagAddButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(title)
         .popover(isPresented: $isPresented, arrowEdge: .trailing) {
             TagEditorSection(
                 title: title,
@@ -846,7 +815,6 @@ struct TagStripAddButton: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("添加标签")
     }
 }
 

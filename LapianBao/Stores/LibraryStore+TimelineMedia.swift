@@ -18,6 +18,16 @@ extension LibraryStore {
         var duration: Double
     }
 
+    nonisolated struct InitialMusicCachePrewarmResult: Sendable {
+        var cacheByKey: [String: LocalWaveformCacheEntry]
+        var samplesByPath: [String: [Double]]
+        var generatedSampleCount: Int
+        var failedSampleCount: Int
+        var renderRequestCount: Int
+        var renderGeneratedCount: Int
+        var renderFailedCount: Int
+    }
+
     func loadWaveform(for video: VideoItem) {
         let path = video.url.path
         noteTransientMediaAccess(for: path)
@@ -186,9 +196,25 @@ extension LibraryStore {
                         self.scheduleLocalWaveformCacheSave()
                     }
                 }
-                self.startQueuedLocalMusicWaveforms()
+                self.enqueueLocalMusicWaveforms(snapshot.music)
             }
         }
+    }
+
+    func shouldHydrateLocalWaveformCaches(
+        from _: ResourceLibrarySnapshot,
+        libraryURL: URL,
+        musicChanged: Bool,
+        audioChanged: Bool
+    ) -> Bool {
+        let libraryPath = libraryURL.path
+        if localWaveformCacheLibraryPath != libraryPath {
+            return true
+        }
+        if localWaveformCacheHydrationTask != nil, !musicChanged, !audioChanged {
+            return false
+        }
+        return musicChanged || audioChanged
     }
 
     func ensureAllLocalMusicWaveformsIfNeeded() {
@@ -243,6 +269,299 @@ extension LibraryStore {
             return false
         }
         return FileManager.default.fileExists(atPath: path)
+    }
+
+    func prewarmInitialMusicCachesForLibraryScan(
+        libraryPath: String,
+        scanGeneration: Int,
+        generateMissingSamples: Bool = true,
+        prewarmRenderedImages: Bool = true
+    ) async {
+        guard let libraryURL, libraryURL.path == libraryPath else { return }
+
+        let assets = localMusicAssets.filter {
+            FileManager.default.fileExists(atPath: $0.filePath)
+        }
+        let projectSampleSets = musicDownloadJobs.compactMap { job -> [Double]? in
+            guard let samples = job.waveformSamples, !samples.isEmpty else { return nil }
+            if let path = job.filePath {
+                let resolvedPath = Self.projectAbsolutePath(path, libraryURL: libraryURL)
+                guard FileManager.default.fileExists(atPath: resolvedPath) else { return nil }
+            }
+            return samples
+        }
+
+        guard !assets.isEmpty || (prewarmRenderedImages && !projectSampleSets.isEmpty) else { return }
+
+        cancelPendingLocalMusicWaveformWork()
+        libraryScanProgress = LibraryScanProgress(
+            message: generateMissingSamples ? "正在生成音乐缓存" : "正在检查音乐缓存",
+            completed: 0,
+            total: 1
+        )
+
+        let result = await Self.prewarmInitialMusicCaches(
+            libraryURL: libraryURL,
+            assets: assets,
+            projectSampleSets: projectSampleSets,
+            generateMissingSamples: generateMissingSamples,
+            prewarmRenderedImages: prewarmRenderedImages
+        ) { [weak self] progress in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.libraryScanGeneration == scanGeneration,
+                      self.libraryURL?.path == libraryPath
+                else { return }
+                self.libraryScanProgress = progress
+            }
+        }
+
+        guard !Task.isCancelled,
+              libraryScanGeneration == scanGeneration,
+              self.libraryURL?.path == libraryPath
+        else { return }
+
+        localWaveformCacheLibraryPath = libraryPath
+        localWaveformCacheByKey = result.cacheByKey
+
+        let assetPaths = Set(assets.map(\.filePath))
+        var nextSamples = localMusicWaveformSamplesByPath.filter { !assetPaths.contains($0.key) }
+        for (path, samples) in result.samplesByPath {
+            nextSamples[path] = samples
+        }
+        if localMusicWaveformSamplesByPath != nextSamples {
+            localMusicWaveformSamplesByPath = nextSamples
+        }
+
+        localMusicWaveformQueuedPaths.subtract(assetPaths)
+        queuedLocalMusicWaveformAssets.removeAll { assetPaths.contains($0.filePath) }
+        localMusicWaveformRenderingPaths.subtract(assetPaths)
+        for path in assetPaths {
+            localMusicWaveformProgressByPath.removeValue(forKey: path)
+        }
+
+        PerformanceDiagnostics.mark(
+            "initial music cache prewarm finished samples=\(result.samplesByPath.count) generated=\(result.generatedSampleCount) failed=\(result.failedSampleCount) renders=\(result.renderGeneratedCount)/\(result.renderRequestCount) renderFailed=\(result.renderFailedCount)",
+            path: libraryPath
+        )
+    }
+
+    func cancelPendingLocalMusicWaveformWork() {
+        localWaveformCacheHydrationTask?.cancel()
+        localWaveformCacheHydrationTask = nil
+        isHydratingLocalWaveformCache = false
+
+        for task in localMusicWaveformTasks.values {
+            task.cancel()
+        }
+        localMusicWaveformTasks.removeAll()
+        localMusicWaveformRenderingPaths.removeAll()
+        localMusicWaveformQueuedPaths.removeAll()
+        queuedLocalMusicWaveformAssets.removeAll()
+        localMusicWaveformProgressByPath.removeAll()
+    }
+
+    nonisolated static func prewarmInitialMusicCaches(
+        libraryURL: URL,
+        assets: [LocalMusicAsset],
+        projectSampleSets: [[Double]],
+        generateMissingSamples: Bool = true,
+        prewarmRenderedImages: Bool = true,
+        progress: @escaping @Sendable (LibraryScanProgress) -> Void
+    ) async -> InitialMusicCachePrewarmResult {
+        let task = Task.detached(priority: .utility) {
+            var cacheByKey = loadLocalWaveformCache(in: libraryURL)
+            var cacheByIdentity = localWaveformIdentityCacheIndex(cacheByKey)
+            var samplesByPath: [String: [Double]] = [:]
+            var sampleSets: [[Double]] = []
+            var sampleSetKeys = Set<String>()
+            var generatedSampleCount = 0
+            var failedSampleCount = 0
+            var didChangeCache = false
+
+            func appendSampleSet(_ samples: [Double]) {
+                guard !samples.isEmpty else { return }
+                let key = "\(samples.count)|\(DownloadedMusicWaveformRenderCache.sampleSignature(samples))"
+                guard sampleSetKeys.insert(key).inserted else { return }
+                sampleSets.append(samples)
+            }
+
+            let sampleTotalUnits = max(1, assets.count * 100)
+            let sampleProgressMessage = generateMissingSamples
+                ? "正在生成音乐波形缓存"
+                : "正在检查音乐波形缓存"
+            if !assets.isEmpty {
+                progress(LibraryScanProgress(
+                    message: "\(sampleProgressMessage) · 0/\(assets.count)",
+                    completed: 0,
+                    total: sampleTotalUnits
+                ))
+            }
+
+            for (index, asset) in assets.enumerated() {
+                guard !Task.isCancelled else { break }
+
+                let assetURL = URL(fileURLWithPath: asset.filePath)
+                let relativePath = libraryRelativePath(for: assetURL, base: libraryURL)
+                let key = localWaveformCacheKey(kind: "music", relativePath: relativePath)
+                let fileIdentity = localWaveformFileIdentity(for: assetURL)
+
+                if let entry = matchLocalWaveformCacheEntry(
+                    entriesByKey: cacheByKey,
+                    entriesByIdentity: cacheByIdentity,
+                    kind: "music",
+                    relativePath: relativePath,
+                    fileIdentity: fileIdentity,
+                    fileSize: asset.fileSize,
+                    modifiedAt: asset.modifiedAt,
+                    sampleCount: localMusicWaveformSampleCount
+                ) {
+                    if cacheByKey[key] != entry {
+                        cacheByKey[key] = entry
+                        cacheByIdentity = localWaveformIdentityCacheIndex(cacheByKey)
+                        didChangeCache = true
+                    }
+                    samplesByPath[asset.filePath] = entry.samples
+                    appendSampleSet(entry.samples)
+                    progress(LibraryScanProgress(
+                        message: "\(sampleProgressMessage) · \(index + 1)/\(assets.count)",
+                        completed: min(sampleTotalUnits, (index + 1) * 100),
+                        total: sampleTotalUnits
+                    ))
+                    continue
+                }
+
+                guard generateMissingSamples else {
+                    progress(LibraryScanProgress(
+                        message: "\(sampleProgressMessage) · \(index + 1)/\(assets.count)",
+                        completed: min(sampleTotalUnits, (index + 1) * 100),
+                        total: sampleTotalUnits
+                    ))
+                    continue
+                }
+
+                let sampleBase = index * 100
+                let samples = await makeWaveformSamples(
+                    for: assetURL,
+                    sampleCount: localMusicWaveformSampleCount
+                ) { value in
+                    progress(LibraryScanProgress(
+                        message: "正在生成音乐波形缓存 · \(index)/\(assets.count)",
+                        completed: min(sampleTotalUnits, sampleBase + Int((normalizedProgress(value) * 100).rounded())),
+                        total: sampleTotalUnits
+                    ))
+                }
+
+                guard let samples, samples.count == localMusicWaveformSampleCount else {
+                    failedSampleCount += 1
+                    progress(LibraryScanProgress(
+                        message: "正在生成音乐波形缓存 · \(index + 1)/\(assets.count)",
+                        completed: min(sampleTotalUnits, (index + 1) * 100),
+                        total: sampleTotalUnits
+                    ))
+                    continue
+                }
+
+                let entry = LocalWaveformCacheEntry(
+                    kind: "music",
+                    relativePath: relativePath,
+                    fileIdentity: fileIdentity,
+                    fileSize: asset.fileSize,
+                    modificationTime: localWaveformModificationTime(asset.modifiedAt),
+                    sampleCount: localMusicWaveformSampleCount,
+                    samples: samples
+                )
+                cacheByKey[key] = entry
+                if let fileIdentity {
+                    cacheByIdentity[localWaveformIdentityCacheKey(kind: "music", fileIdentity: fileIdentity)] = entry
+                }
+                samplesByPath[asset.filePath] = samples
+                appendSampleSet(samples)
+                generatedSampleCount += 1
+                didChangeCache = true
+
+                progress(LibraryScanProgress(
+                    message: "正在生成音乐波形缓存 · \(index + 1)/\(assets.count)",
+                    completed: min(sampleTotalUnits, (index + 1) * 100),
+                    total: sampleTotalUnits
+                ))
+            }
+
+            for samples in projectSampleSets {
+                appendSampleSet(samples)
+            }
+
+            if didChangeCache {
+                saveLocalWaveformCache(cacheByKey, in: libraryURL)
+            }
+
+            guard prewarmRenderedImages else {
+                return InitialMusicCachePrewarmResult(
+                    cacheByKey: cacheByKey,
+                    samplesByPath: samplesByPath,
+                    generatedSampleCount: generatedSampleCount,
+                    failedSampleCount: failedSampleCount,
+                    renderRequestCount: 0,
+                    renderGeneratedCount: 0,
+                    renderFailedCount: 0
+                )
+            }
+
+            let renderCache = DownloadedMusicWaveformRenderCache.shared
+            let sizes = DownloadedMusicWaveformRenderCache.defaultPrewarmDisplaySizes
+            let scales = DownloadedMusicWaveformRenderCache.defaultPrewarmScales
+            let renderTotal = max(1, sampleSets.count * sizes.count * scales.count)
+            var renderCompleted = 0
+            var renderSummary = DownloadedMusicWaveformDiskPrewarmSummary()
+
+            if !sampleSets.isEmpty {
+                progress(LibraryScanProgress(
+                    message: "正在缓存音乐波形图 · 0/\(renderTotal)",
+                    completed: 0,
+                    total: renderTotal
+                ))
+            }
+
+            renderLoop: for samples in sampleSets {
+                for size in sizes {
+                    for scale in scales {
+                        guard !Task.isCancelled else { break renderLoop }
+                        let summary = renderCache.ensureDiskImages(
+                            samples: samples,
+                            displaySize: size,
+                            scale: scale,
+                            isCompact: false
+                        )
+                        renderSummary.requested += summary.requested
+                        renderSummary.skippedExisting += summary.skippedExisting
+                        renderSummary.rendered += summary.rendered
+                        renderSummary.failed += summary.failed
+                        renderCompleted += 1
+                        progress(LibraryScanProgress(
+                            message: "正在缓存音乐波形图 · \(renderCompleted)/\(renderTotal)",
+                            completed: renderCompleted,
+                            total: renderTotal
+                        ))
+                    }
+                }
+            }
+
+            return InitialMusicCachePrewarmResult(
+                cacheByKey: cacheByKey,
+                samplesByPath: samplesByPath,
+                generatedSampleCount: generatedSampleCount,
+                failedSampleCount: failedSampleCount,
+                renderRequestCount: renderSummary.requested,
+                renderGeneratedCount: renderSummary.rendered,
+                renderFailedCount: renderSummary.failed
+            )
+        }
+
+        return await withTaskCancellationHandler(operation: {
+            await task.value
+        }, onCancel: {
+            task.cancel()
+        })
     }
 
     func startLocalMusicWaveformTask(for asset: LocalMusicAsset) {
@@ -818,6 +1137,10 @@ extension LibraryStore {
         let placeholder = thumbnailImageByVideoPath[path] ?? Self.scenePlaceholderImage()
         let cachedCuts = Self.cachedSceneCuts(from: cachedEntry, placeholderImage: placeholder)
         setSceneCuts(cachedCuts.cuts, for: path, needsThumbnailHydration: cachedCuts.needsThumbnailHydration)
+        PerformanceDiagnostics.mark(
+            "scene cache loaded cuts=\(cachedCuts.cuts.count) needsHydration=\(cachedCuts.needsThumbnailHydration)",
+            path: path
+        )
     }
 
     func hydrateSceneThumbnailsIfNeeded(for video: VideoItem) {
@@ -839,7 +1162,22 @@ extension LibraryStore {
                 return
             }
 
-            let cuts = await Self.sceneCuts(from: cachedEntry.cutTimes, for: video.url)
+            let placeholder = self?.thumbnailImageByVideoPath[path] ?? Self.scenePlaceholderImage()
+            let cachedCuts = await Task.detached(priority: .utility) {
+                Self.cachedSceneCuts(
+                    from: cachedEntry,
+                    placeholderImage: placeholder,
+                    eagerDecodeLimit: Int.max
+                )
+            }.value
+            let cuts: [SceneCut]
+            if !cachedCuts.needsThumbnailHydration, !cachedCuts.cuts.isEmpty {
+                cuts = cachedCuts.cuts
+                PerformanceDiagnostics.mark("scene thumbnails hydrated from cache", path: path)
+            } else {
+                cuts = await Self.sceneCuts(from: cachedEntry.cutTimes, for: video.url)
+                PerformanceDiagnostics.mark("scene thumbnails hydrated from video", path: path)
+            }
             guard !Task.isCancelled else {
                 self?.sceneThumbnailHydrationTasks[path] = nil
                 self?.bumpSceneThumbnailVersion(for: path)
@@ -887,14 +1225,17 @@ extension LibraryStore {
 
     nonisolated static func cachedSceneCuts(
         from entry: SceneCutCacheEntry,
-        placeholderImage: NSImage
+        placeholderImage: NSImage,
+        eagerDecodeLimit: Int = sceneCachedThumbnailEagerDecodeLimit
     ) -> (cuts: [SceneCut], needsThumbnailHydration: Bool) {
         var needsThumbnailHydration = false
         let payloads = orderedCachedSceneCutPayloads(from: entry)
+        let decodeLimit = max(0, eagerDecodeLimit)
 
         let cuts = payloads.enumerated().map { index, payload in
-            if let data = payload.thumbnailData,
-               let image = NSImage(data: data) {
+            if index < decodeLimit,
+               let data = payload.thumbnailData,
+               let image = decodedThumbnailImage(from: data) {
                 return SceneCut(
                     id: sceneCutID(index: index, time: payload.time),
                     time: payload.time,
@@ -1262,6 +1603,14 @@ extension LibraryStore {
     func localMusicEnrichmentSeed(
         for asset: LocalMusicAsset
     ) -> (title: String, artist: String, tags: [String])? {
+        if let song = asset.recognizedSong {
+            return (
+                song.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                song.artist.trimmingCharacters(in: .whitespacesAndNewlines),
+                song.tags
+            )
+        }
+
         if let song = musicsByVideoPath[asset.filePath, default: []].first(where: Self.hasRecognizedTitleAndArtist)
             ?? musicsByVideoPath[asset.filePath, default: []].first(where: {
                 !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1358,10 +1707,25 @@ extension LibraryStore {
                     title: title,
                     artist: artist
                 )
+                if var recognizedSong = updated.recognizedSong {
+                    recognizedSong.tags = MusicRecognitionItem.cleanedMusicTags(
+                        recognizedSong.tags + metadata.tags,
+                        title: recognizedSong.title,
+                        artist: recognizedSong.artist
+                    )
+                    updated.recognizedSong = recognizedSong
+                }
             }
             if updated.duration <= 0, metadata.duration.isFinite, metadata.duration > 0 {
                 updated.duration = metadata.duration
                 musicFileDurationsByPath[Self.normalizedLocalFilePath(updated.filePath)] = metadata.duration
+            }
+            if var recognizedSong = updated.recognizedSong,
+               recognizedSong.duration <= 0,
+               metadata.duration.isFinite,
+               metadata.duration > 0 {
+                recognizedSong.duration = metadata.duration
+                updated.recognizedSong = recognizedSong
             }
 
             if updated != updatedAssets[index] {
@@ -1479,10 +1843,10 @@ extension LibraryStore {
         }
         Self.saveResourceAssetTags(assetTags, in: libraryURL)
 
-        let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets)
+        let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets, images: localImageAssets)
         Self.saveCachedResourceLibrarySnapshot(snapshot, in: libraryURL)
         Task.detached(priority: .background) {
-            ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio)
+            ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio, images: snapshot.images)
         }
         saveProjectData()
     }
@@ -1551,10 +1915,10 @@ extension LibraryStore {
             }
             Self.saveResourceAssetTags(assetTags, in: libraryURL)
 
-            let snapshot = ResourceLibrarySnapshot(music: updatedLocalMusicAssets, audio: localAudioAssets)
+            let snapshot = ResourceLibrarySnapshot(music: updatedLocalMusicAssets, audio: localAudioAssets, images: localImageAssets)
             Self.saveCachedResourceLibrarySnapshot(snapshot, in: libraryURL)
             Task.detached(priority: .background) {
-                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio)
+                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio, images: snapshot.images)
             }
         }
         saveProjectData()

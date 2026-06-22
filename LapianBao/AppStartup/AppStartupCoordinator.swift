@@ -48,7 +48,10 @@ final class AppStartupCoordinator {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + libraryRestoreDelay) { [weak self] in
             StartupDiagnostics.mark(.libraryRestoreStarted)
-            self?.libraryStore.loadLastLibraryForLaunch()
+            let didStartLibraryRestore = self?.libraryStore.loadLastLibraryForLaunch() ?? false
+            if !didStartLibraryRestore {
+                self?.libraryStore.promptForInitialLibraryIfNeeded()
+            }
         }
         StartupDiagnostics.mark(.libraryRestoreScheduled)
     }

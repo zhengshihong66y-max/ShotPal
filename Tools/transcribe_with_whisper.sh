@@ -16,14 +16,16 @@ WHISPER_DIR="$SCRIPT_DIR/whisper.cpp"
 WHISPER_CLI="$WHISPER_DIR/build/bin/whisper-cli"
 MODEL_PATH="$WHISPER_DIR/models/ggml-large-v3-turbo-q5_0.bin"
 
-if command -v ffmpeg >/dev/null 2>&1; then
+if [[ -x "$SCRIPT_DIR/bin/ffmpeg" ]]; then
+  FFMPEG_BIN="$SCRIPT_DIR/bin/ffmpeg"
+elif command -v ffmpeg >/dev/null 2>&1; then
   FFMPEG_BIN="$(command -v ffmpeg)"
 elif [[ -x /opt/homebrew/bin/ffmpeg ]]; then
   FFMPEG_BIN="/opt/homebrew/bin/ffmpeg"
 elif [[ -x /usr/local/bin/ffmpeg ]]; then
   FFMPEG_BIN="/usr/local/bin/ffmpeg"
 else
-  echo "Missing ffmpeg. Install it with: brew install ffmpeg" >&2
+  echo "Missing ffmpeg. Expected bundled tool at $SCRIPT_DIR/bin/ffmpeg or an installed ffmpeg on PATH." >&2
   exit 66
 fi
 

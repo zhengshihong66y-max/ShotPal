@@ -12,13 +12,13 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-enum MusicFilterKind: String, CaseIterable, Hashable {
+nonisolated enum MusicFilterKind: String, CaseIterable, Codable, Hashable, Sendable {
     case local = "本地"
     case artist = "作者"
     case tag = "类型"
 }
 
-struct MusicFilterOption: Identifiable, Hashable {
+nonisolated struct MusicFilterOption: Identifiable, Codable, Hashable, Sendable {
     static let local = MusicFilterOption(kind: .local, value: "本地")
 
     var kind: MusicFilterKind
@@ -54,7 +54,7 @@ private struct MusicTagStrip: View {
     }
 }
 
-enum MusicSortOption: String, CaseIterable, Identifiable {
+nonisolated enum MusicSortOption: String, CaseIterable, Codable, Identifiable, Sendable {
     case title
     case addedDate
     case artist
@@ -70,17 +70,16 @@ enum MusicSortOption: String, CaseIterable, Identifiable {
     }
 }
 
-func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {
+nonisolated func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {
     guard
         let job,
         case .succeeded = job.status,
-        let filePath = job.filePath,
-        FileManager.default.fileExists(atPath: filePath)
+        let filePath = job.filePath
     else { return nil }
     return URL(fileURLWithPath: filePath)
 }
 
-func musicPreviewTimeText(duration: Double, progress: Double, isActive: Bool) -> String? {
+nonisolated func musicPreviewTimeText(duration: Double, progress: Double, isActive: Bool) -> String? {
     guard duration.isFinite, duration > 0 else { return nil }
     let totalText = clockText(duration)
     guard isActive else { return totalText }
@@ -88,11 +87,11 @@ func musicPreviewTimeText(duration: Double, progress: Double, isActive: Bool) ->
     return "\(clockText(current)) / \(totalText)"
 }
 
-func hasCompletedMusicDownload(_ jobs: [MusicDownloadJob]) -> Bool {
+nonisolated func hasCompletedMusicDownload(_ jobs: [MusicDownloadJob]) -> Bool {
     jobs.contains { completedMusicFileURL(for: $0) != nil }
 }
 
-func completedMusicFileURLs(from jobs: [MusicDownloadJob]) -> [URL] {
+nonisolated func completedMusicFileURLs(from jobs: [MusicDownloadJob]) -> [URL] {
     var seenPaths = Set<String>()
     return MusicDownloadJob.DownloadType.allCases.compactMap { type in
         jobs.last { job in
@@ -106,11 +105,16 @@ func completedMusicFileURLs(from jobs: [MusicDownloadJob]) -> [URL] {
     }
 }
 
-func musicDownloadIcon(type _: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
+nonisolated func musicDownloadIcon(type _: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
     completedMusicFileURL(for: job) == nil ? "arrow.down.circle" : "play.circle.fill"
 }
 
-func musicDownloadTitle(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
+struct MusicPreviewToggleRequest: Equatable {
+    let jobID: UUID
+    let token = UUID()
+}
+
+nonisolated func musicDownloadTitle(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
     guard let job else { return type.label }
     switch job.status {
     case .succeeded:
@@ -207,6 +211,7 @@ enum MusicRecognitionLayout {
     static let actionButtonSize: CGFloat = 22
     static let actionIconSize: CGFloat = 16
     static let actionGlyphSize: CGFloat = 16
+    static let circledDownloadIconOpticalOffsetX: CGFloat = -2.5
     static let primaryContentHeight: CGFloat = 48
     static let inlineRowHeight: CGFloat = 76
     static let inlineDownloadButtonsWidth: CGFloat = 78
@@ -240,7 +245,6 @@ struct MusicRecognitionActionColumn: View {
                 actionIcon("play.rectangle.fill", glyphWidth: 18, glyphHeight: 14)
             }
             .buttonStyle(.plain)
-            .help("在浏览器中打开 YouTube 第一个视频")
 
             downloadAction
         }
@@ -264,7 +268,11 @@ struct MusicRecognitionActionColumn: View {
                     Label("下载伴奏", systemImage: "arrow.down.circle")
                 }
             } label: {
-                actionIcon("arrow.down", glyphWidth: 14, glyphHeight: 16)
+                actionIcon(
+                    "arrow.down.circle",
+                    glyphWidth: 16,
+                    glyphHeight: 16
+                )
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -272,7 +280,7 @@ struct MusicRecognitionActionColumn: View {
                 width: MusicRecognitionLayout.actionButtonSize,
                 height: MusicRecognitionLayout.actionButtonSize
             )
-            .help("下载原曲或伴奏")
+            .offset(x: MusicRecognitionLayout.circledDownloadIconOpticalOffsetX)
         } else {
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting(completedFileURLs)
@@ -280,7 +288,6 @@ struct MusicRecognitionActionColumn: View {
                 actionIcon("folder", glyphWidth: 16, glyphHeight: 14)
             }
             .buttonStyle(.plain)
-            .help("在访达显示已下载音乐")
             .contextMenu {
                 ForEach(completedDownloadJobs) { job in
                     if let url = completedMusicFileURL(for: job) {
@@ -312,7 +319,8 @@ struct MusicRecognitionActionColumn: View {
     private func actionIcon(
         _ systemImage: String,
         glyphWidth: CGFloat = MusicRecognitionLayout.actionGlyphSize,
-        glyphHeight: CGFloat = MusicRecognitionLayout.actionGlyphSize
+        glyphHeight: CGFloat = MusicRecognitionLayout.actionGlyphSize,
+        opticalOffsetX: CGFloat = 0
     ) -> some View {
         Image(systemName: systemImage)
             .resizable()
@@ -321,6 +329,7 @@ struct MusicRecognitionActionColumn: View {
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(actionTint)
             .frame(width: glyphWidth, height: glyphHeight)
+            .offset(x: opticalOffsetX)
             .frame(
                 width: MusicRecognitionLayout.actionButtonSize,
                 height: MusicRecognitionLayout.actionButtonSize
@@ -386,7 +395,6 @@ struct ExportMusicRecognitionActionColumn: View {
             height: MusicRecognitionLayout.actionButtonSize
         )
         .disabled(!hasCompletedDownloads)
-        .help(hasCompletedDownloads ? "在访达显示原曲或伴奏" : "暂无已下载音乐文件")
     }
 
     private var downloadMenu: some View {
@@ -404,9 +412,9 @@ struct ExportMusicRecognitionActionColumn: View {
             }
         } label: {
             actionIcon(
-                "arrow.down",
+                "arrow.down.circle",
                 tint: .white.opacity(allDownloadsCompleted ? 0.28 : 0.72),
-                glyphWidth: 14,
+                glyphWidth: 16,
                 glyphHeight: 16
             )
         }
@@ -416,8 +424,8 @@ struct ExportMusicRecognitionActionColumn: View {
             width: MusicRecognitionLayout.actionButtonSize,
             height: MusicRecognitionLayout.actionButtonSize
         )
+        .offset(x: MusicRecognitionLayout.circledDownloadIconOpticalOffsetX)
         .disabled(allDownloadsCompleted)
-        .help(allDownloadsCompleted ? "原曲和伴奏已下载" : "下载原曲或伴奏")
     }
 
     private func job(for type: MusicDownloadJob.DownloadType) -> MusicDownloadJob? {
@@ -433,7 +441,8 @@ struct ExportMusicRecognitionActionColumn: View {
         _ systemImage: String,
         tint: Color,
         glyphWidth: CGFloat = MusicRecognitionLayout.actionGlyphSize,
-        glyphHeight: CGFloat = MusicRecognitionLayout.actionGlyphSize
+        glyphHeight: CGFloat = MusicRecognitionLayout.actionGlyphSize,
+        opticalOffsetX: CGFloat = 0
     ) -> some View {
         Image(systemName: systemImage)
             .resizable()
@@ -442,6 +451,7 @@ struct ExportMusicRecognitionActionColumn: View {
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(tint)
             .frame(width: glyphWidth, height: glyphHeight)
+            .offset(x: opticalOffsetX)
             .frame(
                 width: MusicRecognitionLayout.actionButtonSize,
                 height: MusicRecognitionLayout.actionButtonSize
@@ -487,7 +497,6 @@ struct ExportMusicRecognitionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("跳到视频中此段落")
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 ExportMusicRecognitionActionColumn(song: song, downloadJobs: downloadJobs)
@@ -552,7 +561,6 @@ struct MusicRecognitionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("跳到视频中此段落")
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 MusicDownloadControlsAndWaveform(
@@ -580,13 +588,13 @@ struct MusicRecognitionRow: View {
 
 }
 
-func latestMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
+nonisolated func latestMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
     MusicDownloadJob.DownloadType.allCases.compactMap { type in
         jobs.last { $0.type == type }
     }
 }
 
-func musicDownloadJobs(for song: MusicRecognitionItem, in jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
+nonisolated func musicDownloadJobs(for song: MusicRecognitionItem, in jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
     let songKey = "\(song.title)|\(song.artist)"
     return latestMusicDownloadJobs(jobs.filter { $0.songKey == songKey })
 }
@@ -626,6 +634,7 @@ struct MusicDownloadControlsAndWaveform: View {
 
     @State private var selectedType: MusicDownloadJob.DownloadType = .original
     @State private var selectedAudioTimeText: String?
+    @State private var previewToggleRequest: MusicPreviewToggleRequest?
 
     private var selectedJob: MusicDownloadJob? {
         job(for: selectedType)
@@ -700,9 +709,9 @@ struct MusicDownloadControlsAndWaveform: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: elementSpacing) {
+        HStack(alignment: .top, spacing: elementSpacing) {
             selectorButtons
-                .frame(width: buttonsWidth, height: waveformHeight, alignment: .center)
+                .frame(width: buttonsWidth, height: waveformHeight, alignment: .top)
 
             if waveformWidth > 0 {
                 if selectedJobIsDownloaded {
@@ -717,7 +726,7 @@ struct MusicDownloadControlsAndWaveform: View {
                 .frame(width: 0, height: 0)
             }
         }
-        .frame(height: waveformHeight, alignment: .center)
+        .frame(height: waveformHeight, alignment: .top)
         .onAppear {
             requestDownloadedMediaInfoIfNeeded()
             syncSelectionIfNeeded(force: true)
@@ -734,6 +743,7 @@ struct MusicDownloadControlsAndWaveform: View {
             job: selectedJob,
             selectedType: selectedType,
             height: waveformHeight,
+            previewToggleRequest: previewToggleRequest,
             onTimeTextChange: { selectedAudioTimeText = $0 }
         )
         .overlay(alignment: .bottomTrailing) {
@@ -816,16 +826,13 @@ struct MusicDownloadControlsAndWaveform: View {
             selectedType = type
 
             if isDownloaded, let job {
-                libraryStore.activeMusicPreviewJobID = job.id
-                DispatchQueue.main.async {
-                    AppEventBus.postMusicPreviewToggleRequest(id: job.id)
-                }
+                previewToggleRequest = MusicPreviewToggleRequest(jobID: job.id)
             } else if !isActive {
                 libraryStore.downloadMusic(song: song, type: type)
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: musicDownloadIcon(type: type, job: job))
+                Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: job))
                     .font(.system(size: 11, weight: .semibold))
                 Text(musicDownloadTitle(type: type, job: job))
                     .font(.caption2.weight(.semibold))
@@ -842,7 +849,6 @@ struct MusicDownloadControlsAndWaveform: View {
             }
         }
         .buttonStyle(.plain)
-        .help(isDownloaded ? "播放/停止\(type.label)" : musicDownloadHelp(type: type, job: job))
         .contextMenu {
             if let url = completedMusicFileURL(for: job) {
                 Button {
@@ -868,6 +874,7 @@ struct MusicDownloadWaveformPanel: View {
     let job: MusicDownloadJob?
     let selectedType: MusicDownloadJob.DownloadType
     var height: CGFloat = 48
+    var previewToggleRequest: MusicPreviewToggleRequest?
     var onTimeTextChange: ((String?) -> Void)? = nil
 
     @State private var previewPlayer: AVPlayer?
@@ -877,6 +884,7 @@ struct MusicDownloadWaveformPanel: View {
     @State private var previewDuration: Double = 0
     @State private var previewScrubProgress: Double?
     @State private var loadedAudioDuration: Double = 0
+    @State private var handledPreviewToggleRequestToken: UUID?
 
     private static let placeholderSamples: [Double] = (0..<120).map { index -> Double in
         let position = Double(index)
@@ -951,7 +959,6 @@ struct MusicDownloadWaveformPanel: View {
                 panel(for: job)
             } else {
                 placeholderPanel(opacity: 0.26)
-                    .help("下载\(selectedType.label)")
             }
         }
         .frame(height: height)
@@ -963,9 +970,7 @@ struct MusicDownloadWaveformPanel: View {
         .onDisappear {
             stopAudioPreview()
             onTimeTextChange?(nil)
-            if libraryStore.activeMusicPreviewJobID == job?.id {
-                libraryStore.activeMusicPreviewJobID = nil
-            }
+            libraryStore.clearMusicPreviewJob(job?.id)
         }
         .onChange(of: job?.id) { _, _ in
             onTimeTextChange?(nil)
@@ -991,6 +996,9 @@ struct MusicDownloadWaveformPanel: View {
             if !isHydrating {
                 requestWaveformIfNeeded()
             }
+        }
+        .task(id: previewToggleRequest) {
+            handlePreviewToggleRequest(previewToggleRequest)
         }
         .task(id: previewFileURL?.path) {
             await loadAudioDuration()
@@ -1072,15 +1080,7 @@ struct MusicDownloadWaveformPanel: View {
             } else {
                 placeholderPanel(opacity: 0.36)
             }
-
-            if job.isPreparingWaveform {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            }
         }
-        .help(canPreviewAudio ? "预览\(job.type.label)，可拖出音频文件" : (job.filePath ?? ""))
     }
 
     private func placeholderPanel(opacity: Double) -> some View {
@@ -1176,11 +1176,22 @@ struct MusicDownloadWaveformPanel: View {
         }
     }
 
+    private func handlePreviewToggleRequest(_ request: MusicPreviewToggleRequest?) {
+        guard
+            let request,
+            handledPreviewToggleRequestToken != request.token,
+            request.jobID == job?.id,
+            canPreviewAudio
+        else { return }
+        handledPreviewToggleRequestToken = request.token
+        toggleAudioPreview()
+    }
+
     private func startAudioPreview(at initialProgress: Double = 0) {
         guard let previewFileURL, let job else { return }
         let clampedProgress = min(1, max(0, initialProgress))
         stopAudioPreview()
-        libraryStore.activeMusicPreviewJobID = job.id
+        libraryStore.activateMusicPreviewJob(job.id)
         AppEventBus.postPausePreviewRequest()
         AppEventBus.postMusicPreviewStarted(
             id: job.id,
@@ -1238,8 +1249,10 @@ struct MusicDownloadWaveformPanel: View {
         }
         previewScrubProgress = nil
 
-        if libraryStore.activeMusicPreviewJobID == job?.id {
-            libraryStore.activeMusicPreviewJobID = nil
+        if resetProgress {
+            libraryStore.clearMusicPreviewJob(job?.id)
+        } else {
+            libraryStore.pauseMusicPreviewJob(job?.id)
         }
 
         if let previewEndObserver {
@@ -1390,11 +1403,7 @@ struct MusicDownloadStatusView: View {
     @State private var loadedAudioDuration: Double = 0
 
     private var previewFileURL: URL? {
-        guard
-            let filePath = job.filePath,
-            FileManager.default.fileExists(atPath: filePath)
-        else { return nil }
-        return URL(fileURLWithPath: filePath)
+        completedMusicFileURL(for: job)
     }
 
     private var canPreviewAudio: Bool {
@@ -1590,15 +1599,12 @@ struct MusicDownloadStatusView: View {
             }
         }
         .itemProviderDrag(audioFileDragProvider)
-        .help(canPreviewAudio ? (isPreviewing ? "暂停\(job.type.label)预览，可拖出音频文件" : "播放\(job.type.label)预览，可拖出音频文件") : (job.filePath ?? ""))
         .onAppear {
             requestDownloadedMediaInfoIfNeeded()
         }
         .onDisappear {
             stopAudioPreview()
-            if libraryStore.activeMusicPreviewJobID == job.id {
-                libraryStore.activeMusicPreviewJobID = nil
-            }
+            libraryStore.clearMusicPreviewJob(job.id)
         }
         .onChange(of: job.filePath) { _, _ in
             stopAudioPreview()
@@ -1696,7 +1702,7 @@ struct MusicDownloadStatusView: View {
         guard let previewFileURL else { return }
         let clampedProgress = min(1, max(0, initialProgress))
         stopAudioPreview()
-        libraryStore.activeMusicPreviewJobID = job.id
+        libraryStore.activateMusicPreviewJob(job.id)
         AppEventBus.postPausePreviewRequest()
         AppEventBus.postMusicPreviewStarted(
             id: job.id,
@@ -1754,8 +1760,10 @@ struct MusicDownloadStatusView: View {
         }
         previewScrubProgress = nil
 
-        if libraryStore.activeMusicPreviewJobID == job.id {
-            libraryStore.activeMusicPreviewJobID = nil
+        if resetProgress {
+            libraryStore.clearMusicPreviewJob(job.id)
+        } else {
+            libraryStore.pauseMusicPreviewJob(job.id)
         }
 
         if let previewEndObserver {
@@ -1810,16 +1818,49 @@ struct DownloadedMusicWaveformView: View {
     var onScrubChanged: ((Double) -> Void)?
     var onScrubEnded: ((Double) -> Void)?
 
+    @State private var cacheRenderRevision = 0
+
     var body: some View {
         GeometryReader { proxy in
-            let displaySamples = preparedSamples(for: proxy.size.width)
+            let renderSize = DownloadedMusicWaveformRenderCache.renderCacheSize(
+                for: proxy.size,
+                isCompact: isCompact
+            )
+            let displaySamples = DownloadedMusicWaveformRenderCache.preparedSamples(
+                samples,
+                for: renderSize.width,
+                isCompact: isCompact
+            )
+            let sampleSignature = DownloadedMusicWaveformRenderCache.sampleSignature(displaySamples)
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            let cacheLoadID = [
+                "\(sampleSignature)",
+                "\(displaySamples.count)",
+                "\(Int(renderSize.width.rounded(.up)))x\(Int(renderSize.height.rounded(.up)))",
+                "\(Int((scale * 100).rounded()))",
+                isCompact ? "compact" : "regular",
+                isActive ? "active" : "inactive"
+            ].joined(separator: "|")
+            let renderPrewarmKey = downloadedMusicWaveformRenderPrewarmKey(
+                sampleSignature: sampleSignature,
+                sampleCount: displaySamples.count,
+                renderSize: renderSize,
+                scale: scale,
+                isCompact: isCompact
+            )
 
             SmoothTimelineProgressReader(
                 progress: progress,
                 duration: playbackDuration,
                 isPlaying: isActive && smoothsPlaybackProgress
             ) { displayedProgress in
-                musicWaveformCanvas(samples: displaySamples, progress: displayedProgress)
+                cachedMusicWaveform(
+                    samples: displaySamples,
+                    sampleSignature: sampleSignature,
+                    displaySize: proxy.size,
+                    renderSize: renderSize,
+                    progress: displayedProgress
+                )
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
@@ -1829,7 +1870,24 @@ struct DownloadedMusicWaveformView: View {
                             .onEnded { value in
                                 onScrubEnded?(scrubProgress(at: value.location.x, width: proxy.size.width))
                             }
-                    )
+                        )
+            }
+            .task(id: cacheLoadID) {
+                let didLoad = await ensureWaveformImagesCached(
+                    displaySamples: displaySamples,
+                    sampleSignature: sampleSignature,
+                    renderSize: renderSize,
+                    scale: scale,
+                    isActive: isActive
+                )
+                guard didLoad, !Task.isCancelled else { return }
+                cacheRenderRevision &+= 1
+            }
+            .onReceive(AppEventBus.downloadedMusicWaveformRenderCacheUpdatedPublisher) { notification in
+                guard
+                    AppEventBus.downloadedMusicWaveformRenderCacheKey(from: notification) == renderPrewarmKey
+                else { return }
+                cacheRenderRevision &+= 1
             }
         }
         .frame(height: height ?? (isCompact ? 32 : 38))
@@ -1841,126 +1899,137 @@ struct DownloadedMusicWaveformView: View {
         }
     }
 
-    private func musicWaveformCanvas(samples displaySamples: [Double], progress displayedProgress: Double) -> some View {
-        Canvas(opaque: false, colorMode: .nonLinear, rendersAsynchronously: true) { context, size in
-            guard !displaySamples.isEmpty, size.width > 0, size.height > 0 else { return }
+    @ViewBuilder
+    private func cachedMusicWaveform(
+        samples displaySamples: [Double],
+        sampleSignature: UInt64,
+        displaySize: CGSize,
+        renderSize: CGSize,
+        progress displayedProgress: Double
+    ) -> some View {
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let clampedProgress = min(1, max(0, displayedProgress))
+        let cache = DownloadedMusicWaveformRenderCache.shared
+        let _ = cacheRenderRevision
 
-            let midY = size.height / 2
-            let clampedProgress = min(1, max(0, displayedProgress))
-            let maxHalfHeight = size.height * 0.40
-            let pointCount = displaySamples.count
-            let xStep = pointCount > 1 ? size.width / CGFloat(pointCount - 1) : size.width
-            var upperPath = Path()
-            var lowerPath = Path()
-            var shapePath = Path()
-            var tickPath = Path()
-            var upperPoints: [CGPoint] = []
-            var lowerPoints: [CGPoint] = []
+        if
+            displaySize.width > 0,
+            displaySize.height > 0,
+            let baseImage = cache.cachedMemoryImage(
+                for: displaySamples,
+                signature: sampleSignature,
+                size: renderSize,
+                scale: scale,
+                isCompact: isCompact,
+                layer: isActive ? .activeBase : .inactiveBase
+            )
+        {
+            ZStack(alignment: .leading) {
+                Image(decorative: baseImage.cgImage, scale: baseImage.scale, orientation: .up)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: displaySize.width, height: displaySize.height)
 
-            for (index, sample) in displaySamples.enumerated() {
-                let value = min(1, max(0.02, sample))
-                let x = pointCount > 1 ? CGFloat(index) * xStep : size.width / 2
-                let halfHeight = max(1.2, CGFloat(value) * maxHalfHeight)
-                upperPoints.append(CGPoint(x: x, y: midY - halfHeight))
-                lowerPoints.append(CGPoint(x: x, y: midY + halfHeight))
-            }
+                if
+                    isActive,
+                    let playedImage = cache.cachedMemoryImage(
+                        for: displaySamples,
+                        signature: sampleSignature,
+                        size: renderSize,
+                        scale: scale,
+                        isCompact: isCompact,
+                        layer: .activePlayed
+                    )
+                {
+                    Image(decorative: playedImage.cgImage, scale: playedImage.scale, orientation: .up)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: displaySize.width, height: displaySize.height)
+                        .frame(width: displaySize.width * CGFloat(clampedProgress), alignment: .leading)
+                        .clipped()
 
-            for (index, point) in upperPoints.enumerated() {
-                if index == 0 {
-                    upperPath.move(to: point)
-                    shapePath.move(to: point)
-                } else {
-                    upperPath.addLine(to: point)
-                    shapePath.addLine(to: point)
+                    RoundedRectangle(cornerRadius: 1, style: .continuous)
+                        .fill(Color.white.opacity(0.96))
+                        .frame(width: 2, height: max(0, displaySize.height - 4))
+                        .position(
+                            x: min(max(1, displaySize.width * CGFloat(clampedProgress)), max(1, displaySize.width - 1)),
+                            y: displaySize.height / 2
+                        )
                 }
             }
-
-            for (index, point) in lowerPoints.enumerated() {
-                let reversedPoint = lowerPoints[lowerPoints.count - 1 - index]
-                if index == 0 {
-                    lowerPath.move(to: point)
-                } else {
-                    lowerPath.addLine(to: point)
-                }
-                shapePath.addLine(to: reversedPoint)
-            }
-            shapePath.closeSubpath()
-
-            let tickStride = max(1, Int(ceil(CGFloat(4) / max(xStep, 0.5))))
-            for index in stride(from: 0, to: pointCount, by: tickStride) {
-                let upper = upperPoints[index]
-                let lower = lowerPoints[index]
-                tickPath.move(to: upper)
-                tickPath.addLine(to: lower)
-            }
-
-            let baseFillOpacity = isActive ? 0.18 : 0.11
-            let baseStrokeOpacity = isActive ? 0.86 : 0.62
-            context.fill(shapePath, with: .color(Color.white.opacity(baseFillOpacity)))
-
-            var centerPath = Path()
-            centerPath.move(to: CGPoint(x: 0, y: midY))
-            centerPath.addLine(to: CGPoint(x: size.width, y: midY))
-            context.stroke(centerPath, with: .color(Color.white.opacity(0.12)), lineWidth: 1)
-            context.stroke(tickPath, with: .color(Color.white.opacity(isActive ? 0.28 : 0.20)), lineWidth: isCompact ? 0.45 : 0.55)
-            context.stroke(upperPath, with: .color(Color.white.opacity(baseStrokeOpacity)), lineWidth: isCompact ? 1.05 : 1.25)
-            context.stroke(lowerPath, with: .color(Color.white.opacity(baseStrokeOpacity * 0.82)), lineWidth: isCompact ? 0.95 : 1.15)
-
-            if isActive {
-                let playedWidth = size.width * CGFloat(clampedProgress)
-                var playedContext = context
-                playedContext.clip(to: Path(CGRect(x: 0, y: 0, width: playedWidth, height: size.height)))
-                playedContext.fill(shapePath, with: .color(Color.white.opacity(0.34)))
-                playedContext.stroke(tickPath, with: .color(Color.white.opacity(0.46)), lineWidth: isCompact ? 0.5 : 0.65)
-                playedContext.stroke(upperPath, with: .color(Color.white.opacity(0.96)), lineWidth: isCompact ? 1.15 : 1.35)
-                playedContext.stroke(lowerPath, with: .color(Color.white.opacity(0.84)), lineWidth: isCompact ? 1.0 : 1.2)
-            }
-
-            if isActive {
-                let headX = size.width * CGFloat(clampedProgress)
-                var head = Path()
-                head.addRoundedRect(
-                    in: CGRect(x: headX - 1, y: 2, width: 2, height: size.height - 4),
-                    cornerSize: CGSize(width: 1, height: 1)
-                )
-                context.fill(head, with: .color(Color.white.opacity(0.96)))
-            }
-        }
-    }
-
-    private func preparedSamples(for width: CGFloat) -> [Double] {
-        guard !samples.isEmpty else { return [] }
-        let targetCount = max(32, min(samples.count, Int(max(32, width / (isCompact ? 2.6 : 2.0)))))
-        let reduced: [Double]
-
-        if samples.count <= targetCount {
-            reduced = samples
         } else {
-            reduced = (0..<targetCount).map { index in
-                let start = Int(Double(index) * Double(samples.count) / Double(targetCount))
-                let rawEnd = Int(Double(index + 1) * Double(samples.count) / Double(targetCount))
-                let end = min(max(start + 1, rawEnd), samples.count)
-                let slice = samples[start..<end]
-                let peak = slice.max() ?? 0
-                let average = slice.reduce(0, +) / Double(slice.count)
-                return min(1, peak * 0.52 + average * 0.48)
-            }
+            musicWaveformCachePlaceholder()
         }
-
-        return contrastExpanded(reduced)
     }
 
-    private func contrastExpanded(_ values: [Double]) -> [Double] {
-        guard !values.isEmpty else { return [] }
-        let high = values.max() ?? 0
+    private func ensureWaveformImagesCached(
+        displaySamples: [Double],
+        sampleSignature: UInt64,
+        renderSize: CGSize,
+        scale: CGFloat,
+        isActive: Bool
+    ) async -> Bool {
+        guard !displaySamples.isEmpty, renderSize.width > 0, renderSize.height > 0 else { return false }
+        let compact = isCompact
 
-        guard high > 0.015 else {
-            return values.map { min(1, max(0.08, $0)) }
-        }
+        await Task.detached(priority: .utility) {
+            let cache = DownloadedMusicWaveformRenderCache.shared
+            _ = cache.image(
+                for: displaySamples,
+                signature: sampleSignature,
+                size: renderSize,
+                scale: scale,
+                isCompact: compact,
+                layer: isActive ? .activeBase : .inactiveBase
+            )
 
-        return values.map { value in
-            let normalized = min(1, max(0, value / high))
-            return 0.05 + pow(normalized, 1.18) * 0.95
+            if isActive {
+                _ = cache.image(
+                    for: displaySamples,
+                    signature: sampleSignature,
+                    size: renderSize,
+                    scale: scale,
+                    isCompact: compact,
+                    layer: .activePlayed
+                )
+            }
+        }.value
+
+        return true
+    }
+
+    private func downloadedMusicWaveformRenderPrewarmKey(
+        sampleSignature: UInt64,
+        sampleCount: Int,
+        renderSize: CGSize,
+        scale: CGFloat,
+        isCompact: Bool
+    ) -> String {
+        let clampedScale = max(1, min(3, scale))
+        let pixelWidth = max(1, Int((renderSize.width * clampedScale).rounded(.up)))
+        let pixelHeight = max(1, Int((renderSize.height * clampedScale).rounded(.up)))
+        return [
+            "\(sampleSignature)",
+            "\(sampleCount)",
+            "\(pixelWidth)x\(pixelHeight)",
+            "\(Int((clampedScale * 100).rounded()))",
+            isCompact ? "compact" : "regular",
+            "all"
+        ].joined(separator: "|")
+    }
+
+    private func musicWaveformCachePlaceholder() -> some View {
+        ZStack {
+            Color.white.opacity(0.045)
+            LinearGradient(
+                colors: [
+                    .white.opacity(0.02),
+                    .white.opacity(0.08),
+                    .white.opacity(0.02)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
         }
     }
 

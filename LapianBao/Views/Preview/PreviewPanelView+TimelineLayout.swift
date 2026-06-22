@@ -23,7 +23,6 @@ extension PreviewPanelView {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 28)
                 }
-                .help("后退一帧")
 
                 Button {
                     controller.togglePlayback()
@@ -34,7 +33,6 @@ extension PreviewPanelView {
                         .background(.white.opacity(0.14))
                         .clipShape(Circle())
                 }
-                .help(controller.isPlaying ? "暂停" : "播放")
 
                 Button {
                     controller.stepFrame(by: 1)
@@ -43,7 +41,6 @@ extension PreviewPanelView {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 28)
                 }
-                .help("前进一帧")
             }
 
             HStack {
@@ -56,7 +53,6 @@ extension PreviewPanelView {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 28)
                 }
-                .help("添加批注")
             }
         }
         .buttonStyle(.borderless)
@@ -127,7 +123,6 @@ extension PreviewPanelView {
                     .animation(.easeOut(duration: 0.08), value: isPlaybackHighlighted)
             }
             .buttonStyle(.plain)
-            .help(controller.isPlaying ? "暂停" : "播放")
 
             TimelineShuttleButton(
                 direction: .forward,
@@ -227,7 +222,6 @@ extension PreviewPanelView {
             .animation(.easeOut(duration: 0.12), value: isShowingProgress)
         }
         .buttonStyle(.plain)
-        .help(help)
     }
 
     func frameTimelineRecognitionProgress(for video: VideoItem) -> Double? {
@@ -255,7 +249,6 @@ extension PreviewPanelView {
                 .animation(.easeOut(duration: 0.08), value: isActive)
         }
         .buttonStyle(.plain)
-        .help(help)
     }
 
     func timelineFrameTimecode(_ seconds: Double) -> String {
@@ -310,7 +303,6 @@ extension PreviewPanelView {
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
-        .help("添加标签")
         .popover(isPresented: $isVideoTagPopoverPresented, arrowEdge: .bottom) {
             videoTagPopover(for: video)
         }
@@ -324,6 +316,9 @@ extension PreviewPanelView {
             tags: tags,
             suggestedTags: libraryStore.videoTagSuggestions(for: video),
             chipSize: .compact,
+            verticalSpacing: 0,
+            inputSpacing: 2,
+            gridVerticalPadding: 0,
             onAdd: { tag in
                 libraryStore.addTag(tag, to: video)
             },
@@ -331,7 +326,8 @@ extension PreviewPanelView {
                 libraryStore.removeTag(tag, from: video)
             }
         )
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     func timelineStackContainer(
@@ -824,6 +820,47 @@ extension PreviewPanelView {
         isExportPanelPresented = true
     }
 
+    func exportCurrentStoryboard(for video: VideoItem) {
+        if !libraryStore.hasSceneRecognitionResult(for: video) {
+            pendingStoryboardExportPath = video.url.path
+            startSceneRecognitionIfNeeded(for: video)
+            return
+        }
+
+        guard exportStoryboardDocumentIfPossible(for: video) else { return }
+        exportPanelFilter = .recent
+        isExportPanelPresented = true
+    }
+
+    @discardableResult
+    func exportStoryboardDocumentIfPossible(for video: VideoItem) -> Bool {
+        let path = video.url.path
+        guard libraryStore.sceneDetectionProgress[path] == nil else { return false }
+        guard libraryStore.sceneDetectionErrorByVideoPath[path] == nil else { return false }
+        return libraryStore.exportStoryboardDocument(video: video)
+    }
+
+    func completePendingStoryboardExportIfReady() {
+        guard
+            let path = pendingStoryboardExportPath,
+            libraryStore.sceneDetectionProgress[path] == nil
+        else { return }
+
+        if libraryStore.sceneDetectionErrorByVideoPath[path] != nil {
+            pendingStoryboardExportPath = nil
+            return
+        }
+
+        let video = libraryStore.videos.first { $0.url.path == path }
+            ?? (libraryStore.selectedVideo?.url.path == path ? libraryStore.selectedVideo : nil)
+        guard let video, libraryStore.hasSceneRecognitionResult(for: video) else { return }
+
+        pendingStoryboardExportPath = nil
+        guard exportStoryboardDocumentIfPossible(for: video) else { return }
+        exportPanelFilter = .recent
+        isExportPanelPresented = true
+    }
+
     func beginTimelineAnnotation() {
         switch expandedPreviewTab ?? activePreviewTab {
         case .frames:
@@ -1028,7 +1065,6 @@ private struct TimelineShuttleButton: View {
                 isPressing = false
                 didStartShuttle = false
             }
-            .help(help)
             .accessibilityLabel(Text(help))
             .accessibilityAddTraits(.isButton)
     }

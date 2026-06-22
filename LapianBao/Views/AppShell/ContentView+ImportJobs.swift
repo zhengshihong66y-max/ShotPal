@@ -183,6 +183,7 @@ extension ContentView {
             let alreadyAddedIDs = queuedOrImportedImportCandidateIDs
             let candidates = importVideos(from: links, metadataByLink: metadataByLink)
                 .filter { !alreadyAddedIDs.contains($0.id) }
+                .filter { !libraryStore.savedImportCandidateIsIgnored(sourceURLString: $0.urlString) }
             savedImportCandidates = candidates
             startSavedImportCandidateMetadataEnrichment(for: candidates)
             savedImportRefreshIsError = candidates.isEmpty && !errors.isEmpty
@@ -466,6 +467,7 @@ extension ContentView {
 
     func sourcePlatformName(for video: VideoItem) -> String? {
         guard let platform = libraryStore.videoSourcePlatform(for: video) else { return nil }
+        guard !LibraryStore.isUnknownSourcePlatform(platform) else { return nil }
         return VideoSourcePlatform.matching(platform)?.rawValue ?? platform
     }
 
@@ -740,9 +742,6 @@ extension ContentView {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                     .frame(height: 16)
-
-                importStatusDetail(for: job)
-                    .frame(height: 8)
             }
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
 
@@ -916,7 +915,6 @@ extension ContentView {
             }
             .frame(maxWidth: .infinity, minHeight: 18, alignment: .leading)
             .clipped()
-            .help(tags.joined(separator: " / "))
         }
     }
 
@@ -930,7 +928,6 @@ extension ContentView {
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(help)
     }
 
     func importStatusTitle(for job: RemoteImportJob) -> String {
@@ -1006,63 +1003,6 @@ extension ContentView {
         default:
             return nil
         }
-    }
-
-    @ViewBuilder
-    func importStatusDetail(for job: RemoteImportJob) -> some View {
-        switch job.status {
-        case .idle:
-            EmptyView()
-        case .paused:
-            if let progress = job.downloadProgress {
-                importLinearProgress(progress, tint: .secondary)
-            } else {
-                EmptyView()
-            }
-        case .importing:
-            if let progress = job.downloadProgress {
-                importLinearProgress(progress, tint: Color(red: 0.36, green: 0.70, blue: 1.00))
-            } else {
-                importIndeterminateProgress(tint: Color(red: 0.36, green: 0.70, blue: 1.00))
-            }
-        case .transcoding:
-            if let progress = job.downloadProgress {
-                importLinearProgress(progress, tint: Design.captureFrameAccent)
-            } else {
-                importIndeterminateProgress(tint: Design.captureFrameAccent)
-            }
-        case .finalizing:
-            if let progress = job.downloadProgress {
-                importLinearProgress(progress, tint: Color(red: 0.42, green: 0.78, blue: 0.48))
-            } else {
-                importIndeterminateProgress(tint: Color(red: 0.42, green: 0.78, blue: 0.48))
-            }
-        case .succeeded:
-            EmptyView()
-        case let .failed(message):
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(Color.red.opacity(0.86))
-                .lineLimit(4)
-                .textSelection(.enabled)
-        }
-    }
-
-    func importLinearProgress(_ progress: Double, tint: Color) -> some View {
-        ProgressView(value: normalizedProgressFraction(progress))
-            .progressViewStyle(.linear)
-            .controlSize(.small)
-            .tint(tint)
-            .transaction { transaction in
-                transaction.animation = nil
-            }
-    }
-
-    func importIndeterminateProgress(tint: Color) -> some View {
-        ProgressView()
-            .progressViewStyle(.linear)
-            .controlSize(.small)
-            .tint(tint)
     }
 
 }

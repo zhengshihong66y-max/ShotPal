@@ -81,6 +81,7 @@ struct PreviewPanelView: View {
     @State var activeTransportShortcutFeedback: PreviewTransportShortcutFeedback?
     @State var transportShortcutFeedbackTask: Task<Void, Never>?
     @State var pendingSeekTask: Task<Void, Never>?
+    @State var pendingStoryboardExportPath: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -167,9 +168,11 @@ struct PreviewPanelView: View {
         }
         .onReceive(libraryStore.$sceneDetectionProgress) { _ in
             completePendingTimelineExpansionIfReady()
+            completePendingStoryboardExportIfReady()
         }
         .onReceive(libraryStore.$sceneCutsByVideoPath) { _ in
             completePendingTimelineExpansionIfReady()
+            completePendingStoryboardExportIfReady()
         }
         .onReceive(libraryStore.$transcriptSegmentsByVideoPath) { _ in
             completePendingTimelineExpansionIfReady()
@@ -186,6 +189,10 @@ struct PreviewPanelView: View {
             pendingTimelineExpansionVideoPath = nil
         }
         .onReceive(libraryStore.$sceneDetectionErrorByVideoPath) { errors in
+            if let path = pendingStoryboardExportPath, errors[path] != nil {
+                pendingStoryboardExportPath = nil
+            }
+
             guard
                 let path = pendingTimelineExpansionVideoPath,
                 errors[path] != nil

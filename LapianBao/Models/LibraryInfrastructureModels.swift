@@ -169,8 +169,24 @@ nonisolated struct ProjectDataFile: Codable, Sendable {
     var musicDownloadJobs: [MusicDownloadJob]?
 }
 
+nonisolated struct LibraryScanProgress: Equatable, Sendable {
+    var message: String
+    var completed: Int
+    var total: Int
+
+    var fraction: Double? {
+        guard total > 0 else { return nil }
+        return min(1, max(0, Double(completed) / Double(total)))
+    }
+}
+
 nonisolated enum ResourceLibrarySQLite {
-    static func write(libraryURL: URL, music: [LocalMusicAsset], audio: [LocalAudioAsset]) {
+    static func write(
+        libraryURL: URL,
+        music: [LocalMusicAsset],
+        audio: [LocalAudioAsset],
+        images: [LocalImageAsset] = []
+    ) {
         let sqliteURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         guard FileManager.default.isExecutableFile(atPath: sqliteURL.path) else { return }
         let process = Process()
@@ -182,7 +198,7 @@ nonisolated enum ResourceLibrarySQLite {
         process.standardError = Pipe()
         do {
             try process.run()
-            let sqlData = sql(libraryURL: libraryURL, music: music, audio: audio).data(using: .utf8) ?? Data()
+            let sqlData = sql(libraryURL: libraryURL, music: music, audio: audio, images: images).data(using: .utf8) ?? Data()
             inputPipe.fileHandleForWriting.write(sqlData)
             try? inputPipe.fileHandleForWriting.close()
             process.waitUntilExit()
@@ -191,12 +207,17 @@ nonisolated enum ResourceLibrarySQLite {
         }
     }
 
-    private static func sql(libraryURL: URL, music: [LocalMusicAsset], audio: [LocalAudioAsset]) -> String {
+    private static func sql(
+        libraryURL: URL,
+        music: [LocalMusicAsset],
+        audio: [LocalAudioAsset],
+        images: [LocalImageAsset]
+    ) -> String {
         var lines: [String] = [
             "PRAGMA journal_mode=WAL;",
             "CREATE TABLE IF NOT EXISTS assets (kind TEXT NOT NULL, path TEXT NOT NULL PRIMARY KEY, title TEXT NOT NULL, role TEXT NOT NULL, tags TEXT NOT NULL, file_extension TEXT NOT NULL, file_size INTEGER NOT NULL, modified_at REAL, duration REAL NOT NULL);",
             "BEGIN IMMEDIATE;",
-            "DELETE FROM assets WHERE kind IN ('music', 'audio', '音乐', '音频');"
+            "DELETE FROM assets WHERE kind IN ('music', 'audio', 'image', '音乐', '音频', '图片');"
         ]
         lines += music.map { item in
             insertSQL(kind: "音乐", path: relativePath(item.filePath, base: libraryURL), title: item.title, role: item.role.rawValue, tags: item.tags, fileExtension: item.fileExtension, fileSize: item.fileSize, modifiedAt: item.modifiedAt, duration: item.duration)
@@ -204,8 +225,16 @@ nonisolated enum ResourceLibrarySQLite {
         lines += audio.map { item in
             insertSQL(kind: "音频", path: relativePath(item.filePath, base: libraryURL), title: item.title, role: "soundEffect", tags: item.tags, fileExtension: item.fileExtension, fileSize: item.fileSize, modifiedAt: item.modifiedAt, duration: item.duration)
         }
+        lines += images.map { item in
+            insertSQL(kind: "图片", path: relativePath(item.filePath, base: libraryURL), title: item.title, role: imageRole(width: item.width, height: item.height), tags: item.tags, fileExtension: item.fileExtension, fileSize: item.fileSize, modifiedAt: item.modifiedAt, duration: 0)
+        }
         lines.append("COMMIT;")
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func imageRole(width: Int?, height: Int?) -> String {
+        guard let width, let height, width > 0, height > 0 else { return "image" }
+        return "\(width)x\(height)"
     }
 
     private static func insertSQL(kind: String, path: String, title: String, role: String, tags: [String], fileExtension: String, fileSize: Int64, modifiedAt: Date?, duration: Double) -> String {

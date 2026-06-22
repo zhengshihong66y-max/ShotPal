@@ -225,7 +225,7 @@ enum VideoSourcePlatform: String, CaseIterable {
         case .youtube: return "play.rectangle.fill"
         case .xiaohongshu: return "book.pages.fill"
         case .bilibili: return "play.rectangle.fill"
-        case .douyin: return "music.note.tv.fill"
+        case .douyin: return "music.note"
         case .other: return "questionmark.circle.fill"
         }
     }
@@ -236,7 +236,7 @@ enum VideoSourcePlatform: String, CaseIterable {
         case .youtube: return Color(red: 0.96, green: 0.18, blue: 0.18)
         case .xiaohongshu: return Color(red: 0.88, green: 0.24, blue: 0.30)
         case .bilibili: return Color(red: 0.28, green: 0.68, blue: 0.95)
-        case .douyin: return Color(red: 0.34, green: 0.84, blue: 0.78)
+        case .douyin: return .white
         case .other: return Color(red: 0.62, green: 0.66, blue: 0.72)
         }
     }

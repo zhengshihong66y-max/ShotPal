@@ -26,56 +26,15 @@ extension LibraryStore {
 
     func visibleMusicAssetsAfterPackaging(
         _ assets: [LocalMusicAsset],
-        libraryURL: URL
+        libraryURL _: URL
     ) -> [LocalMusicAsset] {
-        let packageRoot = Self.nonRecognizedMusicPackageFolder(in: libraryURL)
-        let migratedPackagePaths = Self.migrateLegacyNonRecognizedMusicPackageIfNeeded(
-            libraryURL: libraryURL,
-            packageRoot: packageRoot
-        )
-        if !migratedPackagePaths.isEmpty {
-            updateMusicDownloadJobPaths(migratedPackagePaths)
-        }
-        let restoredAssets = restorePackagedMusicDownloadsIfNeeded(
-            libraryURL: libraryURL,
-            packageRoot: packageRoot
-        )
-        guard !assets.isEmpty else { return restoredAssets }
-
-        let recognizedLookup = recognizedMusicDownloadLookup()
-        let packageRootPath = packageRoot.standardizedFileURL.path
-        let packageRootPrefix = packageRootPath.hasSuffix("/") ? packageRootPath : packageRootPath + "/"
-        var visibleAssets: [LocalMusicAsset] = restoredAssets
-        var visiblePaths = Set(restoredAssets.map(\.filePath))
-        var movedPaths: [String: String] = [:]
-
+        var visibleAssets: [LocalMusicAsset] = []
+        var visiblePaths = Set<String>()
         for asset in assets {
-            let normalizedPath = Self.normalizedLocalFilePath(asset.filePath)
-            if normalizedPath.hasPrefix(packageRootPrefix) {
-                continue
-            }
-
-            if recognizedLookup.shouldKeep(asset) {
-                if visiblePaths.insert(asset.filePath).inserted {
-                    visibleAssets.append(asset)
-                }
-                continue
-            }
-
-            guard FileManager.default.fileExists(atPath: asset.filePath) else {
-                continue
-            }
-
-            do {
-                let destinationURL = try moveMusicAssetToNonRecognizedPackage(asset, packageRoot: packageRoot)
-                movedPaths[asset.filePath] = destinationURL.path
-            } catch {
+            guard FileManager.default.fileExists(atPath: asset.filePath) else { continue }
+            if visiblePaths.insert(asset.filePath).inserted {
                 visibleAssets.append(asset)
             }
-        }
-
-        if !movedPaths.isEmpty {
-            finishPackagingMovedMusicFiles(movedPaths)
         }
 
         return visibleAssets
@@ -239,7 +198,8 @@ extension LibraryStore {
             duration: musicFileDurationsByPath[normalizedPath] ?? 0,
             fileSize: Int64(values?.fileSize ?? 0),
             createdAt: values?.creationDate ?? job.createdAt,
-            modifiedAt: values?.contentModificationDate
+            modifiedAt: values?.contentModificationDate,
+            recognizedSong: song
         )
     }
 

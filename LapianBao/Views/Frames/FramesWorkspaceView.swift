@@ -84,9 +84,33 @@ struct FullResolutionFramePreview: View {
     }
 }
 
+struct SavedFrameImagePreview: View {
+    let image: NSImage?
+    let dragItemProvider: (() -> NSItemProvider)?
+
+    var body: some View {
+        previewContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .fullResolutionImageDrag(dragItemProvider)
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if let image {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        } else {
+            Color.black.opacity(0.24)
+                .aspectRatio(16 / 9, contentMode: .fit)
+        }
+    }
+}
+
 private struct FrameBoardImageTile<OverlayControl: View>: View {
     let image: NSImage?
-    let numberText: String
+    var numberText: String? = nil
     let onTap: () -> Void
     let dragItemProvider: (() -> NSItemProvider)?
     @ViewBuilder let overlayControl: (_ isHovered: Bool) -> OverlayControl
@@ -102,22 +126,24 @@ private struct FrameBoardImageTile<OverlayControl: View>: View {
                             .frame(width: proxy.size.width, height: proxy.size.height)
                             .clipped()
 
-                        LinearGradient(
-                            colors: [.clear, .black.opacity(0.56)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 48)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                        .allowsHitTesting(false)
+                        if let numberText, !numberText.isEmpty {
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.56)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 48)
+                            .frame(maxHeight: .infinity, alignment: .bottom)
+                            .allowsHitTesting(false)
 
-                        Text(numberText)
-                            .font(Design.numericFont(size: 13, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.96))
-                            .shadow(color: .black.opacity(0.72), radius: 2, y: 1)
-                            .padding(.leading, 9)
-                            .padding(.bottom, 7)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                            Text(numberText)
+                                .font(Design.numericFont(size: 13, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.96))
+                                .shadow(color: .black.opacity(0.72), radius: 2, y: 1)
+                                .padding(.leading, 9)
+                                .padding(.bottom, 7)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        }
                     }
                 }
                 .aspectRatio(16 / 9, contentMode: .fit)
@@ -182,7 +208,6 @@ private struct FrameCardTagMenuButton: View {
         }
         .buttonStyle(.plain)
         .frame(width: 26, height: 26)
-        .help("更多")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
             morePopover
                 .transaction { $0.animation = nil }
@@ -190,17 +215,23 @@ private struct FrameCardTagMenuButton: View {
     }
 
     private var morePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let tagHorizontalInset: CGFloat = 14
+        let tagVerticalInset: CGFloat = 16
+        let tagContentGap: CGFloat = tagVerticalInset
+
+        return VStack(alignment: .leading, spacing: 0) {
             TagEditorSection(
                 domain: .frame,
                 tags: tags,
                 suggestedTags: suggestedTags,
+                inputSpacing: tagContentGap,
+                gridVerticalPadding: 0,
                 onAdd: onAdd,
                 onRemove: onRemove
             )
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 6)
+            .padding(.horizontal, tagHorizontalInset)
+            .padding(.top, tagVerticalInset)
+            .padding(.bottom, tagVerticalInset)
 
             if onJumpToVideo != nil || onShowInFinder != nil || onDelete != nil || showsUnavailableFileActions {
                 Divider()
@@ -295,7 +326,6 @@ private struct FrameDetailMoreButton: View {
         }
         .buttonStyle(.plain)
         .frame(width: 26, height: 26)
-        .help("更多")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
             detailPopover
                 .transaction { $0.animation = nil }
@@ -303,19 +333,25 @@ private struct FrameDetailMoreButton: View {
     }
 
     private var detailPopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let tagHorizontalInset: CGFloat = 14
+        let tagVerticalInset: CGFloat = 16
+        let tagContentGap: CGFloat = tagVerticalInset
+
+        return VStack(alignment: .leading, spacing: 0) {
             if let onAdd {
                 TagEditorSection(
                     domain: .frame,
                     tags: tags,
                     suggestedTags: suggestedTags,
                     emptyTitle: "暂无图片标签",
+                    inputSpacing: tagContentGap,
+                    gridVerticalPadding: 0,
                     onAdd: onAdd,
                     onRemove: onRemove
                 )
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
+                .padding(.horizontal, tagHorizontalInset)
+                .padding(.top, tagVerticalInset)
+                .padding(.bottom, tagVerticalInset)
 
                 Divider()
             }
@@ -390,10 +426,11 @@ struct FramesWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @Binding var selectedVideoPath: String?
     @Binding var selectedFrameID: UUID?
+    @Binding var boardMode: FramesBoardMode
+    let previewController: PreviewController
     let goHome: (String, Double) -> Void
     @AppStorage(AppSettings.Key.frameBoardGridSize) private var frameBoardGridSize = 1
     @AppStorage(AppSettings.Key.storyboardVideoPickerGridSize) private var storyboardVideoPickerGridSize = 2
-    @State private var boardMode: FramesBoardMode = .storyboard
     @State private var frameSearchText = ""
     @State private var selectedFrameTags: Set<String> = []
     @State private var isFrameTagFilterPresented = true
@@ -402,6 +439,9 @@ struct FramesWorkspaceView: View {
     @State private var detailStoryboardItem: FrameStoryboardItem?
     @State private var storyboardThumbnailPrewarmKey = ""
     @State private var pendingStoryboardRecognitionPath: String?
+    @State private var activeDetailPlaybackKey: String?
+    @State private var detailPlaybackPlaceholderKey: String?
+    @State private var detailPlaybackTask: Task<Void, Never>?
 
     private var storyboardVideos: [VideoItem] {
         let query = normalizedSearch(frameSearchText)
@@ -493,7 +533,11 @@ struct FramesWorkspaceView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Design.sidebarBg)
         .onAppear {
+            previewController.libraryStore = libraryStore
             syncStoryboardSelectionIfNeeded()
+        }
+        .onDisappear {
+            stopDetailPlayback()
         }
         .onChange(of: boardMode) { _, _ in
             syncStoryboardSelectionIfNeeded()
@@ -621,8 +665,8 @@ struct FramesWorkspaceView: View {
         } else {
             ScrollView {
                 LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 10) {
-                    ForEach(Array(visibleExportedFrames.enumerated()), id: \.element.id) { index, frame in
-                        frameBoardCard(frame, title: frameCardTitle(for: frame, index: index))
+                    ForEach(visibleExportedFrames) { frame in
+                        frameBoardCard(frame)
                     }
                 }
                 .padding(.vertical, 2)
@@ -666,7 +710,6 @@ struct FramesWorkspaceView: View {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help("图片标签筛选")
     }
 
     private var frameTagQuickFilterBar: some View {
@@ -711,7 +754,6 @@ struct FramesWorkspaceView: View {
         .buttonStyle(.plain)
         .frame(width: frameModeButtonWidth(for: mode), height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help(frameModeButtonHelp(for: mode))
 
         if mode == .storyboard {
             button
@@ -1054,7 +1096,6 @@ struct FramesWorkspaceView: View {
                 .stroke(.white.opacity(0.14), lineWidth: 0.7)
         }
         .shadow(color: .black.opacity(0.24), radius: 12, y: 5)
-        .help("调整下拉大小")
     }
 
     private var frameGridSizeControl: some View {
@@ -1084,7 +1125,6 @@ struct FramesWorkspaceView: View {
         }
         .padding(.horizontal, 9)
         .frame(height: Design.libraryToolbarButtonSlotHeight)
-        .help("图片看板密度")
     }
 
     private func syncStoryboardSelectionIfNeeded() {
@@ -1212,13 +1252,7 @@ struct FramesWorkspaceView: View {
     }
 
     private func storyboardRecognitionCenter(progress: Double) -> some View {
-        VStack(spacing: 14) {
-            Image(systemName: "rectangle.stack")
-                .font(.system(size: 42, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            storyboardRecognitionStatus(progress: progress, showsIcon: false)
-        }
+        storyboardRecognitionStatus(progress: progress)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
@@ -1233,22 +1267,12 @@ struct FramesWorkspaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    private func storyboardRecognitionStatus(progress: Double, showsIcon: Bool = true) -> some View {
-        HStack(spacing: 9) {
-            if showsIcon {
-                Image(systemName: "rectangle.stack")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("正在识别分镜")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Text(progressPercentText(progress))
-                .font(Design.numericFont(size: 20, weight: .bold))
-                .foregroundStyle(.primary.opacity(0.78))
-        }
+    private func storyboardRecognitionStatus(progress: Double) -> some View {
+        Text("正在识别分镜 \(progressPercentText(progress))")
+            .font(.title3.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
@@ -1276,7 +1300,6 @@ struct FramesWorkspaceView: View {
                     .frame(width: 26, height: 26)
             }
             .buttonStyle(.plain)
-            .help("重新识别场景")
         }
         .recognitionProgressCard()
     }
@@ -1360,7 +1383,6 @@ struct FramesWorkspaceView: View {
                 showsUnavailableFileActions: item.cut != nil && sample == nil
             )
         }
-        .help(item.sample == nil ? "回到原视频这个分镜" : "\(item.video.name) · \(clockText(item.time))")
     }
 
     private func activateStoryboardItem(_ item: FrameStoryboardItem) {
@@ -1374,7 +1396,7 @@ struct FramesWorkspaceView: View {
 
     private func storyboardDragProvider(for item: FrameStoryboardItem) -> NSItemProvider {
         if let sample = item.sample {
-            return libraryStore.fullResolutionFrameProvider(for: sample)
+            return libraryStore.savedFrameImageProvider(for: sample)
         }
 
         return libraryStore.fullResolutionFrameProvider(
@@ -1390,16 +1412,15 @@ struct FramesWorkspaceView: View {
             ?? VideoItem(url: URL(fileURLWithPath: path))
     }
 
-    private func frameBoardCard(_ frame: SampledFrame, title: String) -> some View {
+    private func frameBoardCard(_ frame: SampledFrame) -> some View {
         FrameBoardImageTile(
             image: libraryStore.thumbnailImage(for: frame),
-            numberText: title,
             onTap: {
                 selectedFrameID = frame.id
                 detailFrame = latestFrame(frame)
             },
             dragItemProvider: {
-                libraryStore.fullResolutionFrameProvider(for: frame)
+                libraryStore.savedFrameImageProvider(for: frame)
             }
         ) { _ in
             FrameCardTagMenuButton(
@@ -1436,11 +1457,6 @@ struct FramesWorkspaceView: View {
         return number
     }
 
-    private func frameCardTitle(for frame: SampledFrame, index: Int) -> String {
-        let number = String(format: "%02d", (frame.sceneIndex ?? index) + 1)
-        return number
-    }
-
     private func detailOverlayContainer<Content: View>(
         dismiss: @escaping () -> Void,
         @ViewBuilder content: @escaping () -> Content
@@ -1466,7 +1482,7 @@ struct FramesWorkspaceView: View {
     }
 
     private func frameDetailOverlay(_ frame: SampledFrame) -> some View {
-        detailOverlayContainer(dismiss: { detailFrame = nil }) {
+        detailOverlayContainer(dismiss: { dismissFrameDetailOverlay() }) {
             VStack(alignment: .leading, spacing: 12) {
                 ZStack(alignment: .topTrailing) {
                     selectedFrameDetailPreview(frame)
@@ -1483,13 +1499,13 @@ struct FramesWorkspaceView: View {
                             detailFrame = deleted ? nil : latestFrame(frame)
                         },
                         onJumpToVideo: {
-                            detailFrame = nil
+                            dismissFrameDetailOverlay()
                             goHome(frame.videoPath, frame.time)
                         },
                         onShowInFinder: { showFrameInFinder(frame) },
                         onDelete: {
                             deleteFrame(frame)
-                            detailFrame = nil
+                            dismissFrameDetailOverlay()
                         }
                     )
                     .padding(10)
@@ -1514,7 +1530,7 @@ struct FramesWorkspaceView: View {
     }
 
     private func storyboardDetailOverlay(_ item: FrameStoryboardItem) -> some View {
-        detailOverlayContainer(dismiss: { detailStoryboardItem = nil }) {
+        detailOverlayContainer(dismiss: { dismissStoryboardDetailOverlay() }) {
             VStack(alignment: .leading, spacing: 12) {
                 ZStack(alignment: .topTrailing) {
                     storyboardItemDetailPreview(item)
@@ -1529,7 +1545,7 @@ struct FramesWorkspaceView: View {
                             { libraryStore.removeFrameTagOrDeleteIfEmpty($0, from: sample) }
                         },
                         onJumpToVideo: {
-                            detailStoryboardItem = nil
+                            dismissStoryboardDetailOverlay()
                             goHome(item.video.url.path, item.time)
                         },
                         onShowInFinder: sample.map { sample in
@@ -1538,7 +1554,7 @@ struct FramesWorkspaceView: View {
                         onDelete: sample.map { sample in
                             {
                                 deleteFrame(sample)
-                                detailStoryboardItem = nil
+                                dismissStoryboardDetailOverlay()
                             }
                         },
                         showsUnavailableFileActions: item.cut != nil && sample == nil
@@ -1657,12 +1673,19 @@ struct FramesWorkspaceView: View {
 
     @ViewBuilder
     private func storyboardItemPreview(_ item: FrameStoryboardItem, fallbackImage: NSImage? = nil) -> some View {
-        FullResolutionFramePreview(
-            videoURL: item.video.url,
-            time: storyboardOriginalFrameTime(for: item),
-            fallbackImage: fallbackImage ?? storyboardPreviewFallbackImage(for: item),
-            dragItemProvider: { storyboardDragProvider(for: item) }
-        )
+        let key = detailPlaybackKey(for: item)
+        detailPlaybackSurface(
+            video: item.video,
+            startTime: storyboardPlaybackStartTime(for: item),
+            key: key
+        ) {
+            FullResolutionFramePreview(
+                videoURL: item.video.url,
+                time: storyboardOriginalFrameTime(for: item),
+                fallbackImage: fallbackImage ?? storyboardPreviewFallbackImage(for: item),
+                dragItemProvider: { storyboardDragProvider(for: item) }
+            )
+        }
     }
 
     private func storyboardPreviewFallbackImage(for item: FrameStoryboardItem) -> NSImage? {
@@ -1686,12 +1709,197 @@ struct FramesWorkspaceView: View {
 
     @ViewBuilder
     private func selectedFramePreview(_ frame: SampledFrame, fallbackImage: NSImage? = nil) -> some View {
-        FullResolutionFramePreview(
-            videoURL: URL(fileURLWithPath: frame.videoPath),
-            time: frame.time,
-            fallbackImage: fallbackImage ?? libraryStore.thumbnailImage(for: frame),
-            dragItemProvider: { libraryStore.fullResolutionFrameProvider(for: frame) }
-        )
+        let video = video(for: frame.videoPath)
+        let key = detailPlaybackKey(for: frame)
+        detailPlaybackSurface(
+            video: video,
+            startTime: frame.time,
+            key: key
+        ) {
+            SavedFrameImagePreview(
+                image: fallbackImage ?? libraryStore.thumbnailImage(for: frame),
+                dragItemProvider: { libraryStore.savedFrameImageProvider(for: frame) }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func detailPlaybackSurface<Content: View>(
+        video: VideoItem,
+        startTime: Double,
+        key: String,
+        @ViewBuilder fallback: () -> Content
+    ) -> some View {
+        if isDetailPlaybackVisible(key: key, video: video) {
+            ZStack {
+                PreviewPlayerView(
+                    player: previewController.player,
+                    statusMessage: previewController.playbackMessage,
+                    onSurfaceTap: {
+                        toggleDetailPlayback(video: video, startTime: startTime, key: key)
+                    }
+                )
+                .transaction { $0.animation = nil }
+
+                if detailPlaybackPlaceholderKey == key {
+                    fallback()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+        } else {
+            fallback()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    playDetailSegment(video: video, startTime: startTime, key: key)
+                }
+        }
+    }
+
+    private func isDetailPlaybackVisible(key: String, video: VideoItem) -> Bool {
+        activeDetailPlaybackKey == key && previewController.currentVideoPath == video.url.path
+    }
+
+    private func toggleDetailPlayback(video: VideoItem, startTime: Double, key: String) {
+        if isDetailPlaybackVisible(key: key, video: video), previewController.isPlaying {
+            previewController.pause()
+            return
+        }
+
+        let resumeTime: Double
+        if isDetailPlaybackVisible(key: key, video: video) {
+            resumeTime = previewController.elapsed
+        } else {
+            resumeTime = startTime
+        }
+        playDetailSegment(video: video, startTime: resumeTime, key: key)
+    }
+
+    private func playDetailSegment(video: VideoItem, startTime: Double, key: String) {
+        previewController.libraryStore = libraryStore
+        libraryStore.loadCachedSceneCuts(for: video)
+        guard hasKnownSceneCuts(for: video) else { return }
+
+        detailPlaybackTask?.cancel()
+        let wasVisible = isDetailPlaybackVisible(key: key, video: video)
+        if !wasVisible {
+            detailPlaybackPlaceholderKey = key
+        }
+        activeDetailPlaybackKey = key
+        previewController.loadVideo(video, autoplay: false, preserveIfAlreadyLoaded: true)
+
+        detailPlaybackTask = Task { @MainActor in
+            for attempt in 0 ..< 8 {
+                guard !Task.isCancelled, activeDetailPlaybackKey == key else { return }
+                if let endTime = detailPlaybackEndTime(for: video, after: startTime) {
+                    previewController.playSegment(from: startTime, to: endTime)
+                    await hideDetailPlaybackPlaceholderWhenReady(key: key)
+                    return
+                }
+
+                if attempt == 0 {
+                    await Task.yield()
+                } else {
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                }
+            }
+
+            if !Task.isCancelled, activeDetailPlaybackKey == key {
+                activeDetailPlaybackKey = nil
+                detailPlaybackPlaceholderKey = nil
+            }
+        }
+    }
+
+    private func hideDetailPlaybackPlaceholderWhenReady(key: String) async {
+        for attempt in 0 ..< 10 {
+            guard !Task.isCancelled, activeDetailPlaybackKey == key else { return }
+            if previewController.isPlaying {
+                try? await Task.sleep(nanoseconds: 90_000_000)
+                guard !Task.isCancelled, activeDetailPlaybackKey == key else { return }
+                withAnimation(.easeOut(duration: 0.10)) {
+                    if detailPlaybackPlaceholderKey == key {
+                        detailPlaybackPlaceholderKey = nil
+                    }
+                }
+                return
+            }
+
+            if attempt == 0 {
+                await Task.yield()
+            } else {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+
+        guard !Task.isCancelled, activeDetailPlaybackKey == key else { return }
+        withAnimation(.easeOut(duration: 0.10)) {
+            if detailPlaybackPlaceholderKey == key {
+                detailPlaybackPlaceholderKey = nil
+            }
+        }
+    }
+
+    private func hasKnownSceneCuts(for video: VideoItem) -> Bool {
+        !(libraryStore.sceneCutsByVideoPath[video.url.path]?.isEmpty ?? true)
+    }
+
+    private func detailPlaybackEndTime(for video: VideoItem, after startTime: Double) -> Double? {
+        let path = video.url.path
+        guard let cuts = libraryStore.sceneCutsByVideoPath[path], !cuts.isEmpty else { return nil }
+        if let nextCut = cuts.sorted(by: { $0.time < $1.time }).first(where: { $0.time > startTime + 0.05 }) {
+            return max(startTime, nextCut.time - detailPlaybackCutStopOffset)
+        }
+
+        let duration = knownDuration(for: video)
+        return duration > startTime + 0.05 ? duration : nil
+    }
+
+    private var detailPlaybackCutStopOffset: Double {
+        1 / max(previewController.frameRate, 1)
+    }
+
+    private func knownDuration(for video: VideoItem) -> Double {
+        let path = video.url.path
+        if let duration = libraryStore.durationByVideoPath[path], duration > 0 {
+            return duration
+        }
+        guard previewController.currentVideoPath == path else { return 0 }
+        return previewController.effectiveDuration ?? 0
+    }
+
+    private func detailPlaybackKey(for frame: SampledFrame) -> String {
+        "frame-\(frame.id.uuidString)"
+    }
+
+    private func detailPlaybackKey(for item: FrameStoryboardItem) -> String {
+        "storyboard-\(item.id)"
+    }
+
+    private func dismissFrameDetailOverlay() {
+        stopDetailPlayback()
+        detailFrame = nil
+    }
+
+    private func dismissStoryboardDetailOverlay() {
+        stopDetailPlayback()
+        detailStoryboardItem = nil
+    }
+
+    private func stopDetailPlayback() {
+        detailPlaybackTask?.cancel()
+        detailPlaybackTask = nil
+        guard activeDetailPlaybackKey != nil else { return }
+        activeDetailPlaybackKey = nil
+        detailPlaybackPlaceholderKey = nil
+        previewController.pause()
+    }
+
+    private func storyboardPlaybackStartTime(for item: FrameStoryboardItem) -> Double {
+        if item.cut != nil {
+            return item.time
+        }
+        return storyboardOriginalFrameTime(for: item)
     }
 
     private func storyboardOriginalFrameTime(for item: FrameStoryboardItem) -> Double {

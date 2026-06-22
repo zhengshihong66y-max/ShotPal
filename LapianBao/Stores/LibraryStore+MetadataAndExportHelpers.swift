@@ -100,6 +100,7 @@ extension LibraryStore {
 
         thumbnailImageByVideoPath[path] = image
         noteThumbnailImageAccess(for: path)
+        bumpThumbnailImageRevisions(for: [path])
         thumbnailGenerationFailedPaths.remove(path)
         trimDecodedThumbnailImageCacheIfNeeded()
         scheduleMetadataDisplayRefresh()
@@ -314,6 +315,7 @@ extension LibraryStore {
         objectWillChange.send()
         thumbnailDataByVideoPath = preservedThumbnailData
         thumbnailImageByVideoPath = preservedThumbnailImages
+        thumbnailImageRevisionByVideoPath = thumbnailImageRevisionByVideoPath.filter { libraryPaths.contains($0.key) }
         thumbnailImageAccessTickByPath = thumbnailImageAccessTickByPath.filter { libraryPaths.contains($0.key) }
         durationByVideoPath = preservedDurations
         playbackSupportByVideoPath = preservedPlaybackSupport
@@ -597,6 +599,7 @@ extension LibraryStore {
     ) {
         guard thumbnailLoadGeneration == generation else { return }
         var didUpdate = false
+        var updatedPaths = Set<String>()
 
         for item in batch {
             guard containsVideoPath(item.path),
@@ -605,10 +608,12 @@ extension LibraryStore {
             else { continue }
             thumbnailImageByVideoPath[item.path] = item.image
             noteThumbnailImageAccess(for: item.path)
+            updatedPaths.insert(item.path)
             didUpdate = true
         }
 
         if didUpdate {
+            bumpThumbnailImageRevisions(for: updatedPaths)
             trimDecodedThumbnailImageCacheIfNeeded()
             scheduleMetadataDisplayRefresh()
         }
@@ -630,6 +635,7 @@ extension LibraryStore {
             if let image = videoMetadata.thumbnailImage ?? Self.decodedThumbnailImage(from: data) {
                 thumbnailImageByVideoPath[path] = image
                 noteThumbnailImageAccess(for: path)
+                bumpThumbnailImageRevisions(for: [path])
             }
             thumbnailGenerationFailedPaths.remove(path)
             updateSceneStripImages(for: path)
@@ -669,6 +675,30 @@ extension LibraryStore {
         thumbnailImageAccessTickByPath[path] = thumbnailImageAccessTick
     }
 
+    func thumbnailImageForDisplay(for video: VideoItem) -> NSImage? {
+        let path = video.url.path
+        if let image = thumbnailImageByVideoPath[path] {
+            noteThumbnailImageAccess(for: path)
+            return image
+        }
+
+        enqueueCachedThumbnailImageHydrationIfNeeded(for: path)
+        return nil
+    }
+
+    func thumbnailImageRevision(for video: VideoItem) -> Int {
+        thumbnailImageRevisionByVideoPath[video.url.path, default: 0]
+    }
+
+    func bumpThumbnailImageRevisions(for paths: Set<String>) {
+        guard !paths.isEmpty else { return }
+        var revisions = thumbnailImageRevisionByVideoPath
+        for path in paths {
+            revisions[path, default: 0] += 1
+        }
+        thumbnailImageRevisionByVideoPath = revisions
+    }
+
     func trimDecodedThumbnailImageCacheIfNeeded() {
         let limit = Self.maxDecodedLibraryThumbnailImages
         guard thumbnailImageByVideoPath.count > limit else { return }
@@ -680,10 +710,13 @@ extension LibraryStore {
             }
             .prefix(overflow)
 
+        var removedPaths = Set<String>()
         for path in pathsToRemove {
             thumbnailImageByVideoPath.removeValue(forKey: path)
             thumbnailImageAccessTickByPath.removeValue(forKey: path)
+            removedPaths.insert(path)
         }
+        bumpThumbnailImageRevisions(for: removedPaths)
     }
 
     func scheduleMetadataDisplayRefresh() {
@@ -1105,6 +1138,52 @@ extension LibraryStore {
         return provider
     }
 
+    nonisolated static func savedFrameDataItemProvider(data: Data, suggestedName: String) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.suggestedName = suggestedName
+
+        provider.registerFileRepresentation(
+            forTypeIdentifier: UTType.jpeg.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            do {
+                let fileURL = try Self.writeSavedFrameDragFile(data: data, suggestedName: suggestedName)
+                progress.completedUnitCount = 1
+                completion(fileURL, false, nil)
+            } catch {
+                completion(nil, false, error)
+            }
+            return progress
+        }
+
+        provider.registerDataRepresentation(
+            forTypeIdentifier: UTType.jpeg.identifier,
+            visibility: .all
+        ) { completion in
+            completion(data, nil)
+            return nil
+        }
+
+        return provider
+    }
+
+    nonisolated static func writeSavedFrameDragFile(data: Data, suggestedName: String) throws -> URL {
+        let folderURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LapianBaoDragExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        Self.cleanOldFrameDragExports(in: folderURL)
+
+        let fileURL = folderURL.appendingPathComponent(suggestedName)
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
+
     nonisolated static func renderFrameDragFile(
         videoURL: URL,
         videoName: String,
@@ -1197,7 +1276,7 @@ extension LibraryStore {
 
     func saveImageExport(data: Data, video: VideoItem, time: Double, preferredExtension: String) -> URL? {
         let folder = imageExportDestination(for: video)
-        let baseName = "\(Self.compactFileStem(video.name, maxLength: 96))_\(Self.fileTimecode(time))"
+        let baseName = "\(Self.compactFileStem(video.name, maxLength: 96))_截图"
         let outputURL = Self.uniqueExportURL(
             in: folder,
             baseName: baseName,
@@ -1221,10 +1300,22 @@ extension LibraryStore {
     }
 
     func imageExportURL(for frame: SampledFrame) -> URL? {
-        imageExportURLs(for: frame).first ?? restoreImageExportFileIfNeeded(for: frame)
+        if let filePath = frame.filePath {
+            let url = URL(fileURLWithPath: filePath)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        return imageExportURLs(for: frame).first ?? restoreImageExportFileIfNeeded(for: frame)
     }
 
     func imageExportURLs(for frame: SampledFrame) -> [URL] {
+        if let filePath = frame.filePath {
+            let url = URL(fileURLWithPath: filePath)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return [url]
+            }
+        }
         let video = VideoItem(url: URL(fileURLWithPath: frame.videoPath))
         let folder = imageExportDestination(for: video)
         return imageExportURLs(in: folder, baseName: imageExportBaseName(for: frame))
@@ -1233,7 +1324,8 @@ extension LibraryStore {
     func restoreImageExportFileIfNeeded(for frame: SampledFrame) -> URL? {
         let video = VideoItem(url: URL(fileURLWithPath: frame.videoPath))
         let folder = imageExportDestination(for: video)
-        let url = folder.appendingPathComponent("\(imageExportBaseName(for: frame)).jpg")
+        let url = frame.filePath.map(URL.init(fileURLWithPath:))
+            ?? folder.appendingPathComponent("\(imageExportBaseName(for: frame)).jpg")
         if FileManager.default.fileExists(atPath: url.path) {
             return url
         }
@@ -1248,7 +1340,10 @@ extension LibraryStore {
     }
 
     func imageExportBaseName(for frame: SampledFrame) -> String {
-        "\(Self.compactFileStem(frame.videoName, maxLength: 96))_\(Self.fileTimecode(frame.time))"
+        if let filePath = frame.filePath {
+            return URL(fileURLWithPath: filePath).deletingPathExtension().lastPathComponent
+        }
+        return "\(Self.compactFileStem(frame.videoName, maxLength: 96))_\(Self.fileTimecode(frame.time))"
     }
 
     func imageExportURLs(in folder: URL, baseName: String) -> [URL] {
@@ -1466,14 +1561,7 @@ extension LibraryStore {
     }
 
     nonisolated static func ffmpegExecutableURL() -> URL? {
-        let paths = [
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg"
-        ]
-        return paths
-            .map(URL.init(fileURLWithPath:))
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        localFFmpegURL()
     }
 
     nonisolated static func runWhisperTranscription(
@@ -1492,9 +1580,9 @@ extension LibraryStore {
                 throw NSError(domain: "LapianBao", code: 1, userInfo: [NSLocalizedDescriptionKey: "找不到本地 Whisper 转写脚本"])
             }
 
-            let baseFolder = (libraryURL ?? video.url.deletingLastPathComponent())
-                .appendingPathComponent("LapianBaoExports", isDirectory: true)
-                .appendingPathComponent("Transcripts", isDirectory: true)
+            let baseFolder = libraryURL.map {
+                exportFolder(in: $0, named: transcriptExportFolderName)
+            } ?? video.url.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: baseFolder, withIntermediateDirectories: true)
             let outputBase = baseFolder.appendingPathComponent(safeFileStem(videoName))
 
@@ -1932,15 +2020,62 @@ extension LibraryStore {
 
     nonisolated static func downsample(_ peaks: [Double], to sampleCount: Int) -> [Double] {
         guard sampleCount > 0 else { return [] }
+        guard !peaks.isEmpty else { return Array(repeating: 0, count: sampleCount) }
 
-        let maxPeak = max(peaks.max() ?? 0, 0.0001)
-        return (0..<sampleCount).map { index in
+        let rawSamples = (0..<sampleCount).map { index in
             let start = Int(Double(index) * Double(peaks.count) / Double(sampleCount))
             let rawEnd = Int(Double(index + 1) * Double(peaks.count) / Double(sampleCount))
             let end = min(max(start + 1, rawEnd), peaks.count)
-            let value = peaks[start..<end].max() ?? 0
-            return sqrt(min(1, value / maxPeak))
+            let slice = peaks[start..<end]
+            let peak = slice.max() ?? 0
+            let average = slice.reduce(0, +) / Double(slice.count)
+            let squaredAverage = slice.reduce(0) { partial, value in
+                partial + value * value
+            } / Double(slice.count)
+            let rms = sqrt(squaredAverage)
+            return min(1, peak * 0.46 + rms * 0.36 + average * 0.18)
         }
+
+        return displayNormalizedWaveformSamples(rawSamples)
+    }
+
+    nonisolated static func displayNormalizedWaveformSamples(_ values: [Double]) -> [Double] {
+        guard !values.isEmpty else { return [] }
+
+        let clamped = values.map { min(1, max(0, $0)) }
+        let absoluteHigh = clamped.max() ?? 0
+
+        guard absoluteHigh > 0.0001 else {
+            return Array(repeating: 0, count: values.count)
+        }
+
+        let low = waveformPercentile(clamped, percentile: 0.12)
+        let high = max(waveformPercentile(clamped, percentile: 0.92), low + 0.0001)
+        let range = high - low
+
+        guard range > 0.0001 else {
+            return clamped.map { value in
+                let normalized = min(1, max(0, value / absoluteHigh))
+                return min(1, max(0.06, pow(normalized, 0.78)))
+            }
+        }
+
+        return clamped.map { value in
+            let dynamic = min(1, max(0, (value - low) / range))
+            let level = min(1, max(0, value / absoluteHigh))
+            let shapedDynamic = pow(dynamic, 0.78)
+            let shapedLevel = pow(level, 0.58)
+            return min(1, max(0.06, shapedDynamic * 0.65 + shapedLevel * 0.30 + 0.05))
+        }
+    }
+
+    nonisolated static func waveformPercentile(_ values: [Double], percentile: Double) -> Double {
+        guard !values.isEmpty else { return 0 }
+
+        let sorted = values.sorted()
+        let clampedPercentile = min(1, max(0, percentile))
+        let index = Int((Double(sorted.count - 1) * clampedPercentile).rounded())
+        return sorted[min(sorted.count - 1, max(0, index))]
     }
 
 }

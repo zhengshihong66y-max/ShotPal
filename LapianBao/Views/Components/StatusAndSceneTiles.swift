@@ -117,6 +117,14 @@ struct GenerationProgressRow: View {
     }
 }
 
+extension LibraryScanProgress {
+    var isMusicWaveformCacheProgress: Bool {
+        message.contains("音乐缓存")
+            || message.contains("音乐波形")
+            || message.contains("识别音乐素材")
+    }
+}
+
 struct RecognitionProgressRow: View {
     let message: String
     var progress: Double?
@@ -138,25 +146,37 @@ struct RecognitionProgressRow: View {
 }
 
 struct RecognitionFailureIndicator: View {
+    var message: String? = nil
     var minHeight: CGFloat = 32
 
+    private var displayMessage: String {
+        let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "识别失败" : trimmed
+    }
+
     var body: some View {
-        Text("!")
-            .font(.system(size: 18, weight: .heavy, design: .rounded))
+        HStack(spacing: 6) {
+            Text("!")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+            Text(displayMessage)
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
             .foregroundStyle(Color.red.opacity(0.88))
             .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .center)
-            .accessibilityLabel("识别失败")
+            .accessibilityLabel(displayMessage)
     }
 }
 
-func normalizedProgressFraction(_ progress: Double) -> Double {
+nonisolated func normalizedProgressFraction(_ progress: Double) -> Double {
     guard progress.isFinite else { return 0 }
     return min(1, max(0, progress))
 }
 
 func progressPercentText(_ progress: Double) -> String {
-    let percent = normalizedProgressFraction(progress) * 100
-    return String(format: "%.1f%%", percent)
+    let percent = Int((normalizedProgressFraction(progress) * 100).rounded())
+    return "\(percent)%"
 }
 
 func activityProgressValue(from message: String) -> Double? {
@@ -201,6 +221,49 @@ func activityProgressValue(from message: String) -> Double? {
     return nil
 }
 
+private struct SceneCardTagChip: View {
+    let tag: String
+    var maxTextWidth: CGFloat? = nil
+
+    var body: some View {
+        Text(tag)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white.opacity(0.94))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .minimumScaleFactor(0.78)
+            .allowsTightening(true)
+            .frame(maxWidth: maxTextWidth, alignment: .center)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.62))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(.white.opacity(0.20), lineWidth: 0.8)
+            }
+            .fixedSize(horizontal: maxTextWidth == nil, vertical: false)
+    }
+}
+
+private struct SceneCardTagOverflowChip: View {
+    var body: some View {
+        Text("...")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white.opacity(0.92))
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.62))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(.white.opacity(0.20), lineWidth: 0.8)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
 struct SceneCutTile: View {
     let thumbnailImage: NSImage?
     let timeLabel: String
@@ -234,6 +297,11 @@ struct SceneCutTile: View {
                         if isActive, let activeProgress {
                             activeProgressOverlay(activeProgress)
                         }
+
+                        sceneTagBadges(maxSize: proxy.size)
+                            .padding(.leading, 7)
+                            .padding(.top, 7)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
                         CardTimeBadge(text: timeLabel, placeholder: timeLabel)
                             .padding(.trailing, CardTimeBadge.edgeInset)
@@ -277,6 +345,44 @@ struct SceneCutTile: View {
     }
 
     @ViewBuilder
+    private func sceneTagBadges(maxSize: CGSize) -> some View {
+        if !tags.isEmpty {
+            let reservedTrailingWidth = CardOverlayMoreIcon.size + CardTimeBadge.edgeInset * 2
+            let availableWidth = max(44, maxSize.width - reservedTrailingWidth)
+
+            ViewThatFits(in: .horizontal) {
+                sceneTagRow(Array(tags.prefix(4)), showsOverflow: tags.count > 4)
+
+                if tags.count > 2 {
+                    sceneTagRow(Array(tags.prefix(2)), showsOverflow: true)
+                }
+
+                if tags.count > 1 {
+                    sceneTagRow(Array(tags.prefix(1)), showsOverflow: true)
+                }
+
+                SceneCardTagChip(tag: tags[0], maxTextWidth: max(24, availableWidth))
+            }
+            .frame(maxWidth: availableWidth, alignment: .topLeading)
+            .clipped()
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func sceneTagRow(_ rowTags: [String], showsOverflow: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            ForEach(rowTags, id: \.self) { tag in
+                SceneCardTagChip(tag: tag)
+            }
+
+            if showsOverflow {
+                SceneCardTagOverflowChip()
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
     private var thumbnailContent: some View {
         if let thumbnailImage {
             Image(nsImage: thumbnailImage)
@@ -308,7 +414,6 @@ struct SceneCutTile: View {
         }
         .buttonStyle(.plain)
         .frame(width: CardOverlayMoreIcon.size, height: CardOverlayMoreIcon.size)
-        .help("更多")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
             morePopover
                 .transaction { $0.animation = nil }
@@ -316,16 +421,24 @@ struct SceneCutTile: View {
     }
 
     private var morePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let tagHorizontalInset: CGFloat = 14
+        let tagVerticalInset: CGFloat = 16
+        let tagContentGap: CGFloat = tagVerticalInset
+
+        return VStack(alignment: .leading, spacing: 0) {
             if onAddTag != nil || !tags.isEmpty || !suggestedTags.isEmpty {
                 TagEditorSection(
                     domain: .frame,
                     tags: tags,
                     suggestedTags: suggestedTags,
+                    inputSpacing: tagContentGap,
+                    gridVerticalPadding: 0,
                     onAdd: onAddTag,
                     onRemove: onRemoveTag
                 )
-                .padding(14)
+                .padding(.horizontal, tagHorizontalInset)
+                .padding(.top, tagVerticalInset)
+                .padding(.bottom, tagVerticalInset)
             }
 
             if onShowInFinder != nil || onDelete != nil || showsUnavailableFileActions {

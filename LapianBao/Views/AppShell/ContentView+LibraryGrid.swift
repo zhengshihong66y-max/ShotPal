@@ -28,44 +28,73 @@ extension ContentView {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                ScrollView {
-                    Group {
-                        if libraryStore.sortOption == .importDate {
-                            LazyVStack(alignment: .leading, spacing: 0) {
-                                ForEach(Array(projection.importDateSections.enumerated()), id: \.element.id) { indexedSection in
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        dateDivider(
-                                            indexedSection.element.title,
-                                            keepsHeaderPosition: indexedSection.offset == 0
-                                        )
+                if let progress = libraryStore.libraryScanProgress,
+                   !progress.isMusicWaveformCacheProgress {
+                    libraryScanProgressCard(progress)
+                        .padding(.horizontal, Design.libraryContentInset)
+                        .padding(.vertical, 2)
+                }
 
-                                        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                                            ForEach(indexedSection.element.videos) { video in
-                                                videoTile(video)
-                                                    .frame(maxWidth: .infinity)
+                if libraryStore.libraryURL == nil && libraryStore.libraryScanProgress == nil {
+                    libraryInitialStateView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.horizontal, Design.libraryContentInset)
+                } else {
+                    ScrollView {
+                        Group {
+                            if videos.isEmpty {
+                                AppEmptyState(
+                                    title: libraryStore.libraryScanProgress == nil ? "暂无视频素材" : "正在读取素材",
+                                    systemImage: "film",
+                                    style: .compact
+                                )
+                                .frame(maxWidth: .infinity, minHeight: 160)
+                            } else if libraryStore.sortOption == .importDate {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    ForEach(Array(projection.importDateSections.enumerated()), id: \.element.id) { indexedSection in
+                                        VStack(alignment: .leading, spacing: 0) {
+                                            dateDivider(
+                                                indexedSection.element.title,
+                                                keepsHeaderPosition: indexedSection.offset == 0
+                                            )
+
+                                            LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                                                ForEach(indexedSection.element.videos) { video in
+                                                    videoTile(video)
+                                                        .frame(maxWidth: .infinity)
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        } else {
-                            LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                                ForEach(videos) { video in
-                                    videoTile(video)
-                                        .frame(maxWidth: .infinity)
+                            } else {
+                                LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                                    ForEach(videos) { video in
+                                        videoTile(video)
+                                            .frame(maxWidth: .infinity)
+                                    }
                                 }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 2)
+                        .padding(.horizontal, Design.libraryContentInset)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 2)
-                    .padding(.horizontal, Design.libraryContentInset)
+                    .fadingVerticalScrollIndicators()
                 }
-                .fadingVerticalScrollIndicators()
             }
         }
         .padding(.top, Design.libraryToolbarTop)
         .padding(.bottom, 14)
+        .background {
+            if isLibraryTagEditing {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        exitLibraryTagEditing()
+                    }
+            }
+        }
 
         if framed {
             content.contentPanel()
@@ -94,6 +123,33 @@ extension ContentView {
             importButton
             libraryFilterVisibilityButton
             sortMenu
+        }
+    }
+
+    var libraryInitialStateView: some View {
+        AppEmptyState(
+            title: "未选择文件夹",
+            systemImage: "folder",
+            style: .large
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    func libraryScanProgressCard(_ progress: LibraryScanProgress) -> some View {
+        GenerationProgressRow(
+            message: progress.message,
+            progress: progress.fraction,
+            tint: Design.neutralStrongAccent,
+            systemImage: "externaldrive.badge.magnifyingglass",
+            compact: true,
+            showStepCount: false
+        )
+        .padding(9)
+        .background(.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.white.opacity(0.10), lineWidth: 0.7)
         }
     }
 
@@ -140,29 +196,66 @@ extension ContentView {
                 }
             }
 
-            librarySidebarFilterSection(
-                title: "内容",
+            libraryTagFilterSection(
                 values: libraryStore.allTags,
-                emptyTitle: "暂无标签"
-            ) { tag in
-                let option = tagOptions[tag] ?? LibraryTagFilterOption(
-                    count: metrics.tagCountsByKey[normalizedSearch(tag), default: 0],
-                    isEnabled: true
-                )
-                libraryCompactFilterChip(
-                    title: tag,
-                    count: option.count,
-                    isSelected: libraryStore.selectedTags.contains(tag),
-                    isEnabled: option.isEnabled,
-                    tint: Design.neutralAccent
-                ) {
-                    libraryStore.toggleTagSelection(tag)
-                }
-            }
+                emptyTitle: "暂无标签",
+                tagOptions: tagOptions,
+                fallbackCounts: metrics.tagCountsByKey
+            )
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.horizontal, Design.libraryContentInset)
         .padding(.vertical, 2)
+    }
+
+    func libraryTagFilterSection(
+        values: [String],
+        emptyTitle: String,
+        tagOptions: [String: LibraryTagFilterOption],
+        fallbackCounts: [String: Int]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("内容")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.tertiary)
+
+            if values.isEmpty {
+                Text(emptyTitle)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(minHeight: 28, alignment: .leading)
+            } else {
+                WrappingFilterChipGroup(spacing: 4, rowSpacing: 5) {
+                    ForEach(values, id: \.self) { tag in
+                        let option = tagOptions[tag] ?? LibraryTagFilterOption(
+                            count: fallbackCounts[normalizedSearch(tag), default: 0],
+                            isEnabled: true
+                        )
+
+                        if isLibraryTagEditing {
+                            libraryEditableTagChip(
+                                title: tag,
+                                count: option.count,
+                                isSelected: libraryStore.selectedTags.contains(tag)
+                            )
+                        } else {
+                            libraryCompactFilterChip(
+                                title: tag,
+                                count: option.count,
+                                isSelected: libraryStore.selectedTags.contains(tag),
+                                isEnabled: option.isEnabled,
+                                tint: Design.neutralAccent
+                            ) {
+                                libraryStore.toggleTagSelection(tag)
+                            }
+                        }
+                    }
+
+                    libraryTagEditButton
+                }
+                .padding(.vertical, 1)
+            }
+        }
     }
 
     func librarySidebarFilterSection<Chip: View>(
@@ -263,6 +356,155 @@ extension ContentView {
         .fixedSize(horizontal: true, vertical: false)
     }
 
+    func libraryEditableTagChip(
+        title: String,
+        count: Int,
+        isSelected: Bool
+    ) -> some View {
+        let isRenaming = libraryTagRenameTarget == title
+        let titleForeground = libraryFilterChipForeground(isSelected: isSelected)
+        let countForeground = libraryFilterChipCountForeground(isSelected: isSelected)
+        let textWidth = libraryEditableTagTextWidth(for: title)
+
+        return ZStack(alignment: .topTrailing) {
+            HStack(spacing: 4) {
+                if isRenaming {
+                    LibraryTagRenameTextField(
+                        text: $libraryTagRenameInput,
+                        isFocused: focusedLibraryTagRenameTarget == title,
+                        textColor: libraryFilterChipNSForeground(isSelected: isSelected),
+                        onCommit: commitLibraryTagRename
+                    )
+                    .frame(width: textWidth, height: 12, alignment: .leading)
+                } else {
+                    Text(title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(width: textWidth, alignment: .leading)
+                }
+
+                Text("\(count)")
+                    .font(Design.numericFont(size: 9, weight: .bold))
+                    .lineLimit(1)
+                    .foregroundStyle(countForeground)
+            }
+            .foregroundStyle(titleForeground)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(isSelected ? Design.tagChipSelectedFill : .white.opacity(0.070))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(isSelected ? Design.tagChipSelectedStroke : .white.opacity(0.12), lineWidth: 0.7)
+            }
+            .contentShape(Capsule())
+            .onTapGesture {
+                if !isRenaming {
+                    beginLibraryTagRename(title)
+                }
+            }
+
+            Button(role: .destructive) {
+                deleteLibraryTag(title)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 6.6, weight: .heavy))
+                    .foregroundStyle(.white.opacity(0.90))
+                    .frame(width: 11, height: 11)
+                    .background(Color.black.opacity(0.56))
+                    .clipShape(Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(.white.opacity(0.24), lineWidth: 0.6)
+                    }
+            }
+            .buttonStyle(.plain)
+            .offset(x: 3, y: -3)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    var libraryTagEditButton: some View {
+        Button {
+            if isLibraryTagEditing {
+                exitLibraryTagEditing()
+            } else {
+                isLibraryTagEditing = true
+            }
+        } label: {
+            Image(systemName: isLibraryTagEditing ? "checkmark" : "pencil")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isLibraryTagEditing ? .white.opacity(0.92) : .secondary)
+                .frame(width: 24, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    func libraryEditableTagTextWidth(for title: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        let width = (title as NSString).size(withAttributes: [.font: font]).width
+        return min(116, max(1, ceil(width) + 1))
+    }
+
+    func libraryFilterChipForeground(isSelected: Bool) -> Color {
+        isSelected ? .white.opacity(0.94) : .secondary
+    }
+
+    func libraryFilterChipCountForeground(isSelected: Bool) -> Color {
+        isSelected ? .white.opacity(0.86) : .secondary.opacity(0.82)
+    }
+
+    func libraryFilterChipNSForeground(isSelected: Bool) -> NSColor {
+        isSelected ? NSColor.white.withAlphaComponent(0.94) : .secondaryLabelColor
+    }
+
+    func beginLibraryTagRename(_ tag: String) {
+        if libraryTagRenameTarget != nil, libraryTagRenameTarget != tag {
+            commitLibraryTagRename()
+        }
+
+        isLibraryTagEditing = true
+        libraryTagRenameTarget = tag
+        libraryTagRenameInput = tag
+        DispatchQueue.main.async {
+            focusedLibraryTagRenameTarget = tag
+        }
+    }
+
+    func commitLibraryTagRename() {
+        guard let oldTag = libraryTagRenameTarget else { return }
+
+        let nextTag = libraryTagRenameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nextTag.isEmpty, nextTag != oldTag {
+            libraryStore.renameGlobalTag(oldTag, to: nextTag)
+        }
+
+        libraryTagRenameTarget = nil
+        libraryTagRenameInput = ""
+        focusedLibraryTagRenameTarget = nil
+    }
+
+    func deleteLibraryTag(_ tag: String) {
+        if libraryTagRenameTarget == tag {
+            libraryTagRenameTarget = nil
+            libraryTagRenameInput = ""
+            focusedLibraryTagRenameTarget = nil
+        }
+
+        libraryStore.removeGlobalTag(tag)
+        if libraryStore.allTags.isEmpty {
+            isLibraryTagEditing = false
+        }
+    }
+
+    func exitLibraryTagEditing() {
+        commitLibraryTagRename()
+        isLibraryTagEditing = false
+    }
+
     func sourceAuthorName(for video: VideoItem) -> String? {
         libraryStore.videoSourceAuthorName(for: video)
     }
@@ -331,7 +573,6 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help("下载视频")
     }
 
     var libraryFilterVisibilityButton: some View {
@@ -356,7 +597,6 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help("筛选")
     }
 
     var tagFilterMenu: some View {
@@ -373,7 +613,6 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .help("标签筛选")
         .popover(isPresented: $isTagFilterMenuPresented, arrowEdge: .bottom) {
             tagFilterPopover
         }
@@ -425,17 +664,15 @@ extension ContentView {
                                 .buttonStyle(.plain)
                                 .disabled(!isEnabled)
                                 .opacity(isEnabled ? 1 : 0.38)
-                                .help(isEnabled ? "切换标签筛选" : "与当前标签筛选无交集")
 
                                 Button {
-                                    renamingTag = tag
-                                    renameInput = tag
+                                    isTagFilterMenuPresented = false
+                                    beginLibraryTagRename(tag)
                                 } label: {
                                     Image(systemName: "pencil")
                                         .frame(width: 20, height: 20)
                                 }
                                 .buttonStyle(.plain)
-                                .help("重命名标签")
 
                                 Button(role: .destructive) {
                                     libraryStore.removeGlobalTag(tag)
@@ -444,7 +681,6 @@ extension ContentView {
                                         .frame(width: 20, height: 20)
                                 }
                                 .buttonStyle(.plain)
-                                .help("从所有视频中删除")
                             }
                             .padding(.horizontal, 7)
                             .padding(.vertical, 5)
@@ -488,7 +724,102 @@ extension ContentView {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .help("排序")
     }
 
+}
+
+private struct LibraryTagRenameTextField: NSViewRepresentable {
+    @Binding var text: String
+    let isFocused: Bool
+    let textColor: NSColor
+    let onCommit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onCommit: onCommit)
+    }
+
+    func makeNSView(context: Context) -> LibraryTagRenameNSTextField {
+        let textField = LibraryTagRenameNSTextField()
+        textField.delegate = context.coordinator
+        textField.isBordered = false
+        textField.isBezeled = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
+        textField.font = .systemFont(ofSize: 10, weight: .semibold)
+        textField.textColor = textColor
+        textField.lineBreakMode = .byTruncatingTail
+        textField.cell?.usesSingleLineMode = true
+        textField.cell?.wraps = false
+        textField.stringValue = text
+        return textField
+    }
+
+    func updateNSView(_ nsView: LibraryTagRenameNSTextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.onCommit = onCommit
+        nsView.textColor = textColor
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+
+        guard isFocused else {
+            context.coordinator.didApplyFocus = false
+            return
+        }
+        guard !context.coordinator.didApplyFocus else { return }
+        context.coordinator.didApplyFocus = true
+        DispatchQueue.main.async {
+            if let editor = nsView.currentEditor(), nsView.window?.firstResponder === editor {
+                return
+            }
+            nsView.window?.makeFirstResponder(nsView)
+            nsView.placeCaretAtEnd()
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var onCommit: () -> Void
+        var didApplyFocus = false
+
+        init(text: Binding<String>, onCommit: @escaping () -> Void) {
+            self.text = text
+            self.onCommit = onCommit
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else { return }
+            text.wrappedValue = textField.stringValue
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                text.wrappedValue = textView.string
+                onCommit()
+                return true
+            }
+            return false
+        }
+    }
+}
+
+private final class LibraryTagRenameNSTextField: NSTextField {
+    func placeCaretAtEnd() {
+        guard let editor = currentEditor() else { return }
+        editor.selectedRange = NSRange(location: editor.string.count, length: 0)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result {
+            DispatchQueue.main.async { [weak self] in
+                self?.placeCaretAtEnd()
+            }
+        }
+        return result
+    }
 }

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="178" y1="102" x2="846" y2="922" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7DDCFF"/>
+      <stop offset="0.46" stop-color="#238CFF"/>
+      <stop offset="1" stop-color="#1262D8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(438 354) rotate(61) scale(520)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.45"/>
+      <stop offset="0.58" stop-color="#79D7FF" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#0A56B6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glassFill" x1="220" y1="326" x2="780" y2="680" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.92"/>
+      <stop offset="0.42" stop-color="#EEF9FF" stop-opacity="0.70"/>
+      <stop offset="1" stop-color="#D6F3FF" stop-opacity="0.54"/>
+    </linearGradient>
+    <linearGradient id="glassStroke" x1="96" y1="334" x2="928" y2="686" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.90"/>
+      <stop offset="0.5" stop-color="#D9F7FF" stop-opacity="0.58"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.28"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="142" y1="328" x2="574" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.70"/>
+      <stop offset="0.28" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-30%" width="140%" height="170%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#003F9C" flood-opacity="0.22"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#FFFFFF" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="clipLeft">
+      <rect x="-76" y="382" width="456" height="244" rx="54"/>
+    </clipPath>
+    <clipPath id="clipMid">
+      <rect x="430" y="382" width="286" height="244" rx="54"/>
+    </clipPath>
+    <clipPath id="clipRight">
+      <rect x="770" y="382" width="366" height="244" rx="54"/>
+    </clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="224" fill="url(#glow)"/>
+
+  <g filter="url(#softShadow)">
+    <rect x="-76" y="382" width="456" height="244" rx="54" fill="url(#glassFill)" stroke="url(#glassStroke)" stroke-width="4"/>
+    <rect x="430" y="382" width="286" height="244" rx="54" fill="url(#glassFill)" stroke="url(#glassStroke)" stroke-width="4"/>
+    <rect x="770" y="382" width="366" height="244" rx="54" fill="url(#glassFill)" stroke="url(#glassStroke)" stroke-width="4"/>
+  </g>
+
+  <g opacity="0.55">
+    <path clip-path="url(#clipLeft)" d="M-12 402 C76 370 188 372 316 432" fill="none" stroke="url(#shine)" stroke-width="42" stroke-linecap="round"/>
+    <path clip-path="url(#clipMid)" d="M468 400 C522 378 628 392 696 438" fill="none" stroke="url(#shine)" stroke-width="38" stroke-linecap="round"/>
+    <path clip-path="url(#clipRight)" d="M820 400 C916 370 1018 384 1118 442" fill="none" stroke="url(#shine)" stroke-width="42" stroke-linecap="round"/>
+  </g>
+
+  <g opacity="0.20">
+    <rect x="-46" y="404" width="396" height="42" rx="21" fill="#FFFFFF"/>
+    <rect x="458" y="404" width="232" height="42" rx="21" fill="#FFFFFF"/>
+    <rect x="802" y="404" width="288" height="42" rx="21" fill="#FFFFFF"/>
+  </g>
+</svg>

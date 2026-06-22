@@ -95,15 +95,14 @@
 - **标签边界清楚：** 视频、图片、音效和音乐标签不再混用，避免不同资产类型之间互相污染。
 - **项目文件更干净：** 当前项目级说明只保留 `README.md` 和 `AGENTS.md`；旧测试导出、一次性计划和多余说明文档已经清理。
 
-## 本机依赖
+## 运行时依赖
 
-这个项目依赖本机工具，不应假设新机器一定已经安装好：
+分发包会内嵌主要本地工具；可写运行时放在用户的 Application Support 中：
 
-- `ffmpeg` / `ffprobe`：用于转码、提取音频、反向播放代理、音乐和音频处理。
-- `yt-dlp`：用于网络视频和音乐下载。
-- `TransNetV2`：用于场景识别，入口脚本是 `Tools/detect_scene_cuts_transnet.py`。
-- `whisper.cpp`：作为 `Tools/whisper.cpp` submodule 存在，用于本地字幕转写。
-- `Tools/music-env`：用于运行 `Tools/detect_music.py` 里的音乐识别流程。
+- `RuntimeTools.bundle`：内嵌 Whisper CLI、Whisper 模型、`ffmpeg`、`ffprobe`、音乐识别脚本和场景识别脚本。
+- `yt-dlp`：由 App 自检流程下载安装到 `~/Library/Application Support/LapianBao`，仍保留 PATH fallback。
+- `music-env` / `transnet-env`：首次使用对应功能时，用 bundle 内置 Python 3.11 和 requirements 自动创建到 `~/Library/Application Support/LapianBao/PythonRuntimes/`。
+- Python 依赖首次安装需要网络连接；目标 Mac 不需要预装 Python。
 
 ## 运行和验证
 

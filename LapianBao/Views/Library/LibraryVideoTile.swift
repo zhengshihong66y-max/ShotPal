@@ -55,6 +55,7 @@ struct LibraryVideoTile: View, Equatable {
     let video: VideoItem
     let displayName: String
     let thumbnailImage: NSImage?
+    let thumbnailRevision: Int
     let durationText: String?
     let sourcePlatform: String?
     let tags: [String]
@@ -63,11 +64,13 @@ struct LibraryVideoTile: View, Equatable {
     let onSelect: () -> Void
     let onAddTag: (String) -> Void
     let onRemoveTag: (String) -> Void
+    let onSetSourcePlatform: (String) -> Void
     let onDelete: () -> Void
     let dragItemProvider: (() -> NSItemProvider)?
 
     @State private var isHovered = false
     @State private var isMorePresented = false
+    @State private var isSourcePlatformMenuPresented = false
 
     private let cardAspectRatio: CGFloat = 1.06
     private let infoBarMinHeight: CGFloat = 54
@@ -76,6 +79,7 @@ struct LibraryVideoTile: View, Equatable {
     static func == (lhs: LibraryVideoTile, rhs: LibraryVideoTile) -> Bool {
         lhs.video == rhs.video
             && lhs.displayName == rhs.displayName
+            && lhs.thumbnailRevision == rhs.thumbnailRevision
             && lhs.durationText == rhs.durationText
             && lhs.sourcePlatform == rhs.sourcePlatform
             && lhs.tags == rhs.tags
@@ -86,10 +90,11 @@ struct LibraryVideoTile: View, Equatable {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            tileSurface
+        tileSurface
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            onSelect()
         }
-        .buttonStyle(.plain)
         .overlay(alignment: .topTrailing) {
             tileActionBar
                 .opacity(isHovered || isMorePresented ? 1 : 0)
@@ -115,22 +120,24 @@ struct LibraryVideoTile: View, Equatable {
                 thumbnailPanel
                     .frame(width: width, height: thumbnailHeight)
                     .clipped()
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onSelect)
                     .overlay(alignment: .bottomTrailing) {
                         CardTimeBadge(text: durationText, placeholder: "--:--")
                             .padding(.trailing, CardTimeBadge.edgeInset)
                             .padding(.bottom, CardTimeBadge.verticalInset)
                     }
                     .overlay(alignment: .bottomLeading) {
-                        if let sourcePlatform {
-                            sourcePlatformIconBadge(sourcePlatform)
-                                .padding(.leading, CardTimeBadge.edgeInset)
-                                .padding(.bottom, CardTimeBadge.verticalInset)
-                        }
+                        sourcePlatformMenuButton
+                            .padding(.leading, CardTimeBadge.edgeInset)
+                            .padding(.bottom, CardTimeBadge.verticalInset)
                     }
 
                 infoBar(metrics: metrics)
                     .frame(width: width, height: infoHeight, alignment: .topLeading)
                     .background(Color.white.opacity(isSelected ? 0.090 : 0.052))
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onSelect)
             }
         }
         .aspectRatio(cardAspectRatio, contentMode: .fit)
@@ -186,6 +193,7 @@ struct LibraryVideoTile: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .id(thumbnailRevision)
     }
 
     private func infoBar(metrics: TileMetrics) -> some View {
@@ -208,9 +216,43 @@ struct LibraryVideoTile: View, Equatable {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    private func sourcePlatformIconBadge(_ platform: String) -> some View {
-        SourcePlatformIconBadge(platform: platform)
-            .help(platform)
+    private var sourcePlatformMenuButton: some View {
+        let platform = sourcePlatform ?? VideoSourcePlatform.other.rawValue
+
+        return Button {
+            isSourcePlatformMenuPresented.toggle()
+        } label: {
+            SourcePlatformIconBadge(platform: platform)
+                .frame(width: 26, height: 26)
+                .background(Color.black.opacity(0.20))
+                .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.14), lineWidth: 0.7)
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isSourcePlatformMenuPresented, arrowEdge: .bottom) {
+            sourcePlatformMenu
+                .transaction { $0.animation = nil }
+        }
+    }
+
+    private var sourcePlatformMenu: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(sourcePlatformChoices, id: \.rawValue) { platform in
+                SourcePlatformMenuRow(
+                    platform: platform,
+                    isSelected: platform.rawValue == sourcePlatform
+                ) {
+                    onSetSourcePlatform(platform.rawValue)
+                    isSourcePlatformMenuPresented = false
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 136, alignment: .leading)
     }
 
     private var tileActionBar: some View {
@@ -232,18 +274,24 @@ struct LibraryVideoTile: View, Equatable {
     }
 
     private var morePopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let tagHorizontalInset: CGFloat = 14
+        let tagVerticalInset: CGFloat = 16
+        let tagContentGap: CGFloat = tagVerticalInset
+
+        return VStack(alignment: .leading, spacing: 0) {
             // 标签区
             TagEditorSection(
                 domain: .video,
                 tags: tags,
                 suggestedTags: suggestedTags,
+                inputSpacing: tagContentGap,
+                gridVerticalPadding: 0,
                 onAdd: onAddTag,
                 onRemove: onRemoveTag
             )
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 3)
+            .padding(.horizontal, tagHorizontalInset)
+            .padding(.top, tagVerticalInset)
+            .padding(.bottom, tagVerticalInset)
 
             Divider()
 
@@ -279,6 +327,10 @@ struct LibraryVideoTile: View, Equatable {
         .frame(minWidth: 220)
     }
 
+    private var sourcePlatformChoices: [VideoSourcePlatform] {
+        VideoSourcePlatform.allCases.filter { $0 != .other }
+    }
+
     private static func sameImage(_ lhs: NSImage?, _ rhs: NSImage?) -> Bool {
         switch (lhs, rhs) {
         case (nil, nil):
@@ -288,6 +340,42 @@ struct LibraryVideoTile: View, Equatable {
         default:
             return false
         }
+    }
+}
+
+private struct SourcePlatformMenuRow: View {
+    let platform: VideoSourcePlatform
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: platform.iconName)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(platform.color)
+                    .frame(width: 14, height: 14)
+
+                Text(platform.rawValue)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .background(isSelected ? Color.white.opacity(0.10) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -33,13 +33,14 @@ extension LibraryStore {
             ?? Self.jpegData(from: cut.thumbnailImage)
         guard
             let data,
-            saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg") != nil
+            let exportURL = saveImageExport(data: data, video: video, time: cut.time, preferredExtension: "jpg")
         else {
             return existingSceneFrameIndex().map { sampledFrames[$0] }
         }
 
         if let existingIndex = existingSceneFrameIndex() {
             sampledFrames[existingIndex].isExported = true
+            sampledFrames[existingIndex].filePath = exportURL.path
             sampledFrames[existingIndex].thumbnailData = data
         } else {
             sampledFrames.append(SampledFrame(
@@ -49,6 +50,7 @@ extension LibraryStore {
                 sceneIndex: sceneIndex,
                 kind: .sceneRepresentative,
                 isExported: true,
+                filePath: exportURL.path,
                 note: "",
                 tags: [],
                 thumbnailData: data
@@ -65,7 +67,7 @@ extension LibraryStore {
     func captureCurrentFrame(video: VideoItem, time: Double) {
         Task { [weak self] in
             guard let data = await Self.renderFrameData(for: video.url, at: time) else { return }
-            guard self?.saveImageExport(data: data, video: video, time: time, preferredExtension: "jpg") != nil else { return }
+            guard let exportURL = self?.saveImageExport(data: data, video: video, time: time, preferredExtension: "jpg") else { return }
 
             self?.sampledFrames.append(SampledFrame(
                 videoPath: video.url.path,
@@ -74,6 +76,7 @@ extension LibraryStore {
                 sceneIndex: self?.sceneIndex(for: video, at: time),
                 kind: .screenshot,
                 isExported: true,
+                filePath: exportURL.path,
                 note: "",
                 tags: [],
                 thumbnailData: data
@@ -649,10 +652,10 @@ extension LibraryStore {
         pruneLocalWaveformCaches(musicPaths: musicPaths, audioPaths: audioPaths)
 
         if let libraryURL {
-            let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets)
+            let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets, images: localImageAssets)
             Self.saveCachedResourceLibrarySnapshot(snapshot, in: libraryURL)
             Task.detached(priority: .background) {
-                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio)
+                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: snapshot.music, audio: snapshot.audio, images: snapshot.images)
             }
         }
 
@@ -920,7 +923,8 @@ extension LibraryStore {
             duration: existing?.duration ?? 0,
             fileSize: Int64(values?.fileSize ?? Int(existing?.fileSize ?? 0)),
             createdAt: existing?.createdAt ?? values?.creationDate ?? Date(),
-            modifiedAt: values?.contentModificationDate ?? existing?.modifiedAt
+            modifiedAt: values?.contentModificationDate ?? existing?.modifiedAt,
+            recognizedSong: song
         )
 
         if let index = localMusicAssets.firstIndex(where: { $0.filePath == path }) {
@@ -931,7 +935,7 @@ extension LibraryStore {
         knownLocalResourcePaths.insert(path)
 
         if let libraryURL {
-            let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets)
+            let snapshot = ResourceLibrarySnapshot(music: localMusicAssets, audio: localAudioAssets, images: localImageAssets)
             Self.saveCachedResourceLibrarySnapshot(snapshot, in: libraryURL)
         }
     }

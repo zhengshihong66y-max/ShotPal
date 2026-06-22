@@ -266,6 +266,98 @@ extension LibraryStore {
         return supportedDomains.first { normalized == $0 || normalized.hasSuffix(".\($0)") }
     }
 
+    nonisolated private static let instagramAuthenticatedCookieNames: Set<String> = [
+        "sessionid"
+    ]
+
+    nonisolated private static let xiaohongshuAuthenticatedCookieNames: Set<String> = [
+        "web_session"
+    ]
+
+    nonisolated private static let youtubeAuthenticatedCookieNames: Set<String> = [
+        "SID",
+        "HSID",
+        "SSID",
+        "APISID",
+        "SAPISID",
+        "__Secure-1PSID",
+        "__Secure-3PSID"
+    ]
+
+    nonisolated private static let bilibiliAuthenticatedCookieNames: Set<String> = [
+        "SESSDATA"
+    ]
+
+    nonisolated private static let douyinAuthenticatedCookieNames: Set<String> = [
+        "sessionid",
+        "sessionid_ss",
+        "sid_guard",
+        "sid_tt",
+        "uid_tt",
+        "uid_tt_ss",
+        "sid_ucp_v1",
+        "ssid_ucp_v1",
+        "passport_auth_status",
+        "passport_auth_status_ss"
+    ]
+
+    nonisolated private static func hasNonEmptyCookieValue(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty
+            && trimmed != "0"
+            && trimmed.lowercased() != "null"
+            && trimmed.lowercased() != "undefined"
+    }
+
+    nonisolated private static func isAuthenticatedCookie(
+        name: String,
+        value: String,
+        authenticatedCookieNames: Set<String>
+    ) -> Bool {
+        authenticatedCookieNames.contains(name)
+            && hasNonEmptyCookieValue(value)
+    }
+
+    nonisolated private static func isAuthenticatedInstagramCookie(name: String, value: String) -> Bool {
+        isAuthenticatedCookie(
+            name: name,
+            value: value,
+            authenticatedCookieNames: instagramAuthenticatedCookieNames
+        )
+    }
+
+    nonisolated private static func isAuthenticatedXiaohongshuCookie(name: String, value: String) -> Bool {
+        isAuthenticatedCookie(
+            name: name,
+            value: value,
+            authenticatedCookieNames: xiaohongshuAuthenticatedCookieNames
+        )
+    }
+
+    nonisolated private static func isAuthenticatedYouTubeCookie(name: String, value: String) -> Bool {
+        isAuthenticatedCookie(
+            name: name,
+            value: value,
+            authenticatedCookieNames: youtubeAuthenticatedCookieNames
+        )
+    }
+
+    nonisolated private static func isAuthenticatedBilibiliCookie(name: String, value: String) -> Bool {
+        isAuthenticatedCookie(
+            name: name,
+            value: value,
+            authenticatedCookieNames: bilibiliAuthenticatedCookieNames
+        )
+    }
+
+    nonisolated private static func isAuthenticatedDouyinCookie(name: String, value: String) -> Bool {
+        isAuthenticatedCookie(
+            name: name.lowercased(),
+            value: value,
+            authenticatedCookieNames: douyinAuthenticatedCookieNames
+        )
+    }
+
     nonisolated static func accountCookieSummary(from cookies: [HTTPCookie]) -> AccountCookieSummary {
         let instagramCookies = cookies.filter { cookie in
             accountCookieDomain(cookie.domain).map { $0 == "instagram.com" || $0 == "instagr.am" } == true
@@ -290,31 +382,20 @@ extension LibraryStore {
             youtubeCookieCount: youtubeCookies.count,
             bilibiliCookieCount: bilibiliCookies.count,
             douyinCookieCount: douyinCookies.count,
-            hasInstagramSession: instagramCookies.contains { ["sessionid", "ds_user_id"].contains($0.name) },
-            hasXiaohongshuSession: xiaohongshuCookies.contains { ["web_session", "webId"].contains($0.name) },
+            hasInstagramSession: instagramCookies.contains {
+                isAuthenticatedInstagramCookie(name: $0.name, value: $0.value)
+            },
+            hasXiaohongshuSession: xiaohongshuCookies.contains {
+                isAuthenticatedXiaohongshuCookie(name: $0.name, value: $0.value)
+            },
             hasYouTubeSession: youtubeCookies.contains {
-                [
-                    "LOGIN_INFO",
-                    "SID",
-                    "HSID",
-                    "SSID",
-                    "APISID",
-                    "SAPISID",
-                    "__Secure-1PSID",
-                    "__Secure-3PSID"
-                ].contains($0.name)
+                isAuthenticatedYouTubeCookie(name: $0.name, value: $0.value)
             },
             hasBilibiliSession: bilibiliCookies.contains {
-                ["SESSDATA", "DedeUserID", "bili_jct"].contains($0.name)
+                isAuthenticatedBilibiliCookie(name: $0.name, value: $0.value)
             },
             hasDouyinSession: douyinCookies.contains {
-                [
-                    "sessionid",
-                    "sid_guard",
-                    "passport_csrf_token",
-                    "s_v_web_id",
-                    "LOGIN_STATUS"
-                ].contains($0.name)
+                isAuthenticatedDouyinCookie(name: $0.name, value: $0.value)
             },
             updatedAt: Date()
         )
@@ -344,43 +425,25 @@ extension LibraryStore {
             guard columns.count >= 7 else { continue }
             let domain = columns[0]
             let name = columns[5]
+            let value = columns[6]
             guard let supportedDomain = accountCookieDomain(domain) else { continue }
 
             switch supportedDomain {
             case "instagram.com", "instagr.am":
                 instagramCookieCount += 1
-                hasInstagramSession = hasInstagramSession || ["sessionid", "ds_user_id"].contains(name)
+                hasInstagramSession = hasInstagramSession || isAuthenticatedInstagramCookie(name: name, value: value)
             case "xiaohongshu.com", "xhslink.com":
                 xiaohongshuCookieCount += 1
-                hasXiaohongshuSession = hasXiaohongshuSession || ["web_session", "webId"].contains(name)
+                hasXiaohongshuSession = hasXiaohongshuSession || isAuthenticatedXiaohongshuCookie(name: name, value: value)
             case "youtube.com", "google.com":
                 youtubeCookieCount += 1
-                hasYouTubeSession = hasYouTubeSession || [
-                    "LOGIN_INFO",
-                    "SID",
-                    "HSID",
-                    "SSID",
-                    "APISID",
-                    "SAPISID",
-                    "__Secure-1PSID",
-                    "__Secure-3PSID"
-                ].contains(name)
+                hasYouTubeSession = hasYouTubeSession || isAuthenticatedYouTubeCookie(name: name, value: value)
             case "bilibili.com", "biliapi.net":
                 bilibiliCookieCount += 1
-                hasBilibiliSession = hasBilibiliSession || [
-                    "SESSDATA",
-                    "DedeUserID",
-                    "bili_jct"
-                ].contains(name)
+                hasBilibiliSession = hasBilibiliSession || isAuthenticatedBilibiliCookie(name: name, value: value)
             case "douyin.com", "iesdouyin.com", "snssdk.com", "amemv.com":
                 douyinCookieCount += 1
-                hasDouyinSession = hasDouyinSession || [
-                    "sessionid",
-                    "sid_guard",
-                    "passport_csrf_token",
-                    "s_v_web_id",
-                    "LOGIN_STATUS"
-                ].contains(name)
+                hasDouyinSession = hasDouyinSession || isAuthenticatedDouyinCookie(name: name, value: value)
             default:
                 continue
             }

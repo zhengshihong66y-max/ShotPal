@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct MusicWorkspaceProjectionInput {
+nonisolated struct MusicWorkspaceProjectionInput: Sendable {
     var videos: [VideoItem]
     var musicsByVideoPath: [String: [MusicRecognitionItem]]
     var localMusicAssets: [LocalMusicAsset]
@@ -20,12 +20,15 @@ struct MusicWorkspaceProjectionInput {
     var isMusicTagFilterBarPresented: Bool
     var sortOption: MusicSortOption
     var sortDirection: VideoSortDirection
+    var musicDownloadCompletionSnapshot: MusicDownloadCompletionSnapshot
     var musicDownloadLookupCaches: MusicDownloadLookupCaches
     var localMusicWaveformSamplesByPath: [String: [Double]]
     var knownLocalResourcePaths: Set<String>
 }
 
-struct MusicWorkspaceProjectionBuilder {
+nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
+    static let singleSongArtistFilterCollapseThreshold = 24
+
     var input: MusicWorkspaceProjectionInput
     private let videoNameByPath: [String: String]
     private let localMusicFilePaths: Set<String>
@@ -42,45 +45,60 @@ struct MusicWorkspaceProjectionBuilder {
 
     func makeProjection() -> MusicWorkspaceProjection {
         let recognizedAssets = musicAssets
-        let displayedLocalMusicGroups: [LocalMusicGroup] = []
-        let localMusicIdentityKeys = Set<String>()
-        let repeatedArtistTags = input.isMusicTagFilterBarPresented
-            ? repeatedMusicArtistTagLookup(from: recognizedAssets, localGroups: [])
+        let sourceVideoNamesByMusicKey = recognizedSourceVideoNamesByMusicKey(from: recognizedAssets)
+        let recognizedMusicIdentityKeys = musicIdentityKeys(from: recognizedAssets)
+        let allLocalMusicGroups = groupedLocalMusicAssets(from: folderLocalMusicAssets)
+        let displayedLocalMusicGroups = allLocalMusicGroups.filter {
+            shouldDisplayLocalMusicGroup($0, recognizedMusicIdentityKeys: recognizedMusicIdentityKeys)
+        }
+        let localMusicIdentityKeys = localMusicLibraryIdentityKeys(from: displayedLocalMusicGroups)
+        let artistTags = input.isMusicTagFilterBarPresented
+            ? musicArtistTagLookup(from: recognizedAssets, localGroups: displayedLocalMusicGroups)
             : [:]
         let filterValues = input.isMusicTagFilterBarPresented
             ? musicFilterValues(
                 from: recognizedAssets,
-                localGroups: [],
-                repeatedArtistTags: repeatedArtistTags
+                localGroups: displayedLocalMusicGroups,
+                artistTags: artistTags
             )
             : [:]
         let musicFilterCounts = input.isMusicTagFilterBarPresented
             ? musicDynamicFilterCounts(
                 filterValues: filterValues,
                 assets: recognizedAssets,
-                localGroups: []
+                localGroups: displayedLocalMusicGroups
             )
             : [:]
         let filteredRecognizedAssets = filteredRecognizedMusicAssets(from: recognizedAssets)
+        let matchingLocalMusicGroups = filteredLocalMusicGroups(from: displayedLocalMusicGroups)
         let filteredMusicEntries = sortedMusicLibraryEntries(
             recognizedAssets: filteredRecognizedAssets,
-            localGroups: []
+            localGroups: matchingLocalMusicGroups
+        )
+        let allMusicEntries = sortedMusicLibraryEntries(
+            recognizedAssets: recognizedAssets,
+            localGroups: displayedLocalMusicGroups
         )
         let filteredSearchItems = sortedAppleMusicSearchResults(
             filteredSearchResults(localMusicIdentityKeys: localMusicIdentityKeys)
         )
+        let allMusicRows = allMusicEntries.map {
+            musicLibraryRowProjection(for: $0, sourceVideoNamesByMusicKey: sourceVideoNamesByMusicKey)
+        }
         let filteredMusicRows = filteredMusicEntries.map {
-            musicLibraryRowProjection(for: $0, sourceVideoNamesByMusicKey: [:])
+            musicLibraryRowProjection(for: $0, sourceVideoNamesByMusicKey: sourceVideoNamesByMusicKey)
         }
         let filteredSearchRows = filteredSearchItems.map(appleMusicSearchResultRowProjection(for:))
 
         return MusicWorkspaceProjection(
             recognizedAssets: recognizedAssets,
             displayedLocalMusicGroups: displayedLocalMusicGroups,
+            allEntries: allMusicRows,
             filteredEntries: filteredMusicRows,
             filteredSearchItems: filteredSearchRows,
             filterValues: filterValues,
-            musicFilterCounts: musicFilterCounts
+            musicFilterCounts: musicFilterCounts,
+            musicDownloadCompletionSnapshot: input.musicDownloadCompletionSnapshot
         )
     }
 
@@ -319,7 +337,7 @@ struct MusicWorkspaceProjectionBuilder {
     }
 
     var musicAssets: [RecognizedMusicAsset] {
-        return input.musicsByVideoPath.flatMap { path, songs in
+        let assets = input.musicsByVideoPath.flatMap { path, songs in
             let isLocalMusic = localMusicFilePaths.contains(path)
             guard let videoName = videoNameByPath[path] else {
                 return [RecognizedMusicAsset]()
@@ -336,6 +354,68 @@ struct MusicWorkspaceProjectionBuilder {
             }
             return lhs.videoName.localizedStandardCompare(rhs.videoName) == .orderedAscending
         }
+        return mergedRecognizedMusicAssets(assets)
+    }
+
+    func mergedRecognizedMusicAssets(_ assets: [RecognizedMusicAsset]) -> [RecognizedMusicAsset] {
+        var mergedByKey: [String: RecognizedMusicAsset] = [:]
+        var orderedKeys: [String] = []
+
+        for asset in assets {
+            let key = musicSourceLookupKey(title: asset.song.title, artist: asset.song.artist) ?? asset.id
+            guard var current = mergedByKey[key] else {
+                mergedByKey[key] = asset
+                orderedKeys.append(key)
+                continue
+            }
+            current = mergedRecognizedMusicAsset(current, with: asset)
+            mergedByKey[key] = current
+        }
+
+        return orderedKeys.compactMap { mergedByKey[$0] }
+    }
+
+    func mergedRecognizedMusicAsset(
+        _ current: RecognizedMusicAsset,
+        with duplicate: RecognizedMusicAsset
+    ) -> RecognizedMusicAsset {
+        var merged = current
+        merged.sourceVideoNames = mergedSourceVideoNames(current.sourceVideoNames + duplicate.sourceVideoNames)
+        merged.song = mergedMusicRecognitionItem(current.song, with: duplicate.song)
+        return merged
+    }
+
+    func mergedSourceVideoNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for name in names {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
+
+    func mergedMusicRecognitionItem(
+        _ current: MusicRecognitionItem,
+        with duplicate: MusicRecognitionItem
+    ) -> MusicRecognitionItem {
+        var merged = current
+        if merged.artworkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.artworkURL = duplicate.artworkURL
+        }
+        if merged.appleMusicURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            merged.appleMusicURL = duplicate.appleMusicURL
+        }
+        if merged.duration <= 0, duplicate.duration.isFinite, duplicate.duration > 0 {
+            merged.duration = duplicate.duration
+        }
+        merged.tags = MusicRecognitionItem.cleanedMusicTags(
+            current.tags + duplicate.tags,
+            title: merged.title,
+            artist: merged.artist
+        )
+        return merged
     }
 
     var folderLocalMusicAssets: [LocalMusicAsset] {
@@ -523,6 +603,42 @@ struct MusicWorkspaceProjectionBuilder {
         return input.musicDownloadLookupCaches.jobsBySongKey[songKey] ?? []
     }
 
+    func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {
+        guard
+            let job,
+            case .succeeded = job.status,
+            let filePath = job.filePath
+        else { return nil }
+
+        if input.musicDownloadCompletionSnapshot.filePathByJobID[job.id] != nil {
+            return URL(fileURLWithPath: filePath)
+        }
+
+        if localMusicFileExists(at: filePath) {
+            return URL(fileURLWithPath: filePath)
+        }
+
+        return nil
+    }
+
+    func hasCompletedMusicDownload(_ jobs: [MusicDownloadJob]) -> Bool {
+        jobs.contains { completedMusicFileURL(for: $0) != nil }
+    }
+
+    func completedMusicFileURLs(from jobs: [MusicDownloadJob]) -> [URL] {
+        var seenPaths = Set<String>()
+        return MusicDownloadJob.DownloadType.allCases.compactMap { type in
+            jobs.last { job in
+                job.type == type && completedMusicFileURL(for: job) != nil
+            }
+        }
+        .compactMap(completedMusicFileURL)
+        .compactMap { url in
+            guard seenPaths.insert(url.path).inserted else { return nil }
+            return url
+        }
+    }
+
     func localMusicFileURL(for asset: LocalMusicAsset) -> URL? {
         let url = URL(fileURLWithPath: asset.filePath)
         return localMusicFileExists(at: url.path) ? url : nil
@@ -539,7 +655,7 @@ struct MusicWorkspaceProjectionBuilder {
 
     func localMusicFileExists(at path: String) -> Bool {
         input.knownLocalResourcePaths.contains(path)
-            || FileManager.default.fileExists(atPath: path)
+            || localMusicFilePaths.contains(path)
     }
 
     func localMusicRoleAssets(for group: LocalMusicGroup) -> [LocalMusicRoleAsset] {
@@ -614,7 +730,9 @@ struct MusicWorkspaceProjectionBuilder {
         }
 
         for asset in assets {
-            appendSource(title: asset.song.title, artist: asset.song.artist, videoName: asset.videoName)
+            for videoName in asset.sourceVideoNames {
+                appendSource(title: asset.song.title, artist: asset.song.artist, videoName: videoName)
+            }
         }
 
         for (path, songs) in input.musicsByVideoPath {
@@ -791,9 +909,9 @@ struct MusicWorkspaceProjectionBuilder {
     func musicFilterValues(
         from assets: [RecognizedMusicAsset],
         localGroups: [LocalMusicGroup],
-        repeatedArtistTags: [String: MusicArtistFilterValue]
+        artistTags: [String: MusicArtistFilterValue]
     ) -> [MusicFilterKind: [String]] {
-        let artistValues = repeatedArtistTags.values.map(\.displayName)
+        let artistValues = artistTags.values.map(\.displayName)
         let tagValues = [MusicRecognitionItem.featuredMusicTag] + assets.flatMap {
             musicFilterTags(for: $0.song)
         } + localGroups.flatMap { musicFilterTags(for: $0) }
@@ -1041,7 +1159,7 @@ struct MusicWorkspaceProjectionBuilder {
         query.isEmpty
             || normalizedSearch(asset.song.title).contains(query)
             || normalizedSearch(asset.song.artist).contains(query)
-            || normalizedSearch(asset.videoName).contains(query)
+            || asset.sourceVideoNames.contains { normalizedSearch($0).contains(query) }
             || musicFilterTags(for: asset.song).contains { normalizedSearch($0).contains(query) }
     }
 
@@ -1180,7 +1298,7 @@ struct MusicWorkspaceProjectionBuilder {
         return [MusicRecognitionItem.canonicalMusicGenreKey(trimmed)] + parts
     }
 
-    func repeatedMusicArtistTagLookup(
+    func musicArtistTagLookup(
         from assets: [RecognizedMusicAsset],
         localGroups: [LocalMusicGroup]
     ) -> [String: MusicArtistFilterValue] {
@@ -1205,11 +1323,20 @@ struct MusicWorkspaceProjectionBuilder {
             )
         }
 
-        return displayNameByArtistKey.compactMapValues { displayName in
+        let artistValues: [String: MusicArtistFilterValue] = displayNameByArtistKey.compactMapValues { displayName in
             let artistKey = normalizedSearch(displayName)
             let songCount = songKeysByArtistKey[artistKey, default: []].count
-            guard songCount > 1 else { return nil }
+            guard songCount > 0 else { return nil }
             return MusicArtistFilterValue(displayName: displayName, songCount: songCount)
+        }
+        let singleSongArtistCount = artistValues.values.filter { $0.songCount == 1 }.count
+        guard singleSongArtistCount > Self.singleSongArtistFilterCollapseThreshold else {
+            return artistValues
+        }
+
+        let selectedArtistValues = Set(input.selectedMusicFilters.filter { $0.kind == .artist }.map(\.value))
+        return artistValues.filter { entry in
+            entry.value.songCount > 1 || selectedArtistValues.contains(entry.value.displayName)
         }
     }
 
@@ -1247,8 +1374,15 @@ struct MusicWorkspaceProjectionBuilder {
     }
 
     func localMusicDisplaySong(for asset: LocalMusicAsset) -> MusicRecognitionItem? {
+        if let song = asset.recognizedSong, hasRecognizedTitleAndArtist(song) {
+            return song
+        }
         let songs = input.musicsByVideoPath[asset.filePath, default: []]
         if let song = songs.first(where: hasRecognizedTitleAndArtist) {
+            return song
+        }
+        if let song = asset.recognizedSong,
+           !song.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return song
         }
         if let song = songs.first(where: { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {

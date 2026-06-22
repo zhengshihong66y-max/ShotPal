@@ -43,10 +43,10 @@ struct AccountCookieSummary: Equatable, Sendable {
     }
 
     var detailText: String {
-        let instagram = hasInstagramSession ? "IG 已登录" : "IG 未登录"
+        let instagram = hasInstagramSession ? "Instagram 已登录" : "Instagram 未登录"
         let xiaohongshu = hasXiaohongshuSession ? "小红书已登录" : "小红书未登录"
         let youtube = hasYouTubeSession ? "YouTube 已登录" : "YouTube 未登录"
-        let bilibili = hasBilibiliSession ? "B站已登录" : "B站未登录"
+        let bilibili = hasBilibiliSession ? "Bilibili 已登录" : "Bilibili 未登录"
         let douyin = hasDouyinSession ? "抖音已登录" : "抖音未登录"
         return "\(instagram) · \(xiaohongshu) · \(youtube) · \(bilibili) · \(douyin)"
     }
@@ -55,6 +55,7 @@ struct AccountCookieSummary: Equatable, Sendable {
 @MainActor
 final class LibraryStore: ObservableObject {
     @Published var libraryURL: URL?
+    @Published var libraryScanProgress: LibraryScanProgress?
     @Published var videos: [VideoItem] = [] {
         didSet {
             videoByPath = Dictionary(videos.map { ($0.url.path, $0) }, uniquingKeysWith: { current, _ in current })
@@ -83,12 +84,14 @@ final class LibraryStore: ObservableObject {
     @Published var isSidebarVisible = true
     var thumbnailDataByVideoPath: [String: Data] = [:]
     var thumbnailImageByVideoPath: [String: NSImage] = [:]
+    @Published var thumbnailImageRevisionByVideoPath: [String: Int] = [:]
     var durationByVideoPath: [String: Double] = [:]
     var metadataByVideoPath: [String: VideoMetadata] = [:] {
         didSet { markLibraryPresentationDirty() }
     }
     var sourceInfoByVideoPath: [String: VideoSourceInfo] = [:] {
         didSet {
+            objectWillChange.send()
             clearVideoSourceCaches()
             rebuildAllTagsCache()
             markLibrarySidebarMetricsDirty()
@@ -134,6 +137,7 @@ final class LibraryStore: ObservableObject {
     @Published var localAudioAssets: [LocalAudioAsset] = [] {
         didSet { rebuildAudioClipIndexes() }
     }
+    @Published var localImageAssets: [LocalImageAsset] = []
     @Published var localMusicWaveformSamplesByPath: [String: [Double]] = [:]
     @Published var localMusicWaveformRenderingPaths = Set<String>()
     @Published var localMusicWaveformQueuedPaths = Set<String>()
@@ -145,6 +149,7 @@ final class LibraryStore: ObservableObject {
     @Published var musicDetectionStatusByVideoPath: [String: TranscriptJobStatus] = [:]
     @Published var musicDownloadBatchJob = TranscriptBatchJob()
     @Published var activeMusicPreviewJobID: UUID?
+    @Published var focusedMusicPreviewJobID: UUID?
     @Published var musicDownloadJobs: [MusicDownloadJob] = [] {
         didSet { saveProjectData() }
     }
@@ -167,6 +172,30 @@ final class LibraryStore: ObservableObject {
     @Published var accountCookieSummary = AccountCookieSummary()
     @Published var isRefreshingAccountCookieSummary = false
     @Published var isClearingAccountCookies = false
+
+    var musicPreviewKeyboardTargetJobID: UUID? {
+        activeMusicPreviewJobID ?? focusedMusicPreviewJobID
+    }
+
+    func activateMusicPreviewJob(_ id: UUID) {
+        activeMusicPreviewJobID = id
+        focusedMusicPreviewJobID = id
+    }
+
+    func pauseMusicPreviewJob(_ id: UUID?) {
+        guard activeMusicPreviewJobID == id else { return }
+        activeMusicPreviewJobID = nil
+    }
+
+    func clearMusicPreviewJob(_ id: UUID?) {
+        guard let id else { return }
+        if activeMusicPreviewJobID == id {
+            activeMusicPreviewJobID = nil
+        }
+        if focusedMusicPreviewJobID == id {
+            focusedMusicPreviewJobID = nil
+        }
+    }
 
     let defaultLibraryPath = AppSettings.defaultLibraryPath
     let videoExtensions = LibraryStore.supportedVideoExtensions
@@ -292,8 +321,12 @@ final class LibraryStore: ObservableObject {
     var resourceLibraryScanTask: Task<Void, Never>?
     var resourceLibraryScanTaskLibraryPath: String?
     var resourceLibraryScanGeneration = 0
+    var resourceLibrarySnapshotLibraryPath: String?
     var lastResourceLibraryFullScanAtByPath: [String: Date] = [:]
-    var knownLocalResourcePaths = Set<String>()
+    var libraryScanTask: Task<Void, Never>?
+    var libraryScanGeneration = 0
+    var isPresentingInitialLibraryPicker = false
+    @Published var knownLocalResourcePaths = Set<String>()
     var pendingVideoPathRemap: [String: String] = [:]
     var pendingVideoFolderTagsByPath: [String: [String]] = [:]
     var remoteImportTasks: [UUID: Task<Void, Never>] = [:]
@@ -318,7 +351,7 @@ final class LibraryStore: ObservableObject {
     var projectSaveSequence = 0
     var projectLoadTask: Task<Void, Never>?
     var projectLoadGeneration = 0
-    var projectDataLoadState: ProjectDataLoadState = .idle
+    @Published var projectDataLoadState: ProjectDataLoadState = .idle
     var projectDataDirty = false
     var startupAutomationLibraryPath: String?
     var metadataRefreshTask: Task<Void, Never>?
@@ -338,7 +371,7 @@ final class LibraryStore: ObservableObject {
     nonisolated static let localAudioWaveformSampleCount = 96
     nonisolated static let localMusicWaveformWorkerCount = 2
     nonisolated static let audioClipWaveformWorkerCount = 1
-    nonisolated static let localWaveformCacheVersion = 1
+    nonisolated static let localWaveformCacheVersion = 2
     nonisolated static let launchMetadataPrefetchLimit = 0
     nonisolated static let launchMetadataWorkerCount = 1
     nonisolated static let launchBackgroundMetadataPrefetchDelay: TimeInterval = 45.0
@@ -351,6 +384,7 @@ final class LibraryStore: ObservableObject {
     nonisolated static let maxResidentWaveformVideoCaches = 12
     nonisolated static let maxResidentFrameStripVideoCaches = 10
     nonisolated static let maxResidentSceneCutVideoCaches = 10
+    nonisolated static let sceneCachedThumbnailEagerDecodeLimit = 48
     nonisolated static let frameStripEmptyRetryLimit = 2
     nonisolated static let frameStripEmptyRetryDelay: TimeInterval = 1.4
     nonisolated static let maxDecodedSampledFrameImages = 240
@@ -366,14 +400,6 @@ final class LibraryStore: ObservableObject {
     nonisolated static let supportedAudioExtensions = ["m4a", "mp3", "wav", "aac", "aif", "aiff", "flac", "opus", "ogg", "caf", "webm"]
     nonisolated static let supportedImageExtensions = ["jpg", "jpeg", "png", "heic", "heif", "webp", "tiff", "tif"]
 
-    nonisolated static let exportRootFolderName = "LapianBaoExports"
-    nonisolated static let videoFolderName = "视频"
-    nonisolated static let imageExportFolderName = "图片"
-    nonisolated static let soundEffectExportFolderName = "音频"
-    nonisolated static let legacySoundEffectExportFolderName = "音效"
-    nonisolated static let transcriptExportFolderName = "字幕"
-    nonisolated static let musicExportFolderName = "音乐"
-    nonisolated static let nonRecognizedMusicPackageFolderName = "非识别音乐打包"
     nonisolated static let unknownSourcePlatformName = "其他"
     nonisolated static let knownSourcePlatforms = ["Instagram", "YouTube", "小红书", "Bilibili", "抖音", unknownSourcePlatformName]
     nonisolated static let downloaderNightlyExecutableURL = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp"
@@ -385,65 +411,6 @@ final class LibraryStore: ObservableObject {
     nonisolated static func normalizedProgress(_ progress: Double) -> Double {
         guard progress.isFinite else { return 0 }
         return min(1, max(0, progress))
-    }
-
-    nonisolated static func exportFolder(in libraryURL: URL, named folderName: String) -> URL {
-        libraryURL
-            .appendingPathComponent(exportRootFolderName, isDirectory: true)
-            .appendingPathComponent(folderName, isDirectory: true)
-    }
-
-    nonisolated static func mediaFolder(in libraryURL: URL, named folderName: String) -> URL {
-        libraryURL.appendingPathComponent(folderName, isDirectory: true)
-    }
-
-    nonisolated static func ensureMediaFolders(in libraryURL: URL) {
-        for folderName in [videoFolderName, musicExportFolderName, soundEffectExportFolderName, imageExportFolderName] {
-            try? FileManager.default.createDirectory(
-                at: mediaFolder(in: libraryURL, named: folderName),
-                withIntermediateDirectories: true
-            )
-        }
-    }
-
-    nonisolated static func ensureExportFolders(in libraryURL: URL) {
-        for folderName in [imageExportFolderName, soundEffectExportFolderName, transcriptExportFolderName, musicExportFolderName] {
-            try? FileManager.default.createDirectory(
-                at: exportFolder(in: libraryURL, named: folderName),
-                withIntermediateDirectories: true
-            )
-        }
-    }
-
-    nonisolated static func localToolURL(
-        relativePath: String,
-        fallbackPath: String? = nil,
-        mustBeExecutable: Bool = false,
-        sourceFilePath: String = #filePath
-    ) -> URL? {
-        let fm = FileManager.default
-        var candidates = [URL]()
-        if let fallbackPath, !fallbackPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            candidates.append(URL(fileURLWithPath: fallbackPath))
-        }
-        if let resourceURL = Bundle.main.resourceURL { candidates.append(resourceURL.appendingPathComponent(relativePath)) }
-        var ancestor = URL(fileURLWithPath: sourceFilePath).deletingLastPathComponent()
-        for _ in 0..<6 {
-            candidates.append(ancestor.appendingPathComponent(relativePath))
-            ancestor.deleteLastPathComponent()
-        }
-        candidates.append(URL(fileURLWithPath: fm.currentDirectoryPath, isDirectory: true).appendingPathComponent(relativePath))
-
-        var checkedPaths = Set<String>()
-        for url in candidates where checkedPaths.insert(url.path).inserted {
-            if mustBeExecutable {
-                if fm.isExecutableFile(atPath: url.path) { return url }
-            } else if fm.fileExists(atPath: url.path) {
-                return url
-            }
-        }
-
-        return nil
     }
 
 }

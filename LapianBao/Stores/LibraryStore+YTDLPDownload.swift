@@ -288,7 +288,7 @@ extension LibraryStore {
 
     nonisolated static func downloaderProcessEnvironment() -> [String: String] {
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/opt/miniconda3/bin:/opt/anaconda3/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
         return env
     }
 

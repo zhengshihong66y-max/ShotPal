@@ -86,6 +86,7 @@ final class PreviewController: ObservableObject {
     private var frameRateTask: Task<Void, Never>?
     private var reverseProxyTask: Task<Void, Never>?
     private var pendingReverseProxyRate: Double?
+    private var activeForwardPlaybackEndTime: Double?
     private let unsupportedReversePlaybackMessage = "这个视频编码不支持流畅倒放"
     private let reverseProxyPreparationMessage = "正在准备流畅倒放代理"
     /// AVPlayer 原生周期观察者：只同步控制 UI；视频帧刷新不走 SwiftUI。
@@ -125,6 +126,7 @@ final class PreviewController: ObservableObject {
         reverseProxyTask?.cancel()
         reverseProxyTask = nil
         pendingReverseProxyRate = nil
+        clearForwardPlaybackLimit()
 
         guard let video else {
             stopPlayback()
@@ -201,6 +203,7 @@ final class PreviewController: ObservableObject {
         reverseProxyTask?.cancel()
         reverseProxyTask = nil
         pendingReverseProxyRate = nil
+        clearForwardPlaybackLimit()
         player.pause()
         player.rate = 0
         player.isMuted = false
@@ -236,6 +239,7 @@ final class PreviewController: ObservableObject {
     }
 
     func pause(snapToFrame: Bool = false) {
+        clearForwardPlaybackLimit()
         player.pause()
         player.isMuted = false
         playbackRate = 0
@@ -248,6 +252,7 @@ final class PreviewController: ObservableObject {
 
     func setRate(_ rate: Double) {
         guard player.currentItem != nil else { return }
+        clearForwardPlaybackLimit()
         if abs(rate) <= 0.001 {
             pause()
             return
@@ -301,7 +306,45 @@ final class PreviewController: ObservableObject {
 
     /// 直接按秒跳转（供 ScenePanelView 调用，不需要传入 duration）
     func seekToSeconds(_ seconds: Double, snapToFrame: Bool? = nil) {
+        seekToSeconds(seconds, snapToFrame: snapToFrame, clearsForwardPlaybackLimit: true)
+    }
+
+    func playSegment(from startSeconds: Double, to endSeconds: Double) {
         let d = effectiveDuration; guard let d, d > 0 else { return }
+        guard let item = player.currentItem else { return }
+
+        let start = nearestFrameTime(min(d, max(0, startSeconds)), duration: d)
+        let end = min(d, max(0, endSeconds))
+        guard end > start + max(0.01, frameDuration / 2) else {
+            seekToSeconds(end)
+            return
+        }
+
+        clearForwardPlaybackLimit()
+        activeForwardPlaybackEndTime = end
+        item.forwardPlaybackEndTime = CMTime(seconds: end, preferredTimescale: frameTimeScale)
+        clock.update(elapsed: start, progress: min(1, max(0, start / d)), force: true)
+        player.seek(
+            to: CMTime(seconds: start, preferredTimescale: frameTimeScale),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        ) { [weak self] finished in
+            guard finished else { return }
+            Task { @MainActor [weak self] in
+                self?.beginPlayback(at: 1)
+            }
+        }
+    }
+
+    private func seekToSeconds(
+        _ seconds: Double,
+        snapToFrame: Bool?,
+        clearsForwardPlaybackLimit: Bool
+    ) {
+        let d = effectiveDuration; guard let d, d > 0 else { return }
+        if clearsForwardPlaybackLimit {
+            clearForwardPlaybackLimit()
+        }
         let shouldSnap = snapToFrame ?? !isPlaying
         let raw = min(d, max(0, seconds))
         let t = shouldSnap ? nearestFrameTime(raw, duration: d) : raw
@@ -367,10 +410,17 @@ final class PreviewController: ObservableObject {
     }
 
     private func handleEnd() {
+        let forwardPlaybackEndTime = activeForwardPlaybackEndTime
+        clearForwardPlaybackLimit()
         isPlaying = false
         playbackRate = 0
         if let d = effectiveDuration, d > 0 {
-            clock.update(elapsed: d, progress: 1, force: true)
+            if let forwardPlaybackEndTime {
+                let elapsed = min(d, max(0, forwardPlaybackEndTime))
+                clock.update(elapsed: elapsed, progress: min(1, max(0, elapsed / d)), force: true)
+            } else {
+                clock.update(elapsed: d, progress: 1, force: true)
+            }
         } else {
             clock.update(elapsed: 0, progress: 0, force: true)
         }
@@ -452,11 +502,17 @@ final class PreviewController: ObservableObject {
     }
 
     private func replacePlayerItem(with url: URL) {
+        activeForwardPlaybackEndTime = nil
         let item = AVPlayerItem(url: url)
         item.preferredForwardBufferDuration = 1.5
         item.forwardPlaybackEndTime = .invalid
         item.reversePlaybackEndTime = .zero
         player.replaceCurrentItem(with: item)
+    }
+
+    private func clearForwardPlaybackLimit() {
+        activeForwardPlaybackEndTime = nil
+        player.currentItem?.forwardPlaybackEndTime = .invalid
     }
 
     private var shouldSwitchBackToSourceForForwardPlayback: Bool {
@@ -690,10 +746,7 @@ final class PreviewController: ObservableObject {
     }
 
     nonisolated private static func ffmpegExecutableURL() -> URL? {
-        let paths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
-        return paths
-            .map(URL.init(fileURLWithPath:))
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+        LibraryStore.localFFmpegURL()
     }
 
     nonisolated private static func modificationDate(for url: URL) -> Date? {

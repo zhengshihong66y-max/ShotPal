@@ -26,7 +26,7 @@ struct SceneCut: Identifiable {
     }
 }
 
-struct VideoItem: Identifiable, Hashable, Sendable {
+nonisolated struct VideoItem: Identifiable, Hashable, Sendable {
     let url: URL
     var id: String { url.standardizedFileURL.path }
 
@@ -74,7 +74,7 @@ enum VideoSortOption: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum VideoSortDirection: String, CaseIterable, Identifiable, Codable {
+nonisolated enum VideoSortDirection: String, CaseIterable, Identifiable, Codable, Sendable {
     case ascending
     case descending
 
@@ -135,6 +135,7 @@ struct SampledFrame: Identifiable, Codable, Equatable, Sendable {
     var sceneIndex: Int?
     var kind: Kind
     var isExported: Bool
+    var filePath: String? = nil
     var note: String
     var tags: [String]
     var thumbnailData: Data
@@ -514,7 +515,7 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
 
 }
 
-struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
+nonisolated struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
     var trackID: Int
     var title: String
     var artist: String
@@ -583,7 +584,7 @@ struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
         try container.encode(duration * 1000, forKey: .trackTimeMillis)
     }
 
-    func asMusicRecognitionItem() -> MusicRecognitionItem {
+    nonisolated func asMusicRecognitionItem() -> MusicRecognitionItem {
         MusicRecognitionItem(
             title: title,
             artist: artist,
@@ -637,6 +638,7 @@ struct LocalMusicAsset: Identifiable, Codable, Equatable, Sendable {
     var fileSize: Int64
     var createdAt: Date? = nil
     var modifiedAt: Date?
+    var recognizedSong: MusicRecognitionItem? = nil
 
     var id: String { filePath }
 }
@@ -653,13 +655,26 @@ struct LocalAudioAsset: Identifiable, Codable, Equatable, Sendable {
     var id: String { filePath }
 }
 
+struct LocalImageAsset: Identifiable, Codable, Equatable, Sendable {
+    var filePath: String
+    var title: String
+    var fileExtension: String
+    var tags: [String]
+    var fileSize: Int64
+    var modifiedAt: Date?
+    var width: Int?
+    var height: Int?
+
+    var id: String { filePath }
+}
+
 struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
     enum DownloadType: String, CaseIterable, Codable, Equatable, Sendable {
         case original
         case instrumental
 
-        var label: String { self == .original ? "原曲" : "伴奏" }
-        var searchSuffix: String { self == .original ? "" : " instrumental" }
+        nonisolated var label: String { self == .original ? "原曲" : "伴奏" }
+        nonisolated var searchSuffix: String { self == .original ? "" : " instrumental" }
     }
 
     var id = UUID()
@@ -686,7 +701,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         case failed
     }
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         songKey: String,
         type: DownloadType,

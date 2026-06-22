@@ -460,20 +460,6 @@ extension LibraryStore {
         }.value
     }
 
-    nonisolated static func localFFmpegDirectoryPath() -> String? {
-        localFFmpegURL()?.deletingLastPathComponent().path
-    }
-
-    nonisolated static func localFFmpegURL() -> URL? {
-        [
-            "/opt/homebrew/bin/ffmpeg",
-            "/usr/local/bin/ffmpeg",
-            "/usr/bin/ffmpeg"
-        ]
-        .first { FileManager.default.isExecutableFile(atPath: $0) }
-        .map(URL.init(fileURLWithPath:))
-    }
-
     nonisolated static func downloadedMusicFileURL(
         fromYTDLPOutput output: String,
         destinationDirectory: URL,
@@ -559,12 +545,12 @@ extension LibraryStore {
         onEvent: @Sendable @escaping (MusicDetectionEvent) async -> Void,
         processRegistry: ToolProcessRegistry
     ) async throws -> [MusicRecognitionItem] {
-        guard let pythonURL = localToolURL(
-            relativePath: "Tools/music-env/bin/python3",
-            mustBeExecutable: true
-        ) else {
-            throw MusicDetectionError.envNotSetup
-        }
+        await onEvent(.progress("检查音乐识别环境"))
+        let pythonURL = try ensurePythonRuntime(
+            named: "music-env",
+            requirementsRelativePath: "Tools/requirements-music.txt",
+            probeModules: ["shazamio", "requests"]
+        )
         guard let scriptURL = localToolURL(
             relativePath: "Tools/detect_music.py"
         ) else {
@@ -581,9 +567,30 @@ extension LibraryStore {
         process.executableURL = pythonURL
         process.arguments = [scriptURL.path, videoPath]
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/opt/miniconda3/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        let scriptBinPath = scriptURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("bin", isDirectory: true)
+            .path
+        let pythonBinPath = pythonURL.deletingLastPathComponent().path
+        var pathParts = [
+            scriptBinPath,
+            pythonBinPath,
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"
+        ]
+        if let currentPath = env["PATH"], !currentPath.isEmpty {
+            pathParts.append(currentPath)
+        }
+        env["PATH"] = pathParts.joined(separator: ":")
+        env["VIRTUAL_ENV"] = pythonURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .path
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONNOUSERSITE"] = "1"
+        env.removeValue(forKey: "PYTHONPATH")
         env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] = env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] ?? "12"
         env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] = env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] ?? "10"
         env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] = env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] ?? "3"
@@ -775,7 +782,7 @@ extension LibraryStore {
         var errorDescription: String? {
             switch self {
             case .envNotSetup:
-                return "未检测到音乐识别环境。请在项目目录运行：bash Tools/setup_music_env.sh"
+                return "未检测到音乐识别环境，且自动安装没有完成。请确认本机有 Python 3.11 以上版本和网络连接。"
             case .scriptMissing:
                 return "未找到音乐识别脚本：Tools/detect_music.py"
             case .videoMissing(let path):

@@ -80,7 +80,6 @@ extension ContentView {
                             .frame(height: 22)
                     }
                     .buttonStyle(.borderless)
-                    .help("清空")
                 }
             }
 
@@ -133,7 +132,6 @@ extension ContentView {
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut(.cancelAction)
-                .help("关闭")
 
                 Button {
                     startRemoteImport()
@@ -176,7 +174,6 @@ extension ContentView {
                 }
                 .buttonStyle(.borderless)
                 .disabled(libraryStore.libraryURL == nil)
-                .help(isSavedImportRefreshing ? "重新开始拉取收藏" : "重新拉取 IG 和小红书收藏")
             }
 
             if isSavedImportRefreshing && pendingImportVideos.isEmpty {
@@ -288,7 +285,6 @@ extension ContentView {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(video.isSupported ? Color.accentColor : .secondary)
-                .help(video.isSupported ? "加入队列" : "尝试加入队列")
 
                 Button {
                     ignorePendingImportVideo(video)
@@ -299,7 +295,6 @@ extension ContentView {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("以后不再拉取")
             }
         }
         .padding(.horizontal, 9)

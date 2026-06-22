@@ -2,9 +2,9 @@
 """
 detect_music.py — Recognize songs in a media file using Shazam.
 
-Setup (one-time, run from repo root):
-    python3 -m venv Tools/music-env
-    Tools/music-env/bin/pip install shazamio aiohttp requests
+Setup:
+    The macOS app creates its Python runtime in Application Support on first use.
+    For direct script use, create an environment from requirements-music.txt.
 
 Usage:
     python detect_music.py <media_path>
@@ -32,7 +32,7 @@ try:
 except ImportError:
     print(json.dumps({
         "type": "error",
-        "message": "缺少依赖，请运行：\npython3 -m venv Tools/music-env\nTools/music-env/bin/pip install shazamio aiohttp requests"
+        "message": "缺少音乐识别依赖。请通过 App 首次运行自动安装，或按 requirements-music.txt 手动创建 Python 环境。"
     }), flush=True)
     sys.exit(1)
 
@@ -55,7 +55,9 @@ MAX_SEGMENTS = max(1, int(os.environ.get("LAPIANBAO_MUSIC_MAX_SEGMENTS", "12")))
 
 def find_tool(name: str) -> str:
     """Find ffmpeg/ffprobe even when the macOS app has a minimal PATH."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     for path in (
+        os.path.join(script_dir, "bin", name),
         shutil.which(name),
         f"/opt/homebrew/bin/{name}",
         f"/usr/local/bin/{name}",

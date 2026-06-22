@@ -140,9 +140,10 @@ nonisolated private let remoteImportDownloadGate = RemoteImportDownloadGate()
 extension LibraryStore {
     nonisolated private static let chromeCookieFileCache = ChromeCookieFileCache(timeToLive: 10 * 60)
 
-    func loadLastLibraryForLaunch() {
-        guard libraryURL == nil else { return }
-        guard let url = lastLibraryURLForLoading() else { return }
+    @discardableResult
+    func loadLastLibraryForLaunch() -> Bool {
+        guard libraryURL == nil else { return true }
+        guard let url = lastLibraryURLForLoading() else { return false }
 
         Task.detached(priority: .userInitiated) { [weak self] in
             if let cached = Self.loadCachedVideoOrganization(in: url, includeThumbnailData: false) {
@@ -224,6 +225,7 @@ extension LibraryStore {
                 )
             }
         }
+        return true
     }
 
     func scheduleInitialVideoSelectionAfterLaunch(in url: URL, after delay: TimeInterval) {
@@ -272,10 +274,12 @@ extension LibraryStore {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
-    func chooseFolder() {
+    @discardableResult
+    func chooseFolder() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.title = "打开文件夹"
         panel.prompt = "打开"
@@ -283,7 +287,17 @@ extension LibraryStore {
         if panel.runModal() == .OK, let url = panel.url {
             persistLibraryAccess(for: url)
             scanVideos(in: url)
+            return true
         }
+
+        return false
+    }
+
+    func promptForInitialLibraryIfNeeded() {
+        guard libraryURL == nil, !isPresentingInitialLibraryPicker else { return }
+        isPresentingInitialLibraryPicker = true
+        _ = chooseFolder()
+        isPresentingInitialLibraryPicker = false
     }
 
     func saveInstagramImportEndpoint(_ endpoint: String) {
@@ -568,50 +582,6 @@ extension LibraryStore {
         libraryURL.map(ProjectRepository.xiaohongshuSavedBaselineURL)
     }
 
-    func instagramSavedBaselineKnownSourceKeys() -> Set<String> {
-        guard let url = instagramSavedBaselineURL() else { return [] }
-        let root = ProjectRepository.readJSONObject(at: url)
-        guard let results = root["results"] as? [String: Any] else { return [] }
-
-        let knownStatuses = Set(["already_recorded", "downloaded", "duplicate", "ignored"])
-        var keys = Set<String>()
-        for (rawKey, rawValue) in results {
-            guard let entry = rawValue as? [String: Any] else { continue }
-            let status = entry["status"] as? String
-            guard status.map(knownStatuses.contains) == true else { continue }
-            if let key = Self.instagramContentKey(rawKey) {
-                keys.insert(key)
-            }
-            if let sourceURL = entry["sourceURL"] as? String,
-               let key = Self.instagramContentKey(sourceURL) {
-                keys.insert(key)
-            }
-        }
-        return keys
-    }
-
-    func xiaohongshuSavedBaselineKnownNoteIDs() -> Set<String> {
-        guard let url = xiaohongshuSavedBaselineURL() else { return [] }
-        let root = ProjectRepository.readJSONObject(at: url)
-        guard let results = root["results"] as? [String: Any] else { return [] }
-
-        let knownStatuses = Set(["already_recorded", "downloaded", "duplicate", "ignored"])
-        var noteIDs = Set<String>()
-        for (rawKey, rawValue) in results {
-            guard let entry = rawValue as? [String: Any] else { continue }
-            let status = entry["status"] as? String
-            guard status.map(knownStatuses.contains) == true else { continue }
-            if let noteID = Self.xiaohongshuNoteID(fromRawURLString: rawKey) {
-                noteIDs.insert(noteID)
-            }
-            if let sourceURL = entry["sourceURL"] as? String,
-               let noteID = Self.xiaohongshuNoteID(fromRawURLString: sourceURL) {
-                noteIDs.insert(noteID)
-            }
-        }
-        return noteIDs
-    }
-
     func recordInstagramSavedSyncSnapshot(
         discoveredLinks: [String],
         skippedLinks: [String],
@@ -632,10 +602,13 @@ extension LibraryStore {
             entry["sourceURL"] = link
             entry["updatedAt"] = now
             if queuedSet.contains(link) {
-                entry["status"] = "pending"
+                let status = entry["status"] as? String
+                if !Self.savedImportStatusProtectsAgainstPendingOverwrite(status) {
+                    entry["status"] = "pending"
+                }
             } else if skippedSet.contains(link) {
                 let status = entry["status"] as? String
-                if status != "downloaded" && status != "duplicate" && status != "ignored" {
+                if !Self.savedImportStatusProtectsAgainstPendingOverwrite(status) {
                     entry["status"] = "already_recorded"
                 }
             }
@@ -674,10 +647,13 @@ extension LibraryStore {
                 entry["noteID"] = noteID
             }
             if queuedSet.contains(link) {
-                entry["status"] = "pending"
+                let status = entry["status"] as? String
+                if !Self.savedImportStatusProtectsAgainstPendingOverwrite(status) {
+                    entry["status"] = "pending"
+                }
             } else if skippedSet.contains(link) {
                 let status = entry["status"] as? String
-                if status != "downloaded" && status != "duplicate" && status != "ignored" {
+                if !Self.savedImportStatusProtectsAgainstPendingOverwrite(status) {
                     entry["status"] = "already_recorded"
                 }
             }

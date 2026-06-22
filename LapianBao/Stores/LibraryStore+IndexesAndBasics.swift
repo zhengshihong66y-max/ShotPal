@@ -597,6 +597,23 @@ extension LibraryStore {
         )
     }
 
+    func savedFrameImageProvider(for frame: SampledFrame) -> NSItemProvider {
+        if let fileURL = imageExportURL(for: frame) {
+            return existingFileItemProvider(
+                for: fileURL,
+                suggestedName: fileURL.lastPathComponent,
+                fallbackTypeIdentifier: UTType.image.identifier,
+                errorDomain: "LapianBao.SavedFrameDragExport",
+                missingFileMessage: "收藏图片文件不存在"
+            )
+        }
+
+        return Self.savedFrameDataItemProvider(
+            data: frame.thumbnailData,
+            suggestedName: "\(Self.safeFileStem(frame.videoName))_\(Self.fileTimecode(frame.time))_saved.jpg"
+        )
+    }
+
     func fullResolutionFrameProvider(
         video: VideoItem,
         time: Double,
@@ -639,9 +656,15 @@ extension LibraryStore {
             return fallbackURL
         }
 
-        let legacyFallbackURL = Self.exportFolder(in: libraryURL, named: Self.legacySoundEffectExportFolderName)
+        let legacyFallbackURL = Self.mediaFolder(in: libraryURL, named: Self.legacySoundEffectExportFolderName)
             .appendingPathComponent("\(Self.safeFileStem(clip.videoName))_\(Self.fileTimecode(clip.inTime))-\(Self.fileTimecode(clip.outTime)).m4a")
-        return FileManager.default.fileExists(atPath: legacyFallbackURL.path) ? legacyFallbackURL : nil
+        if FileManager.default.fileExists(atPath: legacyFallbackURL.path) {
+            return legacyFallbackURL
+        }
+
+        let legacyExportFallbackURL = Self.legacyExportFolder(in: libraryURL, named: Self.legacySoundEffectExportFolderName)
+            .appendingPathComponent("\(Self.safeFileStem(clip.videoName))_\(Self.fileTimecode(clip.inTime))-\(Self.fileTimecode(clip.outTime)).m4a")
+        return FileManager.default.fileExists(atPath: legacyExportFallbackURL.path) ? legacyExportFallbackURL : nil
     }
 
     func localMusicFileURL(for asset: LocalMusicAsset) -> URL? {
@@ -668,6 +691,12 @@ extension LibraryStore {
     ) {
         guard let libraryURL else { return }
         let libraryPath = libraryURL.path
+        let hasLoadedResourceSnapshot = resourceLibrarySnapshotLibraryPath == libraryPath
+            && (
+                !knownLocalResourcePaths.isEmpty
+                    || !localMusicAssets.isEmpty
+                    || !localAudioAssets.isEmpty
+            )
         var hasCachedSnapshot = false
         if loadCachedSnapshotSynchronously,
            let cachedSnapshot = Self.loadCachedResourceLibrarySnapshot(in: libraryURL) {
@@ -675,15 +704,19 @@ extension LibraryStore {
             PerformanceDiagnostics.mark("resource scan cache snapshot", path: libraryPath)
             applyResourceLibrarySnapshot(cachedSnapshot, libraryPath: libraryPath)
         } else if !loadCachedSnapshotSynchronously || refreshMode != .cachedOnly {
-            hasCachedSnapshot = !loadCachedSnapshotSynchronously
-            Task.detached(priority: .utility) { [weak self, libraryURL, libraryPath] in
-                let snapshot = Self.loadCachedResourceLibrarySnapshot(in: libraryURL)
-                    ?? (refreshMode == .cachedOnly ? nil : Self.quickResourceLibrarySnapshot(in: libraryURL))
-                guard let snapshot else { return }
-                await MainActor.run { [weak self] in
-                    PerformanceDiagnostics.mark("resource scan async snapshot", path: libraryPath)
-                    self?.applyResourceLibrarySnapshot(snapshot, libraryPath: libraryPath)
+            hasCachedSnapshot = !loadCachedSnapshotSynchronously || hasLoadedResourceSnapshot
+            if !hasLoadedResourceSnapshot || refreshMode == .cachedOnly {
+                Task.detached(priority: .utility) { [weak self, libraryURL, libraryPath] in
+                    let snapshot = Self.loadCachedResourceLibrarySnapshot(in: libraryURL)
+                        ?? (refreshMode == .cachedOnly ? nil : Self.quickResourceLibrarySnapshot(in: libraryURL))
+                    guard let snapshot else { return }
+                    await MainActor.run { [weak self] in
+                        PerformanceDiagnostics.mark("resource scan async snapshot", path: libraryPath)
+                        self?.applyResourceLibrarySnapshot(snapshot, libraryPath: libraryPath)
+                    }
                 }
+            } else {
+                PerformanceDiagnostics.mark("resource scan reused loaded snapshot", path: libraryPath)
             }
         }
 
@@ -742,23 +775,38 @@ extension LibraryStore {
 
     func applyResourceLibrarySnapshot(_ snapshot: ResourceLibrarySnapshot, libraryPath: String) {
         guard let libraryURL, libraryURL.path == libraryPath else { return }
+        resourceLibrarySnapshotLibraryPath = libraryPath
         let visibleMusic = visibleMusicAssetsAfterPackaging(snapshot.music, libraryURL: libraryURL)
-        let visibleSnapshot = ResourceLibrarySnapshot(music: visibleMusic, audio: snapshot.audio)
+        let visibleSnapshot = ResourceLibrarySnapshot(music: visibleMusic, audio: snapshot.audio, images: snapshot.images)
         if visibleMusic != snapshot.music {
             Self.saveCachedResourceLibrarySnapshot(visibleSnapshot, in: libraryURL)
             Task.detached(priority: .background) {
-                ResourceLibrarySQLite.write(libraryURL: libraryURL, music: visibleSnapshot.music, audio: visibleSnapshot.audio)
+                ResourceLibrarySQLite.write(
+                    libraryURL: libraryURL,
+                    music: visibleSnapshot.music,
+                    audio: visibleSnapshot.audio,
+                    images: visibleSnapshot.images
+                )
             }
         }
         let musicPaths = Set(visibleMusic.map(\.filePath))
         let audioPaths = Set(snapshot.audio.map(\.filePath))
-        knownLocalResourcePaths = musicPaths.union(audioPaths)
-        hydrateLocalWaveformCaches(from: visibleSnapshot, libraryURL: libraryURL)
+        let imagePaths = Set(snapshot.images.map(\.filePath))
+        let previousMusicAssets = localMusicAssets
+        let previousAudioAssets = localAudioAssets
+        let previousImageAssets = localImageAssets
+        let musicChanged = previousMusicAssets != visibleMusic
+        let audioChanged = previousAudioAssets != snapshot.audio
+        let imagesChanged = previousImageAssets != snapshot.images
+        knownLocalResourcePaths = musicPaths.union(audioPaths).union(imagePaths)
+        let shouldHydrateWaveformCache = shouldHydrateLocalWaveformCaches(
+            from: visibleSnapshot,
+            libraryURL: libraryURL,
+            musicChanged: musicChanged,
+            audioChanged: audioChanged
+        )
         seedMusicFileDurations(from: visibleMusic)
 
-        let previousMusicAssets = localMusicAssets
-        let musicChanged = previousMusicAssets != visibleMusic
-        let audioChanged = localAudioAssets != snapshot.audio
         if musicChanged {
             resetLocalMusicRecognitionStateIfNeeded(previousAssets: previousMusicAssets, nextAssets: visibleMusic)
             localMusicAssets = visibleMusic
@@ -766,11 +814,20 @@ extension LibraryStore {
         if audioChanged {
             localAudioAssets = snapshot.audio
         }
+        if imagesChanged {
+            localImageAssets = snapshot.images
+        }
 
-        if musicChanged || audioChanged {
+        if musicChanged || audioChanged || imagesChanged {
             pruneLocalWaveformCaches(musicPaths: musicPaths, audioPaths: audioPaths)
             cleanupInvalidGeneratedAudioClipRecords()
             reconcileMusicDownloadJobsWithLocalAssets(visibleMusic)
+        }
+
+        if shouldHydrateWaveformCache {
+            hydrateLocalWaveformCaches(from: visibleSnapshot, libraryURL: libraryURL)
+        } else {
+            enqueueLocalMusicWaveforms(visibleMusic)
         }
     }
 
@@ -1005,7 +1062,10 @@ extension LibraryStore {
     }
 
     func startExternalServiceSelfCheck(force: Bool = true) {
-        startExternalServiceSelfCheck(force: force, repairMode: .afterFailure)
+        startExternalServiceSelfCheck(
+            force: force,
+            repairMode: force ? .checkLatestAndRepair : .afterFailure
+        )
     }
 
     private func startExternalServiceSelfCheck(

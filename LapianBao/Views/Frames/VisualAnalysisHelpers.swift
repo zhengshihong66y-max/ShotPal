@@ -40,7 +40,6 @@ struct ColorSwatches: View {
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
                         .fill(swatch.color)
                         .frame(height: 24)
-                        .help(swatch.hexCode)
                 }
             }
         case .vertical:
@@ -53,7 +52,6 @@ struct ColorSwatches: View {
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .stroke(.white.opacity(0.10), lineWidth: 0.7)
                         }
-                        .help(swatch.hexCode)
                 }
             }
         }
@@ -109,7 +107,7 @@ struct ColorSwatches: View {
     }
 }
 
-func clockText(_ seconds: Double) -> String {
+nonisolated func clockText(_ seconds: Double) -> String {
     let total = max(0, Int(seconds.rounded(.down)))
     let h = total / 3600
     let m = (total % 3600) / 60

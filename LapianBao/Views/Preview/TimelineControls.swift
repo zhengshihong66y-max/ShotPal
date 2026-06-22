@@ -33,6 +33,9 @@ struct CenteredWaveformTimeline: View {
     @State private var lastMagnification: CGFloat = 1
     @State private var lastLiveSeekAt = Date.distantPast
 
+    private let clearSelectionButtonSize: CGFloat = 22
+    private let clearSelectionButtonHitSize: CGFloat = 34
+
     private let placeholderSamples: [Double] = (0..<360).map { index in
         0.12 + 0.18 * abs(sin(Double(index) * 0.34))
     }
@@ -144,13 +147,12 @@ struct CenteredWaveformTimeline: View {
                         Image(systemName: "trash")
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.92))
-                            .frame(width: 22, height: 22)
+                            .frame(width: clearSelectionButtonSize, height: clearSelectionButtonSize)
                             .background(.white.opacity(0.18))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .position(x: frame.midX, y: frame.midY)
-                    .help("清除声音选区")
                     .zIndex(3)
                 }
 
@@ -176,11 +178,33 @@ struct CenteredWaveformTimeline: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        if isClearSelectionHit(
+                            value.startLocation,
+                            focus: min(1, max(0, draftProgress ?? progress)),
+                            span: max(0.02, min(1, viewportSpan)),
+                            width: proxy.size.width,
+                            height: proxy.size.height
+                        ) {
+                            return
+                        }
                         let next = scrubProgress(for: value, width: proxy.size.width)
                         draftProgress = next
                         sendLiveSeekIfNeeded(next)
                     }
                     .onEnded { value in
+                        if isClearSelectionHit(
+                            value.startLocation,
+                            focus: min(1, max(0, progress)),
+                            span: max(0.02, min(1, viewportSpan)),
+                            width: proxy.size.width,
+                            height: proxy.size.height
+                        ) {
+                            draftProgress = nil
+                            dragStartProgress = nil
+                            lastLiveSeekAt = .distantPast
+                            onClearSelection?()
+                            return
+                        }
                         let final = scrubProgress(for: value, width: proxy.size.width)
                         draftProgress = nil
                         dragStartProgress = nil
@@ -224,6 +248,33 @@ struct CenteredWaveformTimeline: View {
         let maxX = min(width, max(x1, x2))
         guard maxX - minX >= 10 else { return nil }
         return CGRect(x: minX, y: 0, width: maxX - minX, height: height)
+    }
+
+    private func clearSelectionHitFrame(focus: Double, span: Double, width: CGFloat, height: CGFloat) -> CGRect? {
+        guard let frame = selectionFrame(focus: focus, span: span, width: width, height: height) else { return nil }
+        let size = max(clearSelectionButtonSize, clearSelectionButtonHitSize)
+        return CGRect(
+            x: frame.midX - size / 2,
+            y: frame.midY - size / 2,
+            width: size,
+            height: size
+        )
+    }
+
+    private func isClearSelectionHit(
+        _ location: CGPoint,
+        focus: Double,
+        span: Double,
+        width: CGFloat,
+        height: CGFloat
+    ) -> Bool {
+        guard onClearSelection != nil else { return false }
+        return clearSelectionHitFrame(
+            focus: focus,
+            span: span,
+            width: width,
+            height: height
+        )?.contains(location) == true
     }
 
     private func scrubProgress(for value: DragGesture.Value, width: CGFloat) -> Double {
@@ -348,7 +399,6 @@ struct PreviewPlayerView: View {
                 }
         )
         .fullResolutionImageDrag(dragItemProvider)
-        .help(dragItemProvider == nil ? "点击播放/暂停" : "点击播放/暂停，按住拖出当前帧")
     }
 }
 

@@ -20,6 +20,7 @@ extension ContentView {
             video: video,
             displayName: videoDisplayName(for: video),
             thumbnailImage: thumbnailImage(for: video),
+            thumbnailRevision: thumbnailRevision(for: video),
             durationText: durationTextIfReady(for: video),
             sourcePlatform: sourcePlatformName(for: video),
             tags: libraryStore.videoTags(for: video),
@@ -34,6 +35,9 @@ extension ContentView {
             onRemoveTag: { tag in
                 libraryStore.removeTag(tag, from: video)
             },
+            onSetSourcePlatform: { platform in
+                libraryStore.setSourcePlatform(platform, for: video)
+            },
             onDelete: {
                 libraryStore.removeVideo(video)
             },
@@ -46,7 +50,11 @@ extension ContentView {
     }
 
     func thumbnailImage(for video: VideoItem) -> NSImage? {
-        libraryStore.thumbnailImageByVideoPath[video.url.path]
+        libraryStore.thumbnailImageForDisplay(for: video)
+    }
+
+    func thumbnailRevision(for video: VideoItem) -> Int {
+        libraryStore.thumbnailImageRevision(for: video)
     }
 
     func durationTextIfReady(for video: VideoItem) -> String? {

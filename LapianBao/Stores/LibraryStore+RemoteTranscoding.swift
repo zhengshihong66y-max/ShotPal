@@ -137,13 +137,12 @@ extension LibraryStore {
     }
 
     nonisolated static func videoConcatProbe(for url: URL) throws -> VideoConcatProbe {
-        let ffprobePath = "/opt/homebrew/bin/ffprobe"
-        guard FileManager.default.isExecutableFile(atPath: ffprobePath) else {
+        guard let ffprobeURL = localFFprobeURL() else {
             throw RemoteImportError.downloaderFailed("未找到 ffprobe，无法检查 Instagram 轮播视频")
         }
 
         let result = ExternalProcessRunner.run(
-            executableURL: URL(fileURLWithPath: ffprobePath),
+            executableURL: ffprobeURL,
             arguments: [
                 "-v", "error",
                 "-show_entries", "stream=codec_type,width,height,r_frame_rate",
@@ -186,12 +185,11 @@ extension LibraryStore {
         progressCallback: (@Sendable (Double?) -> Void)? = nil
     ) async -> URL? {
         await Task.detached(priority: .utility) {
-            let ffprobePath = "/opt/homebrew/bin/ffprobe"
-            guard FileManager.default.isExecutableFile(atPath: ffprobePath) else { return nil }
+            guard let ffprobeURL = localFFprobeURL() else { return nil }
 
             // 用 ffprobe 探测视频流编码
             let probeResult = ExternalProcessRunner.run(
-                executableURL: URL(fileURLWithPath: ffprobePath),
+                executableURL: ffprobeURL,
                 arguments: [
                     "-v", "quiet",
                     "-select_streams", "v:0",
@@ -212,8 +210,7 @@ extension LibraryStore {
             progressCallback?(nil)
 
             // 找 ffmpeg
-            let ffmpegPath = "/opt/homebrew/bin/ffmpeg"
-            guard FileManager.default.isExecutableFile(atPath: ffmpegPath) else { return nil }
+            guard let ffmpegURL = localFFmpegURL() else { return nil }
             let asset = AVURLAsset(url: url)
             let duration = (try? await asset.load(.duration)).map(CMTimeGetSeconds) ?? 0
 
@@ -223,9 +220,11 @@ extension LibraryStore {
                 .appendingPathComponent("\(stem).transcoding.tmp.mp4")
 
             let ffmpegProcess = Process()
-            ffmpegProcess.executableURL = URL(fileURLWithPath: ffmpegPath)
+            ffmpegProcess.executableURL = ffmpegURL
             var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            if let ffmpegDirectoryPath = localFFmpegDirectoryPath() {
+                env["PATH"] = "\(ffmpegDirectoryPath):/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+            }
             ffmpegProcess.environment = env
             ffmpegProcess.arguments = [
                 "-i", url.path,

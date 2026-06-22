@@ -40,6 +40,21 @@ private struct SceneRecognitionProgressGlyph: View {
     }
 }
 
+private extension View {
+    func sceneGridOverlayButtonChrome() -> some View {
+        self
+            .foregroundStyle(.white.opacity(0.86))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.48))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(.white.opacity(0.13), lineWidth: 0.7)
+            }
+    }
+}
+
 /// Equatable 视图：只有视频、场景数据或选中状态变化时才重新渲染 body。
 /// 播放时钟只驱动时间线小组件；PreviewPanelView 的低频重渲
 /// 将相同的播放状态传给本视图，
@@ -58,6 +73,8 @@ struct ScenePanelView: View, Equatable {
     var activeItemID: String?
     var activeProgressTick: Double?
     let openStoryboardBoard: () -> Void
+    let exportStoryboard: () -> Void
+    let storyboardExportTitle: String
     @EnvironmentObject private var libraryStore: LibraryStore
     @AppStorage(AppSettings.Key.sceneGridSize) private var sceneGridSize = 1
     @State private var selectedItemID: String?
@@ -75,6 +92,7 @@ struct ScenePanelView: View, Equatable {
             && lhs.sceneCutSignature == rhs.sceneCutSignature
             && lhs.sampledFrameSignature == rhs.sampledFrameSignature
             && lhs.activeProgressTick == rhs.activeProgressTick
+            && lhs.storyboardExportTitle == rhs.storyboardExportTitle
     }
 
     var body: some View {
@@ -119,7 +137,7 @@ struct ScenePanelView: View, Equatable {
                                     .id(item.id)
                                 }
                             }
-                            .padding(.bottom, 48)
+                            .padding(.bottom, 38)
                         }
                         .fadingVerticalScrollIndicators()
 
@@ -146,9 +164,9 @@ struct ScenePanelView: View, Equatable {
     }
 
     private var sceneGridOverlayControls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             storyboardBoardButton
-            sceneGridSizeControl
+            storyboardExportButton
         }
     }
 
@@ -167,19 +185,27 @@ struct ScenePanelView: View, Equatable {
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
             }
-            .foregroundStyle(.white.opacity(0.86))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(.black.opacity(0.48))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(.white.opacity(0.13), lineWidth: 0.7)
-            }
+            .sceneGridOverlayButtonChrome()
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .help(sceneDetectionProgress == nil ? "在画面页查看此视频分镜" : "场景识别完成后自动进入分镜")
+    }
+
+    private var storyboardExportButton: some View {
+        Button(action: exportStoryboard) {
+            HStack(spacing: 6) {
+                Image(systemName: "tablecells")
+                    .font(.system(size: 11, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+
+                Text(storyboardExportTitle)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .sceneGridOverlayButtonChrome()
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
     }
 
     private var storyboardButtonTitle: String {
@@ -187,35 +213,6 @@ struct ScenePanelView: View, Equatable {
             return "识别中 \(progressPercentText(progress))"
         }
         return hasSceneRecognitionResult ? "分镜模式" : "识别场景"
-    }
-
-    private var sceneGridSizeControl: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "square.grid.3x3")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Slider(
-                value: Binding(
-                    get: { Double(sceneGridSize) },
-                    set: { sceneGridSize = Int($0.rounded()) }
-                ),
-                in: 0...2
-            )
-            .frame(width: 64)
-            .controlSize(.small)
-            Image(systemName: "rectangle.grid.1x2")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(.black.opacity(0.48))
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(.white.opacity(0.13), lineWidth: 0.7)
-        }
-        .help("视频时间线场景网格大小")
     }
 
     private var shouldShowSceneRecognitionStatus: Bool {
@@ -291,7 +288,6 @@ struct ScenePanelView: View, Equatable {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .help("重新识别场景")
         }
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: centered ? 92 : nil, alignment: .leading)

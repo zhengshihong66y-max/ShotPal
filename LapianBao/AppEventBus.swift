@@ -26,12 +26,14 @@ nonisolated enum AppEventBus {
         static let id = "id"
         static let source = "source"
         static let type = "type"
+        static let cacheKey = "cacheKey"
     }
 
     private static let seekRequestName = Notification.Name("lapianBaoSeekRequest")
     private static let pausePreviewRequestName = Notification.Name("lapianBaoPausePreviewRequest")
     private static let musicPreviewStartedName = Notification.Name("lapianBaoMusicPreviewStarted")
     private static let musicPreviewToggleRequestName = Notification.Name("lapianBaoMusicPreviewToggleRequest")
+    private static let downloadedMusicWaveformRenderCacheUpdatedName = Notification.Name("lapianBaoDownloadedMusicWaveformRenderCacheUpdated")
 
     static var seekRequestPublisher: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: seekRequestName)
@@ -47,6 +49,10 @@ nonisolated enum AppEventBus {
 
     static var musicPreviewToggleRequestPublisher: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: musicPreviewToggleRequestName)
+    }
+
+    static var downloadedMusicWaveformRenderCacheUpdatedPublisher: NotificationCenter.Publisher {
+        NotificationCenter.default.publisher(for: downloadedMusicWaveformRenderCacheUpdatedName)
     }
 
     static func postSeekRequest(path: String, time: Double) {
@@ -87,6 +93,16 @@ nonisolated enum AppEventBus {
         )
     }
 
+    static func postDownloadedMusicWaveformRenderCacheUpdated(key: String) {
+        Task { @MainActor in
+            NotificationCenter.default.post(
+                name: downloadedMusicWaveformRenderCacheUpdatedName,
+                object: nil,
+                userInfo: [UserInfoKey.cacheKey: key]
+            )
+        }
+    }
+
     static func seekRequest(from notification: Notification) -> SeekRequest? {
         guard
             let path = notification.userInfo?[UserInfoKey.path] as? String,
@@ -105,5 +121,9 @@ nonisolated enum AppEventBus {
 
     static func musicPreviewToggleRequestID(from notification: Notification) -> UUID? {
         notification.userInfo?[UserInfoKey.id] as? UUID
+    }
+
+    static func downloadedMusicWaveformRenderCacheKey(from notification: Notification) -> String? {
+        notification.userInfo?[UserInfoKey.cacheKey] as? String
     }
 }
