@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="timelineGradient" x1="-84" y1="682" x2="1198" y2="342" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF9F0A"/>
+      <stop offset="0.22" stop-color="#FFD60A"/>
+      <stop offset="0.42" stop-color="#30D158"/>
+      <stop offset="0.58" stop-color="#64D2FF"/>
+      <stop offset="0.74" stop-color="#5E5CE6"/>
+      <stop offset="0.88" stop-color="#BF5AF2"/>
+      <stop offset="1" stop-color="#FF453A"/>
+    </linearGradient>
+  </defs>
+  <rect x="838" y="342" width="360" height="340" rx="76" fill="url(#timelineGradient)"/>
+</svg>

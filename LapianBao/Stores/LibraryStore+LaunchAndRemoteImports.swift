@@ -1949,13 +1949,14 @@ extension LibraryStore {
         limit: Int,
         excludingMetadataNoteIDs: Set<String> = []
     ) throws -> XiaohongshuSavedScanResult {
-        try withExportedAccountCookies(seedURLString: "https://www.xiaohongshu.com/") { cookieURL in
+        try withExportedAccountCookies(seedURLString: xiaohongshuHomeURLString) { cookieURL in
+            let profileURLString = try xiaohongshuLoggedInProfileURLString(cookieURL: cookieURL)
             let result = try runCurlFetch(
-                urlString: xiaohongshuSavedCollectionURLString,
+                urlString: profileURLString,
                 cookieFileURL: cookieURL,
                 headers: [
                     ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
-                    ("referer", "https://www.xiaohongshu.com/"),
+                    ("referer", xiaohongshuHomeURLString),
                     ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
                 ],
                 timeout: 24
@@ -1967,7 +1968,7 @@ extension LibraryStore {
                 throw InstagramSavedImportError.chromeCookieUnavailable("无法读取小红书收藏页（HTTP \(result.statusCode)）")
             }
 
-            let links = Self.xiaohongshuVideoLinks(fromSavedHTML: html, limit: limit)
+            let links = Self.xiaohongshuSavedVideoLinks(fromProfileHTML: html, limit: limit)
             guard !links.isEmpty else {
                 throw InstagramSavedImportError.noXiaohongshuVideoLinks
             }

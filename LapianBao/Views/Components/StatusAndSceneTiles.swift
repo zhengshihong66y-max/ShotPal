@@ -264,6 +264,67 @@ private struct SceneCardTagOverflowChip: View {
     }
 }
 
+struct SceneCutTileActivePlayback {
+    let clock: PlaybackClock
+    let startTime: Double
+    let endTime: Double
+    let duration: Double
+    let playbackRate: Double
+    let isPlaying: Bool
+}
+
+private struct SceneCutTileProgressOverlay: View {
+    let progress: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            let clamped = min(1, max(0, progress))
+            let playheadWidth: CGFloat = 2
+            let playheadX = min(
+                max(0, proxy.size.width - playheadWidth),
+                max(0, proxy.size.width * clamped - playheadWidth / 2)
+            )
+
+            ZStack(alignment: .leading) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(width: proxy.size.width * clamped)
+
+                Rectangle()
+                    .fill(Design.timelinePlayheadAccent)
+                    .frame(width: playheadWidth)
+                    .offset(x: playheadX)
+                    .shadow(color: .black.opacity(0.35), radius: 1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .allowsHitTesting(false)
+    }
+}
+
+private struct SceneCutTileActiveProgressOverlay: View {
+    let playback: SceneCutTileActivePlayback
+
+    var body: some View {
+        PlaybackClockDrivenView(
+            clock: playback.clock,
+            duration: playback.duration,
+            playbackRate: playback.playbackRate,
+            isPlaying: playback.isPlaying
+        ) { clock in
+            SceneCutTileProgressOverlay(progress: progress(for: clock.elapsed))
+        }
+    }
+
+    private func progress(for elapsed: Double) -> Double {
+        let start = playback.startTime
+        let end = playback.endTime
+        guard end > start else { return 0 }
+        return min(1, max(0, (elapsed - start) / (end - start)))
+    }
+}
+
 struct SceneCutTile: View {
     let thumbnailImage: NSImage?
     let timeLabel: String
@@ -271,7 +332,7 @@ struct SceneCutTile: View {
     var isScreenshot = false
     var isSelected = false
     var isActive = false
-    var activeProgress: Double?
+    var activePlayback: SceneCutTileActivePlayback?
     let onTap: () -> Void
     var tags: [String] = []
     var suggestedTags: [String] = []
@@ -294,8 +355,8 @@ struct SceneCutTile: View {
                             .frame(width: proxy.size.width, height: proxy.size.height)
                             .clipped()
 
-                        if isActive, let activeProgress {
-                            activeProgressOverlay(activeProgress)
+                        if isActive, let activePlayback {
+                            SceneCutTileActiveProgressOverlay(playback: activePlayback)
                         }
 
                         sceneTagBadges(maxSize: proxy.size)
@@ -498,29 +559,6 @@ struct SceneCutTile: View {
     private func sceneActionForeground(isEnabled: Bool, destructive: Bool = false) -> Color {
         guard isEnabled else { return .white.opacity(0.34) }
         return destructive ? .red : .white.opacity(0.88)
-    }
-
-    private func activeProgressOverlay(_ progress: Double) -> some View {
-        GeometryReader { proxy in
-            let clamped = min(1, max(0, progress))
-            let playheadWidth: CGFloat = 2
-            let playheadX = min(max(0, proxy.size.width - playheadWidth), max(0, proxy.size.width * clamped - playheadWidth / 2))
-
-            ZStack(alignment: .leading) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: proxy.size.width * clamped)
-
-                Rectangle()
-                    .fill(Design.timelinePlayheadAccent)
-                    .frame(width: playheadWidth)
-                    .offset(x: playheadX)
-                    .shadow(color: .black.opacity(0.35), radius: 1)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        }
-        .clipShape(tileShape)
-        .allowsHitTesting(false)
     }
 
     private var borderColor: Color {

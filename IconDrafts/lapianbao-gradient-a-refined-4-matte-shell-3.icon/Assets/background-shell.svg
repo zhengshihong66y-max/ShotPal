@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="shellFill" x1="512" y1="48" x2="512" y2="984" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#121316"/>
+      <stop offset="0.42" stop-color="#060708"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <radialGradient id="softCenter" cx="50%" cy="28%" r="70%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.010"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
+    </radialGradient>
+    <linearGradient id="lowerDepth" x1="512" y1="520" x2="512" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.38"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#shellFill)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#softCenter)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#lowerDepth)"/>
+  <rect x="30" y="30" width="964" height="964" rx="206" fill="none" stroke="#ffffff" stroke-opacity="0.012" stroke-width="10"/>
+</svg>

@@ -12,6 +12,12 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+private enum ExportFrameTagPreviewItem {
+    case tag(String)
+    case overflow(Int)
+    case add
+}
+
 extension PreviewPanelView {
     func videoDisplayName(for video: VideoItem) -> String {
         libraryStore.videoSourceTitle(for: video) ?? video.name
@@ -470,28 +476,36 @@ extension PreviewPanelView {
     }
 
     func exportFrameTagPreview(for frame: SampledFrame) -> some View {
-        let visibleLimit = 5
-        let hasOverflow = frame.tags.count > visibleLimit
-        let visibleTagCount = hasOverflow ? visibleLimit - 1 : visibleLimit
-        let visibleTags = Array(frame.tags.prefix(visibleTagCount))
-        let overflowCount = max(0, frame.tags.count - visibleTagCount)
+        GeometryReader { proxy in
+            let rows = exportFrameTagTwoLineLayout(tags: frame.tags, maxWidth: proxy.size.width)
 
-        return HStack(alignment: .center, spacing: 4) {
-            WrappingFilterChipGroup(spacing: 4, rowSpacing: 4) {
-                ForEach(visibleTags, id: \.self) { tag in
-                    VideoTagChip(tag: tag, size: .mini)
-                }
-
-                if overflowCount > 0 {
-                    VideoTagOverflowChip(count: overflowCount)
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .center, spacing: 4) {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, item in
+                            exportFrameTagPreviewItem(item, frame: frame)
+                        }
+                    }
+                    .frame(height: 18, alignment: .leading)
                 }
             }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .frame(maxHeight: 40, alignment: .topLeading)
+            .frame(width: proxy.size.width, height: 38, alignment: .topLeading)
             .clipped()
+        }
+        .frame(height: 38, alignment: .leading)
+        .clipped()
+    }
 
+    @ViewBuilder
+    private func exportFrameTagPreviewItem(_ item: ExportFrameTagPreviewItem, frame: SampledFrame) -> some View {
+        switch item {
+        case .tag(let tag):
+            VideoTagChip(tag: tag, size: .mini)
+        case .overflow(let hiddenCount):
+            VideoTagOverflowChip(count: hiddenCount)
+        case .add:
             InlineTagAddButton(
-                title: "图片标签",
+                title: nil,
                 domain: .frame,
                 tags: frame.tags,
                 suggestedTags: libraryStore.allFrameTags,
@@ -500,10 +514,85 @@ extension PreviewPanelView {
                 onRemove: { libraryStore.removeFrameTagOrDeleteIfEmpty($0, from: frame) }
             )
             .fixedSize(horizontal: true, vertical: false)
-            .layoutPriority(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .clipped()
+    }
+
+    private func exportFrameTagTwoLineLayout(tags: [String], maxWidth: CGFloat) -> [[ExportFrameTagPreviewItem]] {
+        let availableWidth = max(0, maxWidth)
+        guard availableWidth > 0 else { return [] }
+
+        guard !tags.isEmpty else {
+            return [[.add]]
+        }
+
+        for visibleCount in stride(from: tags.count, through: 1, by: -1) {
+            let hiddenCount = tags.count - visibleCount
+            var items = tags.prefix(visibleCount).map(ExportFrameTagPreviewItem.tag)
+
+            if hiddenCount > 0 {
+                items.append(.overflow(hiddenCount))
+            }
+
+            items.append(.add)
+            if let rows = exportFrameTagRows(items, maxWidth: availableWidth) {
+                return rows
+            }
+        }
+
+        var fallbackItems: [ExportFrameTagPreviewItem] = [.tag(tags[0])]
+        if tags.count > 1 {
+            fallbackItems.append(.overflow(tags.count - 1))
+        }
+        fallbackItems.append(.add)
+        return exportFrameTagRows(fallbackItems, maxWidth: availableWidth) ?? [fallbackItems]
+    }
+
+    private func exportFrameTagRows(_ items: [ExportFrameTagPreviewItem], maxWidth: CGFloat) -> [[ExportFrameTagPreviewItem]]? {
+        var rows: [[ExportFrameTagPreviewItem]] = [[]]
+        var currentWidth: CGFloat = 0
+
+        for item in items {
+            let width = exportFrameTagPreviewItemWidth(item)
+            let nextWidth = rows[rows.count - 1].isEmpty
+                ? width
+                : currentWidth + 4 + width
+
+            if !rows[rows.count - 1].isEmpty, nextWidth > maxWidth {
+                guard rows.count < 2 else { return nil }
+                rows.append([item])
+                currentWidth = width
+                continue
+            }
+
+            rows[rows.count - 1].append(item)
+            currentWidth = nextWidth
+        }
+
+        return rows
+    }
+
+    private func exportFrameTagPreviewItemWidth(_ item: ExportFrameTagPreviewItem) -> CGFloat {
+        switch item {
+        case .tag(let tag):
+            return exportFrameMiniTagChipWidth(for: tag)
+        case .overflow(let hiddenCount):
+            return exportFrameTagOverflowChipWidth(for: hiddenCount)
+        case .add:
+            return 15
+        }
+    }
+
+    func exportFrameMiniTagChipWidth(for tag: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let textWidth = (tag as NSString).size(withAttributes: [.font: font]).width
+        return min(VideoTagChipSize.mini.maxTextWidth, ceil(textWidth))
+            + VideoTagChipSize.mini.horizontalPadding * 2
+    }
+
+    func exportFrameTagOverflowChipWidth(for hiddenCount: Int) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        let textWidth = ("+\(hiddenCount)" as NSString).size(withAttributes: [.font: font]).width
+        return ceil(textWidth) + 12
     }
 
     func exportAudioTagPreview(for clip: AudioClipItem) -> some View {

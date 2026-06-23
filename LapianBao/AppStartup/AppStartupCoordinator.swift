@@ -72,7 +72,7 @@ final class AppStartupCoordinator {
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "退出 LapianBao",
+            withTitle: "退出 拉片宝",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )

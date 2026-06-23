@@ -627,7 +627,6 @@ nonisolated struct AppleMusicSearchResultRowProjection: Identifiable, Codable, S
 nonisolated struct RecognizedMusicRowProjection: Identifiable, Codable, Sendable {
     var asset: RecognizedMusicAsset
     var visibleTags: [String]
-    var suggestedTags: [String]
     var downloadJobs: [MusicDownloadJob]
     var hasDownloadedWaveform: Bool
     var downloadedFileURLs: [URL]
@@ -642,7 +641,6 @@ nonisolated struct LocalMusicGroupRowProjection: Identifiable, Codable, Sendable
     var displayTitle: String
     var displayArtist: String
     var visibleTags: [String]
-    var suggestedTags: [String]
     var primaryFileURL: URL?
     var fileURLs: [URL]
     var sourceText: String?
@@ -693,14 +691,12 @@ nonisolated enum MusicWorkspaceDisplayCacheHydrator {
         func appendJobs(
             _ jobs: [MusicDownloadJob],
             tags: [String],
-            hasTagEditor: Bool,
             sideActionWidth: CGFloat
         ) {
             let waveformWidth = musicWorkspaceWaveformWidth(
                 containerWidth: containerWidth,
                 tags: tags,
                 includesSafari: false,
-                hasTagEditor: hasTagEditor,
                 actionWidth: MusicRowMetrics.verticalButtonsWidth,
                 sideActionWidth: sideActionWidth
             )
@@ -727,14 +723,12 @@ nonisolated enum MusicWorkspaceDisplayCacheHydrator {
                 appendJobs(
                     row.downloadJobs,
                     tags: row.visibleTags,
-                    hasTagEditor: true,
                     sideActionWidth: MusicRowMetrics.sideActionWidth
                 )
             case .local(let row):
                 appendJobs(
                     row.downloadJobs,
                     tags: row.visibleTags,
-                    hasTagEditor: true,
                     sideActionWidth: MusicRowMetrics.sideActionWidth
                 )
             }
@@ -744,7 +738,6 @@ nonisolated enum MusicWorkspaceDisplayCacheHydrator {
             appendJobs(
                 row.downloadJobs,
                 tags: row.visibleTags,
-                hasTagEditor: false,
                 sideActionWidth: 0
             )
         }
@@ -782,12 +775,10 @@ nonisolated enum MusicWorkspaceDisplayCacheHydrator {
         containerWidth: CGFloat,
         tags: [String],
         includesSafari: Bool,
-        hasTagEditor: Bool,
         actionWidth: CGFloat,
         sideActionWidth: CGFloat
     ) -> CGFloat {
-        let hasTagContent = hasTagEditor || !tags.isEmpty
-        let showsTags = hasTagContent && containerWidth >= (includesSafari ? 560 : 500)
+        let showsTags = !tags.isEmpty && containerWidth >= (includesSafari ? 560 : 500)
         let showsWaveform = containerWidth >= (showsTags ? (includesSafari ? 800 : 760) : 620)
         guard showsWaveform else { return 0 }
 
@@ -1279,6 +1270,9 @@ nonisolated enum MusicRowMetrics {
     static let tagSpacing: CGFloat = 4
     static let tagColumnWidth: CGFloat = 118
     static let tagColumnTopInset: CGFloat = 0
+    static let tagChipCompactFontSize: CGFloat = 9.5
+    static let tagChipCompactHorizontalPadding: CGFloat = 5.5
+    static let tagChipCompactHeight: CGFloat = 16
     static let minimumInfoWidthCompact: CGFloat = 126
     static let minimumInfoWidthRegular: CGFloat = 150
 }

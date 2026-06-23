@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="shellFill" x1="512" y1="56" x2="512" y2="968" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#303236"/>
+      <stop offset="0.46" stop-color="#141518"/>
+      <stop offset="1" stop-color="#020304"/>
+    </linearGradient>
+    <linearGradient id="softTop" x1="512" y1="52" x2="512" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.42" stop-color="#ffffff" stop-opacity="0.035"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="innerDepth" x1="512" y1="288" x2="512" y2="1010" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="0.78" stop-color="#000000" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.30"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#shellFill)"/>
+  <rect x="24" y="24" width="976" height="976" rx="212" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="12"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#softTop)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#innerDepth)"/>
+</svg>

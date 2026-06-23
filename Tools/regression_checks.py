@@ -244,6 +244,75 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
     )
 
     music_workspace = sources.get("LapianBao/Views/Music/MusicWorkspaceView.swift", "")
+    library_grid = sources.get("LapianBao/Views/AppShell/ContentView+LibraryGrid.swift", "")
+    frames_workspace = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    design = sources.get("LapianBao/Views/Design/Design.swift", "")
+    agents = read("AGENTS.md")
+    toolbar_search_field = section_between(
+        design,
+        "struct LibraryToolbarSearchField: View",
+        "struct LibraryToolbar<Actions: View>",
+    )
+    toolbar = section_between(
+        design,
+        "struct LibraryToolbar<Actions: View>",
+        "struct TopChromeBoundedContent<Content: View>",
+    )
+    music_header = section_between(
+        music_workspace,
+        "private func musicHeader() -> some View",
+        "private func musicCacheLoadingProgressBar",
+    )
+    frame_board_toolbar = section_between(
+        frames_workspace,
+        "private var frameBoardToolbar",
+        "private var frameTagFilterButton",
+    )
+    require(
+        'LibraryToolbar(placeholder: "", text: $librarySearchText)' in library_grid
+        and 'LibraryToolbar(placeholder: "", text: $viewModel.searchText)' in music_workspace
+        and 'LibraryToolbar(placeholder: "", text: $frameSearchText)' in frames_workspace
+        and "searchExpands" not in design
+        and "static let libraryToolbarSearchMinWidth: CGFloat = 110" in design
+        and "static let libraryToolbarSearchWidth: CGFloat = 280" in design
+        and "var expands" not in toolbar_search_field
+        and "maxWidth: .infinity" not in toolbar_search_field
+        and "idealWidth: Design.libraryToolbarSearchWidth" in toolbar_search_field
+        and "maxWidth: Design.libraryToolbarSearchWidth" in toolbar_search_field
+        and "LibraryToolbarActionRow" in toolbar
+        and "HStack(spacing: Design.libraryToolbarButtonGap)" in toolbar
+        and "let mediaWorkspaceToolbarWidth = homeMediaContentWidth(containerWidth: containerWidth)" in content_view
+        and "func homeMediaContentWidth(containerWidth: CGFloat) -> CGFloat" in content_view
+        and "CGFloat(mediaPanelWidth)" in content_view
+        and "workspaceView(toolbarWidth: mediaWorkspaceToolbarWidth)" in content_view
+        and "func workspaceView(toolbarWidth: CGFloat? = nil) -> some View" in content_view
+        and "toolbarWidth: toolbarWidth" in content_view
+        and "let toolbarWidth: CGFloat?" in music_workspace
+        and "let toolbarWidth: CGFloat?" in frames_workspace
+        and ".frame(width: toolbarWidth, alignment: .leading)" in music_header
+        and ".frame(width: toolbarWidth, alignment: .leading)" in frame_board_toolbar
+        and "static let libraryToolbarActionSlotCount: CGFloat = 3" in design
+        and "static let libraryToolbarActionRowWidth: CGFloat =" in design
+        and "width: Design.libraryToolbarActionRowWidth" in toolbar
+        and "struct LibraryToolbarActionPlaceholder: View" in toolbar
+        and "LibraryToolbarActionPlaceholder()" not in music_header
+        and "musicTagFilterButton" in music_header
+        and "musicSortMenu" in music_header
+        and "frameModeMenu" in frame_board_toolbar
+        and "frameGridSizeMenu" in frame_board_toolbar
+        and "frameModeButton(" not in frame_board_toolbar
+        and "frameGridSizeControl" not in frame_board_toolbar
+        and "LibraryToolbarActionPlaceholder()" in frame_board_toolbar
+        and "顶部搜索框必须由 `LibraryToolbarSearchField` 使用旧版主页基线" in agents
+        and "homeMediaContentWidth(containerWidth:)" in agents
+        and "不能让全宽工作区或分镜自己的宽面板直接决定顶部搜索框长度" in agents
+        and "不要改回 140" in agents
+        and "顶部按钮必须由 `LibraryToolbarActionRow` 统一排列成 3 个固定槽位" in agents
+        and "音乐页两个可见按钮直接从第一个槽位开始排列" in agents
+        and "LibraryToolbarActionPlaceholder" in agents
+        and "宽滑杆" in agents,
+        "Home, music, and frame workspaces must use the previous home toolbar search width baseline and a fixed three-slot action row.",
+    )
     require(
         "@ObservedObject var viewModel: MusicWorkspaceViewModel" in music_workspace
         and "viewModel.cancelTasks()" not in music_workspace
@@ -372,42 +441,80 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
 
     require(
         music_workspace.count("HStack(alignment: .top, spacing: MusicRowMetrics.columnSpacing)") >= 3
-        and music_workspace.count(".frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .topLeading)") >= 3
+        and music_workspace.count(".frame(width: proxy.size.width, height: rowHeight, alignment: .topLeading)") >= 3
+        and music_workspace.count(".frame(height: estimatedRowHeight)") >= 3
+        and "let showsTags = !tags.isEmpty && containerWidth >= (includesSafari ? 560 : 500)" in music_workspace
+        and "let visibleColumnCount = 3\n            + (showsTags ? 1 : 0)" in music_workspace
+        and "let fixedWidth = MusicRowMetrics.totalHorizontalPadding" in music_workspace
+        and "private func musicRowContentHeight(" in music_workspace
+        and "private func musicTagFlowHeight(" in music_workspace
         and ".frame(width: width, height: MusicRowMetrics.artworkSize, alignment: .topLeading)" in music_workspace,
-        "Music row artwork, text, tags, actions, and waveform columns must keep a shared top edge.",
+        "Music row artwork, text, tags, actions, and waveform columns must use shared fixed-column math while tag-heavy rows grow vertically instead of clipping chips.",
     )
     require(
-        "struct EditableMusicTagChip" in music_workspace
-        and "MusicEntryTagChip(tag: tag, size: size, maxChipWidth: maxChipWidth)" in music_workspace
-        and 'Image(systemName: "xmark")' in music_workspace
-        and ".onHover { isHovered = $0 }" in music_workspace
-        and "onRemove: { onRemove(tag) }" in music_workspace,
-        "Editable music tag chips must show a hover delete button that removes the tag directly.",
+        "EditableMusicTag" not in music_workspace
+        and "MusicEntryTagAddChip" not in music_workspace
+        and "domain: .music" not in music_workspace
+        and "TagEditorSection(" not in music_workspace
+        and "isEditableMusicContentTag" not in music_workspace
+        and "cleanedMusicContentTags" not in music_workspace
+        and "includesAddTagChip" not in music_workspace
+        and "hasTagEditor" not in music_workspace
+        and "hasTagEditor" not in projection_models,
+        "Music rows must remove the self-added tag editor and only display system-recognized genre tags.",
     )
-    editable_music_tag_strip = section_between(
+    music_tag_column = section_between(
         music_workspace,
-        "private struct EditableMusicTagStrip",
-        "private struct MusicEntryTagStrip",
+        "private func musicTagColumn(",
+        "private func sectionHeader",
     )
     require(
-        "let suggestedTags: [String]" in editable_music_tag_strip
-        and "let onAdd: ((String) -> Void)?" in editable_music_tag_strip
-        and "MusicEntryTagAddChip(" in editable_music_tag_strip
-        and "TagStripAddButton" not in editable_music_tag_strip,
-        "Music content tag rows must keep the inline add-tag button at the end of the editable tag flow.",
+        "MusicEntryTagStrip(tags: tags)" in music_tag_column
+        and "contentHeight: CGFloat = MusicRowMetrics.contentHeight" in music_tag_column
+        and ".frame(width: layout.tagWidth, height: contentHeight, alignment: .topLeading)" in music_tag_column
+        and "suggestedTags" not in music_tag_column
+        and "onAdd" not in music_tag_column
+        and "onRemove" not in music_tag_column
+        and "EditableMusicTagStrip" not in music_tag_column
+        and '"音乐标签"' not in music_tag_column,
+        "Music rows must keep recognized genre tags visible without a manual add/remove tag editor.",
     )
-    music_entry_tag_add_chip = section_between(
-        music_workspace,
-        "private struct MusicEntryTagAddChip: View",
-        "private struct MusicEntryTagChip: View",
+    music_tagging = sources.get("LapianBao/Models/MusicTagging.swift", "")
+    is_fallback_music_tag = section_between(
+        music_tagging,
+        "nonisolated static func isFallbackMusicTag",
+        "nonisolated static func hasOnlyFallbackMusicTag",
     )
     require(
-        "CenteredPlusGlyph" in music_entry_tag_add_chip
-        and ".frame(width: addChipWidth, height: size.height, alignment: .center)" in music_entry_tag_add_chip
-        and ".background(isHovered ? Design.tagChipProminentFill : Design.tagChipFill)" in music_entry_tag_add_chip
-        and "TagEditorSection(" in music_entry_tag_add_chip
-        and "domain: .music" in music_entry_tag_add_chip,
-        "Music entry add-tag chips must match the tag chip height and capsule styling while preserving the music tag editor popover.",
+        "nonisolated var displayTags: [String]" in music_tagging
+        and "Self.cleanedGenreTags(tags, title: title, artist: artist)" in music_tagging
+        and "let requiredGenreTags = inferredGenreTags.isEmpty ? [defaultMusicGenreTag] : inferredGenreTags" in music_tagging
+        and "return genreTags.isEmpty ? [Self.defaultMusicGenreTag] : genreTags" in music_tagging
+        and "canonicalMusicGenreKey(defaultMusicGenreTag)" not in is_fallback_music_tag
+        and "isEditableMusicContentTag" not in music_tagging
+        and "cleanedMusicContentTags" not in music_tagging
+        and "isRecognizedMusicGenreTag" not in music_tagging,
+        "Music display tags must always include at least one genre fallback while remaining limited to recognized genre semantics.",
+    )
+    require(
+        "func requiredVisibleMusicTags(_ tags: [String], metadataValues: [String]) -> [String]" in projection_builder
+        and "return visibleTags.isEmpty ? [MusicRecognitionItem.defaultMusicGenreTag] : visibleTags" in projection_builder
+        and "requiredVisibleMusicTags(" in projection_builder
+        and "displayedMusicTags(" in projection_builder,
+        "Music workspace projections must never expose empty visible genre tags after metadata filtering.",
+    )
+    require(
+        "音乐界面不提供自添加标签系统" in agents
+        and "只显示系统自动识别出的流派标签" in agents
+        and "历史保存的非流派音乐标签不能进入行内显示或类型筛选" in agents
+        and "所有音乐必须始终有至少一个流派标签" in agents
+        and "整行高度必须随流派标签流自动增高" in agents,
+        "AGENTS must record that music rows only display system-recognized genre tags.",
+    )
+    require(
+        "固定列计算" in agents
+        and "不能因为某一行缺流派或缺波形而横向错位" in agents,
+        "AGENTS must record the music row fixed-column alignment rule.",
     )
     music_featured_button = section_between(
         music_workspace,
@@ -617,9 +724,28 @@ def require_video_tag_popover_spacing_guardrails(sources: dict[str, str]) -> Non
         "Video tag popover must keep the input-to-tags and tags-to-divider vertical spacing equal.",
     )
 
+    timeline = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineLayout.swift", "")
+    timeline_tag_popover = section_between(
+        timeline,
+        "func videoTagPopover(for video: VideoItem) -> some View",
+        "func timelineStackContainer(",
+    )
+    require(
+        "let tagHorizontalInset: CGFloat = 14" in timeline_tag_popover
+        and "let tagVerticalInset: CGFloat = 16" in timeline_tag_popover
+        and "let tagContentGap: CGFloat = tagVerticalInset" in timeline_tag_popover
+        and "inputSpacing: tagContentGap" in timeline_tag_popover
+        and "gridVerticalPadding: 0" in timeline_tag_popover
+        and ".padding(.horizontal, tagHorizontalInset)" in timeline_tag_popover
+        and ".padding(.vertical, tagVerticalInset)" in timeline_tag_popover,
+        "Preview timeline video tag popover must match the library video tag popover spacing.",
+    )
+
 
 def require_quick_filter_chip_stable_selection_guardrails(sources: dict[str, str]) -> None:
     tags_and_badges = sources.get("LapianBao/Views/Components/TagsAndBadges.swift", "")
+    library_grid = sources.get("LapianBao/Views/AppShell/ContentView+LibraryGrid.swift", "")
+    agents = read("AGENTS.md")
     quick_filter_chip = section_between(
         tags_and_badges,
         "struct QuickFilterChoiceChip: View",
@@ -630,6 +756,36 @@ def require_quick_filter_chip_stable_selection_guardrails(sources: dict[str, str
         and ".padding(.horizontal, 9)" in quick_filter_chip
         and ".background(isSelected ? Design.tagChipSelectedFill" in quick_filter_chip,
         "Quick filter chips must not reserve a hidden trailing checkmark slot that makes chip padding look uneven.",
+    )
+    require(
+        'Text("\\(count)")' in quick_filter_chip
+        and ".fixedSize(horizontal: true, vertical: false)" in quick_filter_chip
+        and ".layoutPriority(2)" in quick_filter_chip,
+        "Quick filter chip counts must keep enough layout priority to avoid being ellipsized.",
+    )
+    library_compact_chip = section_between(
+        library_grid,
+        "func libraryCompactFilterChip(",
+        "func libraryEditableTagChip(",
+    )
+    library_count_width = section_between(
+        library_grid,
+        "func libraryFilterChipCountWidth(for count: Int)",
+        "func libraryFilterChipForeground",
+    )
+    require(
+        'Text("\\(count)")' in library_compact_chip
+        and ".fixedSize(horizontal: true, vertical: false)" in library_compact_chip
+        and ".layoutPriority(2)" in library_compact_chip
+        and "return max(14, ceil(width) + 6)" in library_count_width,
+        "Library sidebar filter chip counts must reserve a non-compressing count slot so numbers never become ellipses.",
+    )
+    require(
+        "标签筛选区使用紧凑胶囊 chip" in agents
+        and "后缀数字不能省略成 `...`" in agents
+        and "把原数字槽位替换为 `xmark` 删除按钮" in agents
+        and "外层横向留白 14，纵向留白 16" in agents,
+        "AGENTS must record the tag chip visual rules so future UI work keeps the established design.",
     )
 
 def require_home_tag_inline_edit_guardrails(sources: dict[str, str]) -> None:
@@ -643,6 +799,13 @@ def require_home_tag_inline_edit_guardrails(sources: dict[str, str]) -> None:
         'Image(systemName: "xmark")' not in tag_editor_choice
         and "toggleTag(tag, isSelected: isSelected)" in tags_and_badges,
         "Tag popover chips must use repeat-click toggling instead of showing a top-right remove button.",
+    )
+    require(
+        "@State private var newTagClickProtectionKeys = Set<String>()" in tags_and_badges
+        and "addTag(trimmedDraftTag, protectsNextSelectedTap: true)" in tags_and_badges
+        and "if newTagClickProtectionKeys.remove(key) != nil" in tags_and_badges
+        and "return\n            }\n            pendingAddedTags.removeAll" in tags_and_badges,
+        "New tags created from the input field must ignore the first repeat click so they are not immediately deleted.",
     )
 
     content_view = sources.get("LapianBao/ContentView.swift", "")
@@ -660,35 +823,99 @@ def require_home_tag_inline_edit_guardrails(sources: dict[str, str]) -> None:
     )
 
 
+def require_global_tag_edit_key_matching_guardrails(sources: dict[str, str]) -> None:
+    library_store = sources.get("LapianBao/LibraryStore.swift", "")
+    persistence = sources.get("LapianBao/Stores/LibraryStore+PersistenceAndSources.swift", "")
+    tags_store = sources.get("LapianBao/Stores/LibraryStore+VideoLibraryAndTags.swift", "")
+    save_tags_json = section_between(
+        persistence,
+        "func saveTagsJSON()",
+        "func saveSourceInfoJSON()",
+    )
+    load_tags_json = section_between(
+        persistence,
+        "func loadTagsJSON()",
+        "func loadSourceInfoJSON()",
+    )
+    pending_folder_tags = section_between(
+        persistence,
+        "func applyPendingVideoPathMigrationToLoadedMetadata()",
+        "func remapVideoPath(",
+    )
+    rename_global_tag = section_between(
+        tags_store,
+        "func renameGlobalTag(_ old: String, to new: String)",
+        "func removeGlobalTag(_ tag: String)",
+    )
+    remove_global_tag = section_between(
+        tags_store,
+        "func removeGlobalTag(_ tag: String)",
+        "    // MARK: - JSON 持久化",
+    )
+    remove_single_tag = section_between(
+        tags_store,
+        "func removeTag(_ tag: String, from video: VideoItem)",
+        "func setSourcePlatform",
+    )
+    require(
+        "let oldKey = Self.normalizedSubjectiveTagKey(old)" in rename_global_tag
+        and "Self.cleanedVideoTagSuggestions([new]).first" in rename_global_tag
+        and "tagKey == oldKey" in rename_global_tag
+        and "tagKey == newKey" in rename_global_tag
+        and "tags.contains(old)" not in rename_global_tag,
+        "Global tag rename must replace by normalized tag key so inline edits do not create a second tag.",
+    )
+    require(
+        "let tagKey = Self.normalizedSubjectiveTagKey(tag)" in remove_global_tag
+        and "removeVideoTags(matchingKey: tagKey" in remove_global_tag
+        and "rebuildAllTagsCache()" in remove_global_tag
+        and "markLibrarySidebarMetricsDirty()" in remove_global_tag
+        and "refreshFilteredVideos()" in remove_global_tag,
+        "Global tag deletion must remove by normalized tag key so display-normalized tags do not remain.",
+    )
+    require(
+        "let tagKey = Self.normalizedSubjectiveTagKey(tag)" in remove_single_tag
+        and "removeVideoTags(matchingKey: tagKey" in remove_single_tag
+        and "selectedTags = Set(selectedTags.filter" in remove_single_tag
+        and "tags.removeAll { $0 == tag }" not in remove_single_tag,
+        "Single-video tag deletion must also remove by normalized key rather than exact display text.",
+    )
+    require(
+        "var persistedVideoTagPaths = Set<String>()" in library_store
+        and "relative[ProjectRepository.relativePath(for: absPath, base: libraryURL)] = cleanedTags" in save_tags_json
+        and "guard !cleanedTags.isEmpty else" not in save_tags_json
+        and "persistedVideoTagPaths = pathsToPersist" in save_tags_json
+        and "persistedVideoTagPaths = loadedTagPaths" in load_tags_json
+        and "loadedTagsByVideoPath.removeValue(forKey: absPath)" in load_tags_json
+        and "guard !persistedVideoTagPaths.contains(path) else { continue }" in pending_folder_tags,
+        "Video tag persistence must write empty tag arrays as tombstones so deleted folder-derived tags do not reappear after restart.",
+    )
+
+
 def require_frame_tag_popover_spacing_guardrails(sources: dict[str, str]) -> None:
     frames = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    frame_detail_tag_strip = sources.get("LapianBao/Views/Frames/FrameDetailTagStrip.swift", "")
+    tags_and_badges = sources.get("LapianBao/Views/Components/TagsAndBadges.swift", "")
+    export_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift", "")
+    agents = read("AGENTS.md")
     more_popover = section_between(
         frames,
         "private var morePopover: some View",
         "private var actionSection: some View",
     )
-    detail_popover = section_between(
-        frames,
-        "private var detailPopover: some View",
-        "private var detailActionSection: some View",
+    require(
+        "let tagVerticalInset: CGFloat = 16" in more_popover
+        and "let tagContentGap: CGFloat = tagVerticalInset" in more_popover
+        and "inputSpacing: tagContentGap" in more_popover
+        and "gridVerticalPadding: 0" in more_popover
+        and ".padding(.top, tagVerticalInset)" in more_popover
+        and ".padding(.bottom, tagVerticalInset)" in more_popover,
+        "Frame card tag popover must keep the tag search field visually centered between the popover top and divider.",
     )
-    for section_name, section in {
-        "frame card tag popover": more_popover,
-        "frame detail tag popover": detail_popover,
-    }.items():
-        require(
-            "let tagVerticalInset: CGFloat = 16" in section
-            and "let tagContentGap: CGFloat = tagVerticalInset" in section
-            and "inputSpacing: tagContentGap" in section
-            and "gridVerticalPadding: 0" in section
-            and ".padding(.top, tagVerticalInset)" in section
-            and ".padding(.bottom, tagVerticalInset)" in section,
-            f"{section_name} must keep the tag search field visually centered between the popover top and divider.",
-        )
-        require(
-            ".padding(.bottom, 6)" not in section,
-            f"{section_name} must not use asymmetric bottom padding below the tag search field.",
-        )
+    require(
+        ".padding(.bottom, 6)" not in more_popover,
+        "Frame card tag popover must not use asymmetric bottom padding below the tag search field.",
+    )
 
     status_tiles = sources.get("LapianBao/Views/Components/StatusAndSceneTiles.swift", "")
     scene_tile_popover = section_between(
@@ -722,6 +949,314 @@ def require_frame_tag_popover_spacing_guardrails(sources: dict[str, str]) -> Non
         and ".background(Color.black.opacity(0.46))" not in scene_cut_tile
         and "VideoTagOverflowChip(count: overflowCount)" not in scene_cut_tile,
         "Storyboard grid cells with frame tags must stay on one line and fall back to an ellipsis indicator without a large outer badge background.",
+    )
+    inline_tag_add_button = section_between(
+        tags_and_badges,
+        "struct InlineTagAddButton: View",
+        "struct PreviewTitleTagChip: View",
+    )
+    export_frame_tag_preview = section_between(
+        export_panel,
+        "func exportFrameTagPreview(for frame: SampledFrame) -> some View",
+        "func exportAudioTagPreview(for clip: AudioClipItem) -> some View",
+    )
+    require(
+        "let title: String?" in inline_tag_add_button
+        and "let tagHorizontalInset: CGFloat = 14" in inline_tag_add_button
+        and "let tagVerticalInset: CGFloat = 16" in inline_tag_add_button
+        and "let tagContentGap: CGFloat = tagVerticalInset" in inline_tag_add_button
+        and "inputSpacing: tagContentGap" in inline_tag_add_button
+        and "gridVerticalPadding: 0" in inline_tag_add_button
+        and ".padding(.horizontal, tagHorizontalInset)" in inline_tag_add_button
+        and ".padding(.vertical, tagVerticalInset)" in inline_tag_add_button
+        and ".padding(12)" not in inline_tag_add_button,
+        "Inline tag add popovers must use the same spacing as the other tag menus.",
+    )
+    require(
+        "title: nil" in export_frame_tag_preview
+        and 'title: "图片标签"' not in export_frame_tag_preview,
+        "Export-panel image tag popovers must match content tag menus and not show an extra 图片标签 title.",
+    )
+    require(
+        "GeometryReader" in export_frame_tag_preview
+        and "let rows = exportFrameTagTwoLineLayout(tags: frame.tags, maxWidth: proxy.size.width)" in export_frame_tag_preview
+        and "ForEach(Array(rows.enumerated()), id: \\.offset)" in export_frame_tag_preview
+        and "exportFrameTagPreviewItem(item, frame: frame)" in export_frame_tag_preview
+        and "VideoTagOverflowChip(count: hiddenCount)" in export_frame_tag_preview
+        and "InlineTagAddButton(" in export_frame_tag_preview
+        and ".frame(width: proxy.size.width, height: 38, alignment: .topLeading)" in export_frame_tag_preview
+        and "WrappingFilterChipGroup" not in export_frame_tag_preview,
+        "Export-panel image tag rows must use two lines and keep the add button immediately after visible tags and overflow.",
+    )
+    require(
+        "private func exportFrameTagTwoLineLayout(tags: [String], maxWidth: CGFloat) -> [[ExportFrameTagPreviewItem]]" in export_panel
+        and "for visibleCount in stride(from: tags.count, through: 1, by: -1)" in export_panel
+        and "fallbackItems: [ExportFrameTagPreviewItem] = [.tag(tags[0])]" in export_panel
+        and "guard rows.count < 2 else { return nil }" in export_panel
+        and "func exportFrameMiniTagChipWidth(for tag: String)" in export_panel
+        and "func exportFrameTagOverflowChipWidth(for hiddenCount: Int)" in export_panel,
+        "Export-panel image tag rows must compute two-line visible tags from available width and show a real tag before overflow fallback.",
+    )
+    frame_detail_overlay = section_between(
+        frames,
+        "private func frameDetailOverlay(_ frame: SampledFrame) -> some View",
+        "private func storyboardDetailOverlay",
+    )
+    storyboard_detail_overlay = section_between(
+        frames,
+        "private func storyboardDetailOverlay(_ item: FrameStoryboardItem) -> some View",
+        "private func frameDetailTopBar",
+    )
+    frame_detail_top_bar = section_between(
+        frames,
+        "private func frameDetailTopBar(",
+        "private func frameDetailBottomBar",
+    )
+    frame_detail_bottom_bar = section_between(
+        frames,
+        "private func frameDetailBottomBar(",
+        "private func frameDetailIconButton",
+    )
+    frame_detail_icon_button = section_between(
+        frames,
+        "private func frameDetailIconButton(",
+        "private func selectedFrameDetailPreview",
+    )
+    detail_overlay_container = section_between(
+        frames,
+        "private func detailOverlayContainer<Content: View>",
+        "private func frameDetailOverlay",
+    )
+    detail_overlay_presentation = section_between(
+        frames,
+        "private func presentFrameDetail(_ frame: SampledFrame)",
+        "private func storyboardCardTitle",
+    )
+    detail_overlay_dismissal = section_between(
+        frames,
+        "private func dismissFrameDetailOverlay()",
+        "private func stopDetailPlayback",
+    )
+    require(
+        "struct FrameDetailTagStrip: View" in frame_detail_tag_strip,
+        "Frame detail tag strip must live in its own focused view file.",
+    )
+    require(
+        "FrameDetailMoreButton" not in frames
+        and "detailPopover" not in frames,
+        "Frame detail overlay must remove the old ellipsis popover menu.",
+    )
+    require(
+        "FrameDetailTagStrip(" in frame_detail_top_bar
+        and "HStack(alignment: .center, spacing: 14)" in frame_detail_top_bar
+        and "ColorSwatches(imageData: colorData, orientation: .horizontal)" in frame_detail_top_bar
+        and frame_detail_top_bar.count(".frame(maxWidth: .infinity") >= 2,
+        "Frame detail top bar must split tags and color swatches into left/right halves above the image.",
+    )
+    require(
+        "private let frameDetailRowSpacing: CGFloat = 8" in frames
+        and "private let frameDetailTopBarHeight: CGFloat = FrameDetailTagStrip.rowHeight" in frames
+        and "private let frameDetailBottomBarHeight: CGFloat = 34" in frames
+        and "VStack(alignment: .center, spacing: frameDetailRowSpacing)" in frame_detail_overlay
+        and "VStack(alignment: .center, spacing: frameDetailRowSpacing)" in storyboard_detail_overlay
+        and ".padding(frameDetailRowSpacing)" in frame_detail_overlay
+        and ".padding(frameDetailRowSpacing)" in storyboard_detail_overlay
+        and ".padding(16)" not in frame_detail_overlay
+        and ".padding(16)" not in storyboard_detail_overlay
+        and ".frame(height: frameDetailTopBarHeight, alignment: .center)" in frame_detail_top_bar
+        and ".frame(maxWidth: .infinity, alignment: .center)" in frame_detail_top_bar
+        and ".frame(height: frameDetailBottomBarHeight, alignment: .center)" in frame_detail_bottom_bar
+        and ".frame(maxWidth: .infinity, alignment: .center)" in frame_detail_bottom_bar,
+        "Frame detail overlay must use the same compact vertical spacing for outer padding and row gaps.",
+    )
+    require(
+        "private func detailOverlayWidth(for previewWidth: CGFloat) -> CGFloat" in frames
+        and "previewWidth + frameDetailRowSpacing * 2" in frames
+        and ".frame(width: 720)" not in frame_detail_overlay
+        and ".frame(width: 720)" not in storyboard_detail_overlay,
+        "Frame detail overlay outer frame must follow the preview width plus the same compact padding.",
+    )
+    require(
+        ".transition(" not in detail_overlay_container
+        and ".contentShape(Rectangle())" in detail_overlay_container
+        and ".onTapGesture(perform: dismiss)" in detail_overlay_container
+        and ".allowsHitTesting(false)" not in detail_overlay_container
+        and "FrameDetailOutsideClickMonitor" not in frames
+        and "private func dismissDetailOverlayWithoutAnimation(_ update: () -> Void)" in detail_overlay_dismissal
+        and "transaction.disablesAnimations = true" in detail_overlay_dismissal
+        and "withTransaction(transaction)" in detail_overlay_dismissal
+        and "selectedFrameID = nil" in detail_overlay_dismissal,
+        "Frame detail overlay backdrop must consume blank-area clicks while removing immediately for the next click.",
+    )
+    require(
+        "private func presentFrameDetail(_ frame: SampledFrame)" in detail_overlay_presentation
+        and "detailStoryboardItem = nil" in detail_overlay_presentation
+        and "selectedFrameID = frame.id" in detail_overlay_presentation
+        and "private func presentStoryboardDetail(_ item: FrameStoryboardItem)" in detail_overlay_presentation
+        and "detailFrame = nil" in detail_overlay_presentation
+        and "detailStoryboardItem = item" in detail_overlay_presentation,
+        "Frame detail overlay presentation must keep saved-frame and storyboard detail states mutually exclusive.",
+    )
+    require(
+        "case .tag(let tag):" in frame_detail_tag_strip
+        and "Button {" in frame_detail_tag_strip
+        and "onRemove?(tag)" in frame_detail_tag_strip
+        and "InlineTagAddButton(" in frame_detail_tag_strip
+        and "VideoTagOverflowChip(count: hiddenCount)" in frame_detail_tag_strip
+        and "buttonSize: addButtonWidth" in frame_detail_tag_strip,
+        "Frame detail tag strip must remove a tag on chip repeat-click and keep the add button at the end of the tag row.",
+    )
+    require(
+        "static let rowHeight: CGFloat = 24" in frame_detail_tag_strip
+        and "private func singleLineLayout(tags: [String], maxWidth: CGFloat) -> [RowItem]" in frame_detail_tag_strip
+        and "for visibleCount in stride(from: tags.count, through: 1, by: -1)" in frame_detail_tag_strip
+        and "rowWidth(items) <= availableWidth" in frame_detail_tag_strip
+        and "fallbackItems: [RowItem] = [.tag(tags[0])]" in frame_detail_tag_strip
+        and "twoLineLayout" not in frame_detail_tag_strip,
+        "Frame detail tag strip must use a single-row layout with overflow so the top bar does not add hidden vertical padding.",
+    )
+    require(
+        ".frame(width: proxy.size.width, height: rowHeight, alignment: .leading)" in frame_detail_tag_strip
+        and "stripHeight" not in frame_detail_tag_strip,
+        "Frame detail tag strip must use the visible single-row height instead of reserving two rows.",
+    )
+    require(
+        "frameDetailTopBar(" in frame_detail_overlay
+        and "let previewWidth = detailPreviewSize(for: previewImage).width" in frame_detail_overlay
+        and "let overlayWidth = detailOverlayWidth(for: previewWidth)" in frame_detail_overlay
+        and "VStack(alignment: .center" in frame_detail_overlay
+        and frame_detail_overlay.count(".frame(width: previewWidth, alignment: .center)") >= 2
+        and ".frame(width: overlayWidth)" in frame_detail_overlay
+        and "selectedFrameDetailPreview(currentFrame, fallbackImage: previewImage)" in frame_detail_overlay
+        and "frameDetailBottomBar(" in frame_detail_overlay
+        and "FrameDetailMoreButton(" not in frame_detail_overlay
+        and "ColorSwatches(" not in frame_detail_overlay,
+        "Saved frame detail overlay must align its top bar, preview, and bottom bar to the preview width.",
+    )
+    require(
+        "libraryStore.removeFrameTag($0, from: currentFrame)" in frame_detail_overlay
+        and "removeFrameTagOrDeleteIfEmpty" not in frame_detail_overlay,
+        "Saved frame detail tag repeat-click must only cancel that tag; image deletion belongs to the bottom delete button.",
+    )
+    require(
+        "frameDetailTopBar(" in storyboard_detail_overlay
+        and "let previewWidth = detailPreviewSize(for: previewImage).width" in storyboard_detail_overlay
+        and "let overlayWidth = detailOverlayWidth(for: previewWidth)" in storyboard_detail_overlay
+        and "VStack(alignment: .center" in storyboard_detail_overlay
+        and storyboard_detail_overlay.count(".frame(width: previewWidth, alignment: .center)") >= 2
+        and ".frame(width: overlayWidth)" in storyboard_detail_overlay
+        and "storyboardItemDetailPreview(item, fallbackImage: previewImage)" in storyboard_detail_overlay
+        and "frameDetailBottomBar(" in storyboard_detail_overlay
+        and "FrameDetailMoreButton(" not in storyboard_detail_overlay
+        and "ColorSwatches(" not in storyboard_detail_overlay,
+        "Storyboard detail overlay must align its top bar, preview, and bottom bar to the preview width.",
+    )
+    require(
+        "libraryStore.removeFrameTag($0, from: sample)" in storyboard_detail_overlay
+        and "removeFrameTagOrDeleteIfEmpty" not in storyboard_detail_overlay,
+        "Storyboard detail tag repeat-click must only cancel that tag; image deletion belongs to the bottom delete button.",
+    )
+    require(
+        '"arrowshape.turn.up.left.fill"' in frame_detail_bottom_bar
+        and '"folder"' in frame_detail_bottom_bar
+        and '"play.fill"' in frame_detail_bottom_bar
+        and '"pause.fill"' in frame_detail_bottom_bar
+        and '"trash"' in frame_detail_bottom_bar
+        and "toggleDetailPlayback(video: video, startTime: startTime, key: playbackKey)" in frame_detail_bottom_bar,
+        "Frame detail bottom bar must expose jump, Finder, centered playback, and delete controls without an ellipsis menu.",
+    )
+    require(
+        ".background(" not in frame_detail_bottom_bar
+        and "Circle()" not in frame_detail_bottom_bar
+        and ".background(" not in frame_detail_icon_button
+        and "Circle()" not in frame_detail_icon_button
+        and ".frame(width: 30" not in frame_detail_icon_button
+        and ".contentShape(Rectangle())" in frame_detail_bottom_bar
+        and ".contentShape(Rectangle())" in frame_detail_icon_button,
+        "Frame detail bottom buttons must stay as plain icon buttons without circular backgrounds or invisible side insets.",
+    )
+    require(
+        "画面详情浮层不使用省略号菜单" in agents
+        and "顶部栏左半显示可点击取消的单行标签并在末尾放加号" in agents
+        and "显示不下时用溢出 chip" in agents
+        and "右半显示色卡" in agents
+        and "按预览框实际宽度居中对齐" in agents
+        and "外框宽度跟随预览框宽度加统一 padding" in agents
+        and "关闭时立即移除遮罩" in agents
+        and "空白处点击只关闭并消费当前点击" in agents
+        and "外层上下 padding 与行间距使用同一个较小值" in agents
+        and "底部栏左侧为回到原视频和访达" in agents
+        and "底部按钮不加圆形背景" in agents,
+        "AGENTS must record the frame detail overlay layout so future UI work keeps this design.",
+    )
+
+
+def require_frame_tag_filter_edit_guardrails(sources: dict[str, str]) -> None:
+    frames = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    store = sources.get("LapianBao/Stores/LibraryStore+TimelineMedia.swift", "")
+    inline_field = sources.get("LapianBao/Views/Components/InlineTagRenameTextField.swift", "")
+    quick_bar = section_between(
+        frames,
+        "private var frameTagQuickFilterBar",
+        "@ViewBuilder\n    private func frameModeButton",
+    )
+    edit_chip = section_between(
+        frames,
+        "private func editableFrameTagFilterChip",
+        "private var frameTagEditButton",
+    )
+    edit_flow = section_between(
+        frames,
+        "private func beginFrameTagRename",
+        "private func frameTagCountsByName",
+    )
+    require(
+        "frameTagEditButton" in quick_bar
+        and "editableFrameTagFilterChip(" in quick_bar
+        and "frameTagFilterChip(" in quick_bar
+        and "isFrameTagEditing" in frames
+        and "@FocusState private var focusedFrameTagRenameTarget" in frames,
+        "Frame tag filter row must include inline edit mode after the frame tag chips.",
+    )
+    require(
+        "InlineTagRenameTextField(" in edit_chip
+        and 'Image(systemName: "xmark")' in edit_chip
+        and "frameTagFilterCountWidth(for: count)" in edit_chip,
+        "Editable frame tag chips must reuse the inline rename field and replace the count slot with delete.",
+    )
+    require(
+        "libraryStore.renameGlobalFrameTag" in edit_flow
+        and "libraryStore.removeGlobalFrameTag" in edit_flow
+        and "exitFrameTagEditing()" in frames,
+        "Frame tag edit mode must rename/delete global frame tags and cleanly exit edit mode.",
+    )
+    require(
+        "func renameGlobalFrameTag" in store
+        and "func removeGlobalFrameTag" in store
+        and "normalizedFrameTagKey" in store,
+        "LibraryStore must support global frame tag rename/delete by normalized key.",
+    )
+    require(
+        "struct InlineTagRenameTextField" in inline_field
+        and "placeCaretAtEnd()" in inline_field,
+        "Inline tag rename field must stay shared across tag edit surfaces.",
+    )
+
+
+def require_frame_detail_playback_guardrails(sources: dict[str, str]) -> None:
+    frames = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    detail_playback_toggle = section_between(
+        frames,
+        "private func toggleDetailPlayback",
+        "private func playDetailSegment",
+    )
+    require(
+        "detailPlaybackResumeTime(video: video, startTime: startTime, key: key)" in detail_playback_toggle
+        and "previewController.elapsed" in detail_playback_toggle
+        and "detailPlaybackEndTime(for: video, after: startTime)" in detail_playback_toggle
+        and "return currentTime >= endTime - endTolerance ? startTime : currentTime" in detail_playback_toggle
+        and "playDetailSegment(video: video, startTime: resumeTime, key: key)" in detail_playback_toggle,
+        "Frame detail playback must restart from the image anchor after a segment finishes instead of treating the end time as the next segment start.",
     )
 
 
@@ -822,6 +1357,179 @@ def require_account_cookie_detection_guardrails(sources: dict[str, str]) -> None
         and "isAuthenticatedBilibiliCookie(name: name, value: value)" in account_cookies
         and "isAuthenticatedDouyinCookie(name: name, value: value)" in account_cookies,
         "Account status must require strong non-empty session cookies for both WebKit and Netscape cookie sources.",
+    )
+
+
+def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
+    preview_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView.swift", "")
+    timeline_details = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineDetails.swift", "")
+    agents = read("AGENTS.md")
+    annotation_editor = section_between(
+        timeline_details,
+        "func annotationEditorView(for video: VideoItem) -> some View",
+        "func beginAnnotation",
+    )
+    annotation_text_view = section_between(
+        timeline_details,
+        "private struct AnnotationEditorTextView: NSViewRepresentable",
+        "    final class Coordinator",
+    )
+    save_button = section_between(
+        annotation_editor,
+        'Button("保存")',
+        ".disabled(annotationText.trimmingCharacters",
+    )
+    require(
+        "static let annotationEditorWidth: CGFloat = 336" in preview_panel
+        and "static let annotationEditorHeight: CGFloat = 226" in preview_panel
+        and ".padding(.horizontal, 18)" in annotation_editor
+        and ".padding(.vertical, 16)" in annotation_editor
+        and ".frame(height: 122)" in annotation_editor,
+        "Annotation editor must keep enough page width and balanced content spacing.",
+    )
+    require(
+        ".font(.system(size: 15, weight: .semibold))" in annotation_editor
+        and "textView.font = .systemFont(ofSize: 15, weight: .regular)" in annotation_text_view
+        and "textView.textContainerInset = NSSize(width: 12, height: 10)" in annotation_text_view,
+        "Annotation editor text must use moderate sizing and explicit horizontal text inset.",
+    )
+    require(
+        ".keyboardShortcut(.defaultAction)" not in save_button,
+        "Annotation editor save must not bind Return; Return should stay available for multiline text input.",
+    )
+    require(
+        "批注编辑弹层要保留舒适的输入区左右内边距" in agents
+        and "回车用于输入换行" in agents
+        and "不能作为保存批注的默认动作" in agents,
+        "AGENTS must record annotation editor spacing and Return-key behavior.",
+    )
+
+
+def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str]) -> None:
+    preview_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView.swift", "")
+    timeline_layout = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineLayout.swift", "")
+    timeline_details = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineDetails.swift", "")
+    helpers = sources.get("LapianBao/Views/Preview/PreviewPanelView+HelpersAndKeyboard.swift", "")
+    timeline_components = sources.get("LapianBao/Views/Components/CardAndTimelineHelpers.swift", "")
+    status_tiles = sources.get("LapianBao/Views/Components/StatusAndSceneTiles.swift", "")
+    scene_panel = sources.get("LapianBao/Views/Preview/ScenePanelView.swift", "")
+    home_content = sources.get("LapianBao/Views/Preview/PreviewPanelView+HomeContent.swift", "")
+    timeline_controls = sources.get("LapianBao/Views/Preview/TimelineControls.swift", "")
+    agents = read("AGENTS.md")
+
+    timeline_stack = section_between(
+        timeline_layout,
+        "func timelineStackContainer(",
+        "@ViewBuilder\n    func compositeTimelineStack",
+    )
+    require(
+        "PlaybackClockDrivenView(" in timeline_stack
+        and "duration: controller.duration" in timeline_stack
+        and "playbackRate: controller.playbackRate" in timeline_stack
+        and "isPlaying: controller.isPlaying" in timeline_stack,
+        "Preview timeline stack must keep using the interpolated playback clock for smooth playback display.",
+    )
+
+    focus_scene_timeline = section_between(
+        helpers,
+        "func focusSceneTimelineOnOpeningIfNeeded()",
+        "func sceneTimelineOpeningFocusKey",
+    )
+    require(
+        "activePreviewTab == .frames" not in focus_scene_timeline
+        and "timelineViewportSpan >= 0.999" in focus_scene_timeline
+        and "timelineOffset <= 0.0005" in focus_scene_timeline
+        and "updateTimelineViewportWithoutAnimation(" in focus_scene_timeline,
+        "Scene timeline default zoom must apply whenever the frame timeline viewport is reset, not only when the frames tab is active.",
+    )
+
+    scene_progress_overlay = section_between(
+        timeline_components,
+        "struct SceneStoryboardProgressOverlay: View",
+        "struct FrameStripTimelineStrip: View",
+    )
+    require(
+        "SmoothTimelineProgressReader(" not in scene_progress_overlay
+        and "PlaybackTimelineAnimation.normalizedProgress(activeProgress)" in scene_progress_overlay
+        and "transaction.disablesAnimations = true" in scene_progress_overlay,
+        "Scene storyboard progress must consume the outer smooth clock directly and must not add a second progress interpolator.",
+    )
+    frame_timeline = section_between(
+        timeline_details,
+        "func frameTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View",
+        "func audioTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View",
+    )
+    timeline_image_layer = section_between(
+        timeline_components,
+        "private final class TimelineImageLayerStripView: NSView",
+        "struct SceneStoryboardStrip: View",
+    )
+    require(
+        "func displayedTimelineOffset(for progress: Double) -> Double" in helpers
+        and "controller.isPlaying || keyboardShuttleDirection != 0" in helpers
+        and "let viewportStart = displayedTimelineOffset(for: clock.progress)" in frame_timeline
+        and "viewportStart: viewportStart" in frame_timeline
+        and "private var imageLayerIDs: [ObjectIdentifier?]" in timeline_image_layer
+        and "private var cachedImageIDs: [ObjectIdentifier]" in timeline_image_layer
+        and "if imageLayerIDs[index] != imageID" in timeline_image_layer
+        and "imageLayer.contents = cgImage(for: item.image)" in timeline_image_layer,
+        "Frame timeline playback follow must use the smooth clock for display offset and avoid resetting image layer contents on every frame.",
+    )
+    require(
+        "activeProgressTick" not in timeline_layout
+        and "activeProgressTick" not in timeline_details
+        and "activeProgressTick" not in scene_panel
+        and "activeProgressTick" not in home_content
+        and "sceneGridProgressTick" not in timeline_layout
+        and "struct SceneCutTileActivePlayback" in status_tiles
+        and "private struct SceneCutTileActiveProgressOverlay" in status_tiles
+        and "PlaybackClockDrivenView(" in status_tiles
+        and "SceneCutTileProgressOverlay(progress: progress(for: clock.elapsed))" in status_tiles
+        and "activePlayback: activePlayback(for: item)" in scene_panel
+        and "playbackDuration: controller.duration" in timeline_details
+        and "playbackRate: controller.playbackRate" in timeline_details
+        and "isPlaybackPlaying: controller.isPlaying" in timeline_details,
+        "Expanded frame timeline progress must update only the active tile overlay at 60fps instead of rebuilding the scene grid.",
+    )
+    require(
+        "主页画面时间线的默认缩放由场景数量决定" in agents
+        and "不要依赖当前激活的是不是画面 tab" in agents
+        and "不要再套第二层进度插值" in agents,
+        "AGENTS must record the preview timeline default zoom and single-interpolator rules.",
+    )
+    require(
+        "横向跟随必须用平滑播放 clock 计算显示用 viewport offset" in agents
+        and "不能只靠 30fps 发布状态跳动" in agents
+        and "只有当前活动卡片的进度层可以用 60fps clock 更新" in agents,
+        "AGENTS must record the smooth frame timeline follow and active-tile-only progress rules.",
+    )
+
+    audio_timeline = section_between(
+        timeline_details,
+        "func audioTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View",
+        "func contentTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View",
+    )
+    annotation_marker_point = section_between(
+        timeline_layout,
+        "func annotationMarkerPoint(in size: CGSize) -> CGPoint",
+        "func visibleAnnotationSourceTab()",
+    )
+    require(
+        "@State var audioTimelineZoom: Double = 1" in preview_panel
+        and "resetAudioTimelineViewport()" in preview_panel
+        and "var audioTimelineViewportSpan: Double" in helpers
+        and "Design.centeredWaveformViewportSpan" in helpers
+        and "func zoomAudioTimelineViewport(_ factor: Double, anchor _: Double)" in helpers
+        and "audioTimelineZoom = nextZoom" in helpers
+        and "viewportSpan: audioTimelineViewportSpan" in audio_timeline
+        and "zoomViewport: zoomAudioTimelineViewport" in audio_timeline
+        and "let span = audioTimelineViewportSpan" in annotation_marker_point
+        and "MagnificationGesture()" in timeline_controls
+        and "zoomViewport?(Double(factor), 0.5)" in timeline_controls
+        and "主页声音时间线保持播放头居中" in agents
+        and "必须支持双指捏合缩放" in agents
+        and "不复用画面时间线的 `timelineZoom/timelineOffset` 状态" in agents,
+        "Home audio timeline must support pinch zoom through its own centered-waveform zoom state.",
     )
 
 
@@ -1006,6 +1714,30 @@ def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None
     )
 
 
+def require_saved_import_status_text_guardrails(sources: dict[str, str]) -> None:
+    import_jobs = sources.get("LapianBao/Views/AppShell/ContentView+ImportJobs.swift", "")
+    fetch_outcome = section_between(
+        import_jobs,
+        "func savedImportFetchOutcome",
+        "func refreshSavedImportCandidatesIfNeeded",
+    )
+    refresh_section = section_between(
+        import_jobs,
+        "func refreshSavedImportCandidates(restartExisting: Bool = false)",
+        "func startSavedImportCandidateMetadataEnrichment",
+    )
+    require(
+        "suppressMissingXiaohongshuVideos" in fetch_outcome
+        and "InstagramSavedImportError.noXiaohongshuVideoLinks" in fetch_outcome
+        and "return (nil, nil)" in fetch_outcome,
+        "Missing Xiaohongshu saved videos must be treated as an empty optional source, not as a visible status error.",
+    )
+    require(
+        "savedImportFetchOutcome(suppressMissingXiaohongshuVideos: true)" in refresh_section,
+        "Xiaohongshu saved import refresh must suppress the non-blocking no-video message.",
+    )
+
+
 def require_interaction_hit_testing_guardrails(sources: dict[str, str], guidance: str) -> None:
     require(
         "全窗口遮罩背景" in guidance
@@ -1152,15 +1884,21 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
     require_initial_music_cache_prewarm_guardrails(sources)
     require_quick_filter_chip_stable_selection_guardrails(sources)
     require_home_tag_inline_edit_guardrails(sources)
+    require_global_tag_edit_key_matching_guardrails(sources)
     require_video_tag_popover_spacing_guardrails(sources)
     require_frame_tag_popover_spacing_guardrails(sources)
+    require_frame_tag_filter_edit_guardrails(sources)
+    require_frame_detail_playback_guardrails(sources)
     require_bilibili_official_display_name_guardrails(sources)
     require_account_cookie_detection_guardrails(sources)
+    require_annotation_editor_guardrails(sources)
+    require_preview_timeline_playback_viewport_guardrails(sources)
     require_no_app_tooltips_guardrails(sources)
     require_settings_row_description_guardrails(sources)
     require_music_preview_playback_guardrails(sources)
     require_recognized_library_restore_guardrails(sources)
     require_import_job_progress_text_guardrails(sources)
+    require_saved_import_status_text_guardrails(sources)
     require_regex_allowlist(
         sources,
         r"NotificationCenter\.default",
@@ -1200,6 +1938,7 @@ def main() -> None:
     preview_controller = app_swift
     content_view = app_swift
     launch_imports = swift_sources.get("LapianBao/Stores/LibraryStore+LaunchAndRemoteImports.swift", "")
+    xiaohongshu_download = swift_sources.get("LapianBao/Stores/LibraryStore+XiaohongshuDownload.swift", "")
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
 
     require(
@@ -1343,6 +2082,8 @@ def main() -> None:
         "InstagramSavedFeedResponse",
         "instagramVideoLinks",
         "xiaohongshuVideoLinks",
+        "xiaohongshuSavedVideoLinks",
+        "xiaohongshuLoggedInProfileURLString",
         "isTerminalRemoteImportStatus",
         "remoteImportJobCanReceiveWorkerProgress",
         "ChromeCookieFileCache",
@@ -1368,6 +2109,32 @@ def main() -> None:
     require(
         "libraryStore.prewarmSavedCollectionCookieCache()" in app_swift,
         "App launch must prewarm Chrome cookies before the user clicks saved-collection sync.",
+    )
+    xiaohongshu_saved_scan = section_between(
+        launch_imports,
+        "nonisolated static func fetchLatestXiaohongshuSavedVideoScanFromChromeCookies",
+        "nonisolated static func platformName",
+    )
+    require(
+        "xiaohongshuSavedCollectionURLString" not in app_swift
+        and "https://www.xiaohongshu.com/explore" not in xiaohongshu_saved_scan,
+        "Xiaohongshu saved sync must not treat the Explore discovery page as the saved collection source.",
+    )
+    require(
+        "let profileURLString = try xiaohongshuLoggedInProfileURLString(cookieURL: cookieURL)" in xiaohongshu_saved_scan
+        and "Self.xiaohongshuSavedVideoLinks(fromProfileHTML: html, limit: limit)" in xiaohongshu_saved_scan
+        and "Self.xiaohongshuVideoLinks(fromSavedHTML: html, limit: limit)" not in xiaohongshu_saved_scan,
+        "Xiaohongshu saved sync must resolve the logged-in profile and parse only the saved notes slot.",
+    )
+    xiaohongshu_token_lookup = section_between(
+        xiaohongshu_download,
+        "nonisolated static func xiaohongshuTokenizedCollectionURL",
+        "nonisolated static func xiaohongshuLoggedInProfileURLString",
+    )
+    require(
+        "xiaohongshuLoggedInProfileURLString(cookieURL: cookieURL)" in xiaohongshu_token_lookup
+        and "xiaohongshuSavedVideoLinks(fromProfileHTML: html, limit: 50)" in xiaohongshu_token_lookup,
+        "Xiaohongshu token lookup must use the logged-in profile saved notes rather than discovery feed links.",
     )
     require(
         'links.append("https://www.instagram.com/p/\\(parentCode)/")' in library_store

@@ -310,6 +310,9 @@ extension PreviewPanelView {
 
     func videoTagPopover(for video: VideoItem) -> some View {
         let tags = libraryStore.videoTags(for: video)
+        let tagHorizontalInset: CGFloat = 14
+        let tagVerticalInset: CGFloat = 16
+        let tagContentGap: CGFloat = tagVerticalInset
 
         return TagEditorSection(
             domain: .video,
@@ -317,7 +320,7 @@ extension PreviewPanelView {
             suggestedTags: libraryStore.videoTagSuggestions(for: video),
             chipSize: .compact,
             verticalSpacing: 0,
-            inputSpacing: 2,
+            inputSpacing: tagContentGap,
             gridVerticalPadding: 0,
             onAdd: { tag in
                 libraryStore.addTag(tag, to: video)
@@ -326,8 +329,8 @@ extension PreviewPanelView {
                 libraryStore.removeTag(tag, from: video)
             }
         )
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, tagHorizontalInset)
+        .padding(.vertical, tagVerticalInset)
     }
 
     func timelineStackContainer(
@@ -521,10 +524,10 @@ extension PreviewPanelView {
 
         switch tab {
         case .frames:
-            let local = (progress - timelineOffset) / max(timelineViewportSpan, 0.0001)
+            let local = (progress - displayedTimelineOffset(for: controller.progress)) / max(timelineViewportSpan, 0.0001)
             x = contentFrame.minX + contentFrame.width * CGFloat(local)
         case .audio:
-            let span = max(0.02, min(1, Design.centeredWaveformViewportSpan))
+            let span = audioTimelineViewportSpan
             let focus = min(1, max(0, controller.progress))
             x = contentFrame.midX + contentFrame.width * CGFloat((progress - focus) / span)
         case .content:
@@ -680,10 +683,7 @@ extension PreviewPanelView {
                     frameTimeline(for: video, clock: clock)
                 },
                 detail: {
-                    frameTimelineDetailContent(
-                        for: video,
-                        activeProgressTick: sceneGridProgressTick(clock.elapsed)
-                    )
+                    frameTimelineDetailContent(for: video)
                 }
             )
         case .audio:
@@ -719,11 +719,6 @@ extension PreviewPanelView {
         case .audio: return "waveform"
         case .content: return "text.quote"
         }
-    }
-
-    func sceneGridProgressTick(_ elapsed: Double) -> Double {
-        guard elapsed.isFinite else { return 0 }
-        return (elapsed * 12).rounded() / 12
     }
 
     func timelineLane<Content: View, Detail: View>(

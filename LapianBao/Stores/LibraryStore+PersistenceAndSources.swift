@@ -26,15 +26,20 @@ extension LibraryStore {
     func saveTagsJSON() {
         guard let url = tagsJSONURL(), let libraryURL else { return }
         var relative: [String: [String]] = [:]
-        for (absPath, tags) in tagsByVideoPath where !tags.isEmpty {
+        let videoPaths = Set(videos.map(\.url.path))
+        let pathsToPersist = videoPaths
+            .union(tagsByVideoPath.keys)
+            .union(persistedVideoTagPaths)
+        for absPath in pathsToPersist {
+            let tags = tagsByVideoPath[absPath, default: []]
             let cleanedTags = subjectiveVideoTags(
                 forPath: absPath,
                 tags: tags,
                 sourceInfo: sourceInfoByVideoPath[absPath]
             )
-            guard !cleanedTags.isEmpty else { continue }
             relative[ProjectRepository.relativePath(for: absPath, base: libraryURL)] = cleanedTags
         }
+        persistedVideoTagPaths = pathsToPersist
         try? ProjectRepository.writeJSON(relative, to: url)
     }
 
@@ -495,14 +500,24 @@ extension LibraryStore {
 
     func loadTagsJSON() {
         guard let url = tagsJSONURL(), let libraryURL else { return }
-        guard let decoded = ProjectRepository.readJSON([String: [String]].self, from: url) else { return }
+        guard let decoded = ProjectRepository.readJSON([String: [String]].self, from: url) else {
+            persistedVideoTagPaths.removeAll()
+            return
+        }
 
         let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
         var loadedTagsByVideoPath = tagsByVideoPath
-        for (key, tags) in decoded where !tags.isEmpty {
+        var loadedTagPaths = Set<String>()
+        for (key, tags) in decoded {
             let absPath = key.hasPrefix("/") ? key : base + key
-            loadedTagsByVideoPath[absPath] = tags
+            loadedTagPaths.insert(absPath)
+            if tags.isEmpty {
+                loadedTagsByVideoPath.removeValue(forKey: absPath)
+            } else {
+                loadedTagsByVideoPath[absPath] = tags
+            }
         }
+        persistedVideoTagPaths = loadedTagPaths
         tagsByVideoPath = loadedTagsByVideoPath
     }
 
@@ -527,6 +542,7 @@ extension LibraryStore {
         if !pendingVideoPathRemap.isEmpty {
             tagsByVideoPath = remapVideoPathDictionary(tagsByVideoPath)
             sourceInfoByVideoPath = remapVideoPathDictionary(sourceInfoByVideoPath)
+            persistedVideoTagPaths = Set(persistedVideoTagPaths.map(remapVideoPath))
             shouldSaveTags = true
             shouldSaveSources = true
         }
@@ -534,6 +550,7 @@ extension LibraryStore {
         if !pendingVideoFolderTagsByPath.isEmpty {
             var updated = tagsByVideoPath
             for (path, folderTags) in pendingVideoFolderTagsByPath {
+                guard !persistedVideoTagPaths.contains(path) else { continue }
                 let cleanedTags = Self.cleanedResourceTags(folderTags)
                 guard !cleanedTags.isEmpty else { continue }
                 var merged = updated[path] ?? []
@@ -542,6 +559,7 @@ extension LibraryStore {
                     merged.append(tag)
                 }
                 updated[path] = merged
+                persistedVideoTagPaths.insert(path)
                 shouldSaveTags = true
             }
             tagsByVideoPath = updated

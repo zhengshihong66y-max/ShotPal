@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="windowClip">
+      <rect x="838" y="342" width="360" height="340" rx="76"/>
+    </clipPath>
+    <linearGradient id="baseX" x1="-84" y1="512" x2="1198" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FDF965"/>
+      <stop offset="0.38" stop-color="#F7D45E"/>
+      <stop offset="0.70" stop-color="#EC5D4B"/>
+      <stop offset="1" stop-color="#E684D3"/>
+    </linearGradient>
+    <linearGradient id="baseY" x1="512" y1="342" x2="512" y2="682" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF46A" stop-opacity="0.74"/>
+      <stop offset="0.50" stop-color="#F6FE6A" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#B6FD6D" stop-opacity="0.72"/>
+    </linearGradient>
+    <radialGradient id="cyanBlend" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(560 660) scale(360 180)">
+      <stop offset="0" stop-color="#9FC2C9" stop-opacity="0.92"/>
+      <stop offset="0.55" stop-color="#9FC2C9" stop-opacity="0.58"/>
+      <stop offset="1" stop-color="#9FC2C9" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="yellowLift" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(190 390) scale(390 190)">
+      <stop offset="0" stop-color="#FFFF37" stop-opacity="0.88"/>
+      <stop offset="0.62" stop-color="#FFFF37" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#FFFF37" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="magentaCorner" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1010 650) scale(300 180)">
+      <stop offset="0" stop-color="#E684D3" stop-opacity="0.86"/>
+      <stop offset="0.62" stop-color="#E684D3" stop-opacity="0.48"/>
+      <stop offset="1" stop-color="#E684D3" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#windowClip)">
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#baseX)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#baseY)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#cyanBlend)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#yellowLift)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#magentaCorner)"/>
+  </g>
+</svg>

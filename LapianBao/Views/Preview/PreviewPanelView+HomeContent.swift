@@ -162,7 +162,9 @@ extension PreviewPanelView {
                 isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
                 sampledFrames: libraryStore.sampledFrames(for: video),
                 activeItemID: activeSceneItemID(for: video),
-                activeProgressTick: nil,
+                playbackDuration: controller.duration,
+                playbackRate: controller.playbackRate,
+                isPlaybackPlaying: controller.isPlaying,
                 openStoryboardBoard: { openStoryboardBoard(video) },
                 exportStoryboard: { exportCurrentStoryboard(for: video) },
                 storyboardExportTitle: storyboardExportButtonTitle(for: video)

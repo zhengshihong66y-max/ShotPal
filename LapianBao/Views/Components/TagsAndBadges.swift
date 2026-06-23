@@ -111,12 +111,15 @@ struct QuickFilterChoiceChip: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 164, alignment: .leading)
+                    .layoutPriority(0)
 
                 if let count {
                     Text("\(count)")
                         .font(Design.numericCaption2(weight: .bold))
                         .lineLimit(1)
                         .foregroundStyle(isSelected ? .white.opacity(0.86) : .secondary.opacity(0.82))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(2)
                 }
 
             }
@@ -424,12 +427,14 @@ struct TagEditorSection: View {
     var verticalSpacing: CGFloat = 10
     var inputSpacing: CGFloat = 6
     var gridVerticalPadding: CGFloat?
+    var allowsTag: ((String) -> Bool)? = nil
     var onAdd: ((String) -> Void)? = nil
     var onRemove: ((String) -> Void)? = nil
 
     @State private var draftTag = ""
     @State private var recentlyAddedTagKey: String?
     @State private var pendingAddedTags: [String] = []
+    @State private var newTagClickProtectionKeys = Set<String>()
     @FocusState private var isTagFieldFocused: Bool
 
     private var layout: TagEditorLayoutConfiguration {
@@ -441,12 +446,13 @@ struct TagEditorSection: View {
     }
 
     private var displayedTags: [String] {
-        var seenKeys = Set(tags.map(Self.tagKey))
-        var result = tags
+        let allowedTags = tags.filter(isAllowedTag)
+        var seenKeys = Set(allowedTags.map(Self.tagKey))
+        var result = allowedTags
 
         for tag in pendingAddedTags {
             let key = Self.tagKey(tag)
-            guard !key.isEmpty, seenKeys.insert(key).inserted else { continue }
+            guard !key.isEmpty, isAllowedTag(tag), seenKeys.insert(key).inserted else { continue }
             result.append(tag)
         }
 
@@ -529,6 +535,7 @@ struct TagEditorSection: View {
         func appendChoice(_ rawTag: String) {
             let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !tag.isEmpty else { return }
+            guard isAllowedTag(tag) else { return }
 
             let key = Self.tagKey(tag)
             guard seenKeys.insert(key).inserted else { return }
@@ -618,10 +625,15 @@ struct TagEditorSection: View {
             draftTag = ""
             recentlyAddedTagKey = nil
             pendingAddedTags.removeAll()
+            newTagClickProtectionKeys.removeAll()
         }
         .onChange(of: tags) { _, newTags in
             let committedKeys = Set(newTags.map(Self.tagKey))
             pendingAddedTags.removeAll { committedKeys.contains(Self.tagKey($0)) }
+            let pendingKeys = Set(pendingAddedTags.map(Self.tagKey))
+            newTagClickProtectionKeys = newTagClickProtectionKeys.filter {
+                committedKeys.contains($0) || pendingKeys.contains($0)
+            }
         }
         .frame(width: tagPanelWidth, alignment: .leading)
     }
@@ -689,13 +701,18 @@ struct TagEditorSection: View {
                 addTag(matchingDraftTag)
             }
         } else {
-            addTag(trimmedDraftTag)
+            addTag(trimmedDraftTag, protectsNextSelectedTap: true)
         }
     }
 
     private func toggleTag(_ tag: String, isSelected: Bool) {
         if isSelected {
             let key = Self.tagKey(tag)
+            if newTagClickProtectionKeys.remove(key) != nil {
+                recentlyAddedTagKey = key
+                clearRecentHighlight(for: key)
+                return
+            }
             pendingAddedTags.removeAll { Self.tagKey($0) == key }
             onRemove?(tag)
         } else {
@@ -703,18 +720,26 @@ struct TagEditorSection: View {
         }
     }
 
-    private func addTag(_ rawTag: String) {
+    private func addTag(_ rawTag: String, protectsNextSelectedTap: Bool = false) {
         let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !tag.isEmpty else { return }
+        guard isAllowedTag(tag) else { return }
 
         let key = Self.tagKey(tag)
         recentlyAddedTagKey = key
+        if protectsNextSelectedTap {
+            newTagClickProtectionKeys.insert(key)
+        }
         if !selectedTagKeys.contains(key) {
             pendingAddedTags.append(tag)
         }
         onAdd?(tag)
         draftTag = ""
         clearRecentHighlight(for: key)
+    }
+
+    private func isAllowedTag(_ tag: String) -> Bool {
+        allowsTag?(tag) ?? true
     }
 
     private func clearRecentHighlight(for key: String) {
@@ -735,7 +760,7 @@ struct TagEditorSection: View {
 }
 
 struct InlineTagAddButton: View {
-    let title: String
+    let title: String?
     var domain: TagEditorDomain = .video
     let tags: [String]
     let suggestedTags: [String]
@@ -766,16 +791,23 @@ struct InlineTagAddButton: View {
             isHovered = hovering
         }
         .popover(isPresented: $isPresented, arrowEdge: .trailing) {
+            let tagHorizontalInset: CGFloat = 14
+            let tagVerticalInset: CGFloat = 16
+            let tagContentGap: CGFloat = tagVerticalInset
+
             TagEditorSection(
                 title: title,
                 domain: domain,
                 tags: tags,
                 suggestedTags: suggestedTags,
                 chipSize: .compact,
+                inputSpacing: tagContentGap,
+                gridVerticalPadding: 0,
                 onAdd: onAdd,
                 onRemove: onRemove
             )
-            .padding(12)
+            .padding(.horizontal, tagHorizontalInset)
+            .padding(.vertical, tagVerticalInset)
         }
     }
 }

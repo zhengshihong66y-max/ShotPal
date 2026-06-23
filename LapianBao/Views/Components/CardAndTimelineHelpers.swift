@@ -169,7 +169,9 @@ private final class TimelineImageLayerStripView: NSView {
 
     private var configuration: Configuration?
     private var imageLayers: [CALayer] = []
+    private var imageLayerIDs: [ObjectIdentifier?] = []
     private var imageCache: [ObjectIdentifier: CGImage] = [:]
+    private var cachedImageIDs: [ObjectIdentifier] = []
 
     override var isFlipped: Bool { true }
 
@@ -193,13 +195,17 @@ private final class TimelineImageLayerStripView: NSView {
         viewportStart: Double,
         viewportSpan: Double
     ) {
+        let imageIDs = images.map(ObjectIdentifier.init)
         configuration = Configuration(
             images: images,
             sceneCuts: sceneCuts,
             viewportStart: viewportStart,
             viewportSpan: viewportSpan
         )
-        trimImageCache(to: images)
+        if imageIDs != cachedImageIDs {
+            cachedImageIDs = imageIDs
+            trimImageCache(to: images)
+        }
         render()
     }
 
@@ -228,22 +234,41 @@ private final class TimelineImageLayerStripView: NSView {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         for (index, item) in visibleImages.enumerated() {
             let imageLayer = imageLayers[index]
-            imageLayer.isHidden = false
-            imageLayer.contentsScale = scale
-            imageLayer.contentsGravity = .resizeAspectFill
-            imageLayer.masksToBounds = true
-            imageLayer.cornerRadius = min(
+            let frame = CGRect(x: item.x, y: 0, width: item.width, height: bounds.height)
+            let cornerRadius = min(
                 TimelineStripMetrics.segmentRadius,
                 max(0, min(item.width, bounds.height) / 2)
             )
-            imageLayer.frame = CGRect(x: item.x, y: 0, width: item.width, height: bounds.height)
-            imageLayer.contents = cgImage(for: item.image)
+            let imageID = ObjectIdentifier(item.image)
+
+            if imageLayer.isHidden {
+                imageLayer.isHidden = false
+            }
+            if imageLayer.contentsScale != scale {
+                imageLayer.contentsScale = scale
+            }
+            if imageLayer.cornerRadius != cornerRadius {
+                imageLayer.cornerRadius = cornerRadius
+            }
+            if imageLayer.frame != frame {
+                imageLayer.frame = frame
+            }
+            if imageLayerIDs[index] != imageID {
+                imageLayer.contents = cgImage(for: item.image)
+                imageLayerIDs[index] = imageID
+            }
         }
 
         if visibleImages.count < imageLayers.count {
             for index in visibleImages.count..<imageLayers.count {
-                imageLayers[index].isHidden = true
-                imageLayers[index].contents = nil
+                let imageLayer = imageLayers[index]
+                if !imageLayer.isHidden {
+                    imageLayer.isHidden = true
+                }
+                if imageLayer.contents != nil {
+                    imageLayer.contents = nil
+                }
+                imageLayerIDs[index] = nil
             }
         }
 
@@ -413,17 +438,21 @@ private final class TimelineImageLayerStripView: NSView {
             let imageLayer = CALayer()
             imageLayer.magnificationFilter = .linear
             imageLayer.minificationFilter = .linear
+            imageLayer.contentsGravity = .resizeAspectFill
+            imageLayer.masksToBounds = true
             layer?.addSublayer(imageLayer)
             imageLayers.append(imageLayer)
+            imageLayerIDs.append(nil)
         }
     }
 
     private func hideAllImageLayers() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for imageLayer in imageLayers {
+        for (index, imageLayer) in imageLayers.enumerated() {
             imageLayer.isHidden = true
             imageLayer.contents = nil
+            imageLayerIDs[index] = nil
         }
         CATransaction.commit()
     }
@@ -483,32 +512,30 @@ struct SceneStoryboardProgressOverlay: View {
     var playbackRate: Double = 1
 
     var body: some View {
-        SmoothTimelineProgressReader(
-            progress: activeProgress,
-            duration: duration,
-            playbackRate: playbackRate,
-            isPlaying: isPlaying
-        ) { displayedProgress in
-            GeometryReader { proxy in
-                let width = proxy.size.width
-                let height = proxy.size.height
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+            let displayedProgress = PlaybackTimelineAnimation.normalizedProgress(activeProgress)
 
-                ZStack(alignment: .leading) {
-                    if let activeFrame = activeVisibleFrame(width: width, progress: displayedProgress) {
-                        Rectangle()
-                            .fill(.white.opacity(0.16))
-                            .frame(width: activeFrame.playedWidth, height: height)
-                            .clipShape(RoundedRectangle(cornerRadius: TimelineStripMetrics.segmentRadius, style: .continuous))
-                            .offset(x: activeFrame.x)
+            ZStack(alignment: .leading) {
+                if let activeFrame = activeVisibleFrame(width: width, progress: displayedProgress) {
+                    Rectangle()
+                        .fill(.white.opacity(0.16))
+                        .frame(width: activeFrame.playedWidth, height: height)
+                        .clipShape(RoundedRectangle(cornerRadius: TimelineStripMetrics.segmentRadius, style: .continuous))
+                        .offset(x: activeFrame.x)
 
-                        CurrentFrameFocusOverlay(cornerRadius: TimelineStripMetrics.segmentRadius)
-                            .frame(width: activeFrame.width, height: height)
-                            .offset(x: activeFrame.x)
-                    }
+                    CurrentFrameFocusOverlay(cornerRadius: TimelineStripMetrics.segmentRadius)
+                        .frame(width: activeFrame.width, height: height)
+                        .offset(x: activeFrame.x)
                 }
-                .frame(width: width, height: height, alignment: .leading)
-                .clipped()
             }
+            .frame(width: width, height: height, alignment: .leading)
+            .clipped()
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
         }
         .allowsHitTesting(false)
     }

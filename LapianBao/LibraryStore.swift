@@ -329,6 +329,7 @@ final class LibraryStore: ObservableObject {
     @Published var knownLocalResourcePaths = Set<String>()
     var pendingVideoPathRemap: [String: String] = [:]
     var pendingVideoFolderTagsByPath: [String: [String]] = [:]
+    var persistedVideoTagPaths = Set<String>()
     var remoteImportTasks: [UUID: Task<Void, Never>] = [:]
     var remoteImportProcesses: [UUID: Process] = [:]
     var scopedLibraryURL: URL?
@@ -406,7 +407,8 @@ final class LibraryStore: ObservableObject {
     nonisolated static let downloaderNightlyMacOSURL = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos"
     nonisolated static let externalSelfCheckPreflightCooldown: TimeInterval = 60 * 60
     nonisolated static let instagramSavedCollectionURLString = "https://www.instagram.com/"
-    nonisolated static let xiaohongshuSavedCollectionURLString = "https://www.xiaohongshu.com/explore"
+    nonisolated static let xiaohongshuHomeURLString = "https://www.xiaohongshu.com/"
+    nonisolated static let xiaohongshuProfileBaseURLString = "https://www.xiaohongshu.com/user/profile"
 
     nonisolated static func normalizedProgress(_ progress: Double) -> Double {
         guard progress.isFinite else { return 0 }

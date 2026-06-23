@@ -295,6 +295,7 @@ extension LibraryStore {
         }
         selectedTags = preservedSelectedTags ?? []
         tagsByVideoPath = [:]
+        persistedVideoTagPaths.removeAll()
         sourceInfoByVideoPath = [:]
         frameStripByVideoPath = [:]
         frameStripImagesByVideoPath = [:]
@@ -1880,10 +1881,17 @@ extension LibraryStore {
     }
 
     func removeTag(_ tag: String, from video: VideoItem) {
-        var tags = tagsByVideoPath[video.url.path, default: []]
-        tags.removeAll { $0 == tag }
-        tagsByVideoPath[video.url.path] = tags
-        selectedTags.remove(tag)
+        guard let tagKey = Self.normalizedSubjectiveTagKey(tag) else { return }
+
+        var updatedTagsByVideoPath = tagsByVideoPath
+        let updated = removeVideoTags(matchingKey: tagKey, from: updatedTagsByVideoPath[video.url.path, default: []])
+        if updated.isEmpty {
+            updatedTagsByVideoPath.removeValue(forKey: video.url.path)
+        } else {
+            updatedTagsByVideoPath[video.url.path] = updated
+        }
+        tagsByVideoPath = updatedTagsByVideoPath
+        selectedTags = Set(selectedTags.filter { Self.normalizedSubjectiveTagKey($0) != tagKey })
         saveTagsJSON()
     }
 
@@ -1915,32 +1923,84 @@ extension LibraryStore {
     }
 
     func renameGlobalTag(_ old: String, to new: String) {
-        let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != old else { return }
+        guard let oldKey = Self.normalizedSubjectiveTagKey(old),
+              let newTag = Self.cleanedVideoTagSuggestions([new]).first,
+              let newKey = Self.normalizedSubjectiveTagKey(newTag),
+              oldKey != newKey || newTag != old
+        else { return }
 
         var updatedTagsByVideoPath = tagsByVideoPath
-        for (path, tags) in updatedTagsByVideoPath where tags.contains(old) {
-            var updated = tags.filter { $0 != old }
-            if !updated.contains(trimmed) { updated.append(trimmed) }
+        for (path, tags) in updatedTagsByVideoPath {
+            var didReplaceTag = false
+            var hasNewTag = false
+            var updated: [String] = []
+
+            for tag in tags {
+                guard let tagKey = Self.normalizedSubjectiveTagKey(tag) else {
+                    updated.append(tag)
+                    continue
+                }
+
+                if tagKey == oldKey {
+                    didReplaceTag = true
+                    continue
+                }
+
+                if tagKey == newKey {
+                    hasNewTag = true
+                }
+                updated.append(tag)
+            }
+
+            guard didReplaceTag else { continue }
+
+            if !hasNewTag {
+                updated.append(newTag)
+            }
             updatedTagsByVideoPath[path] = updated.sorted()
         }
         tagsByVideoPath = updatedTagsByVideoPath
 
-        if selectedTags.contains(old) {
-            selectedTags.remove(old)
-            selectedTags.insert(trimmed)
+        if selectedTags.contains(where: { Self.normalizedSubjectiveTagKey($0) == oldKey }) {
+            selectedTags = Set(selectedTags.filter { Self.normalizedSubjectiveTagKey($0) != oldKey })
+            selectedTags.insert(newTag)
         }
         saveTagsJSON()
     }
 
     func removeGlobalTag(_ tag: String) {
+        guard let tagKey = Self.normalizedSubjectiveTagKey(tag) else { return }
+
         var updatedTagsByVideoPath = tagsByVideoPath
-        for (path, tags) in updatedTagsByVideoPath where tags.contains(tag) {
-            updatedTagsByVideoPath[path] = tags.filter { $0 != tag }
+        var didRemoveTag = false
+        for (path, tags) in updatedTagsByVideoPath {
+            let updated = removeVideoTags(matchingKey: tagKey, from: tags)
+            if updated.count != tags.count {
+                didRemoveTag = true
+                if updated.isEmpty {
+                    updatedTagsByVideoPath.removeValue(forKey: path)
+                } else {
+                    updatedTagsByVideoPath[path] = updated
+                }
+            }
         }
-        tagsByVideoPath = updatedTagsByVideoPath
-        selectedTags.remove(tag)
+        if didRemoveTag {
+            tagsByVideoPath = updatedTagsByVideoPath
+        } else {
+            rebuildAllTagsCache()
+            markLibrarySidebarMetricsDirty()
+            refreshFilteredVideos()
+            objectWillChange.send()
+        }
+        selectedTags = Set(selectedTags.filter { Self.normalizedSubjectiveTagKey($0) != tagKey })
+        rebuildAllTagsCache()
+        markLibrarySidebarMetricsDirty()
+        refreshFilteredVideos()
         saveTagsJSON()
+    }
+
+    private func removeVideoTags(matchingKey tagKey: String, from tags: [String]) -> [String] {
+        tags.filter { Self.normalizedSubjectiveTagKey($0) != tagKey }
     }
 
     // MARK: - JSON 持久化

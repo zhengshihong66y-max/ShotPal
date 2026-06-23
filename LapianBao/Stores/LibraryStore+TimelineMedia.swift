@@ -1484,6 +1484,87 @@ extension LibraryStore {
         }
     }
 
+    func renameGlobalFrameTag(_ old: String, to new: String) {
+        guard let oldKey = Self.normalizedFrameTagKey(old),
+              let newTag = Self.cleanedFrameTag(new),
+              let newKey = Self.normalizedFrameTagKey(newTag),
+              oldKey != newKey || newTag != old
+        else { return }
+
+        var updatedFrames = sampledFrames
+        var didChange = false
+        for index in updatedFrames.indices {
+            var didReplaceTag = false
+            var hasNewTag = false
+            var updatedTags: [String] = []
+
+            for tag in updatedFrames[index].tags {
+                guard let tagKey = Self.normalizedFrameTagKey(tag) else {
+                    updatedTags.append(tag)
+                    continue
+                }
+
+                if tagKey == oldKey {
+                    didReplaceTag = true
+                    continue
+                }
+
+                if tagKey == newKey {
+                    hasNewTag = true
+                }
+                updatedTags.append(tag)
+            }
+
+            guard didReplaceTag else { continue }
+
+            if !hasNewTag {
+                updatedTags.append(newTag)
+            }
+            updatedFrames[index].tags = updatedTags.sorted()
+            didChange = true
+        }
+
+        guard didChange else { return }
+        sampledFrames = updatedFrames
+        writeFrameIndex()
+        saveProjectData()
+    }
+
+    func removeGlobalFrameTag(_ tag: String) {
+        guard let tagKey = Self.normalizedFrameTagKey(tag) else { return }
+
+        var updatedFrames = sampledFrames
+        var didChange = false
+        for index in updatedFrames.indices {
+            let updatedTags = updatedFrames[index].tags.filter {
+                Self.normalizedFrameTagKey($0) != tagKey
+            }
+            guard updatedTags.count != updatedFrames[index].tags.count else { continue }
+            updatedFrames[index].tags = updatedTags
+            didChange = true
+        }
+
+        guard didChange else { return }
+        sampledFrames = updatedFrames
+        writeFrameIndex()
+        saveProjectData()
+    }
+
+    nonisolated static func cleanedFrameTag(_ rawTag: String) -> String? {
+        let tag = rawTag
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        guard !tag.isEmpty, tag.count <= 64 else { return nil }
+        guard URL(string: tag)?.scheme == nil else { return nil }
+        return tag
+    }
+
+    nonisolated static func normalizedFrameTagKey(_ rawTag: String) -> String? {
+        cleanedFrameTag(rawTag)?
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            .lowercased()
+    }
+
     @discardableResult
     func removeFrameTagOrDeleteIfEmpty(_ tag: String, from frame: SampledFrame) -> Bool {
         let currentFrame = sampledFrame(id: frame.id) ?? frame

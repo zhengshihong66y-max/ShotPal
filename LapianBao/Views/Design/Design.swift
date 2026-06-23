@@ -38,8 +38,12 @@ enum Design {
     static let libraryToolbarButtonSlotWidth: CGFloat = 18
     static let libraryToolbarButtonSlotHeight: CGFloat = 22
     static let libraryToolbarButtonGap: CGFloat = libraryContentInset
-    static let libraryToolbarSearchMinWidth: CGFloat = 80
-    static let libraryToolbarSearchWidth: CGFloat = 140
+    static let libraryToolbarActionSlotCount: CGFloat = 3
+    static let libraryToolbarActionRowWidth: CGFloat =
+        libraryToolbarButtonSlotWidth * libraryToolbarActionSlotCount
+        + libraryToolbarButtonGap * (libraryToolbarActionSlotCount - 1)
+    static let libraryToolbarSearchMinWidth: CGFloat = 110
+    static let libraryToolbarSearchWidth: CGFloat = 280
     static let libraryToolbarSearchHeight: CGFloat = 26
     static let libraryDateDividerTopInset: CGFloat = 10
     static let libraryDateDividerBottomInset: CGFloat = 10
@@ -115,7 +119,6 @@ enum Design {
 struct LibraryToolbarSearchField: View {
     let placeholder: String
     @Binding var text: String
-    var expands = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -127,13 +130,11 @@ struct LibraryToolbarSearchField: View {
         }
         .padding(.horizontal, 9)
         .frame(
-            width: expands ? nil : Design.libraryToolbarSearchWidth,
-            height: Design.libraryToolbarSearchHeight
-        )
-        .frame(
-            minWidth: expands ? Design.libraryToolbarSearchMinWidth : nil,
-            maxWidth: expands ? .infinity : nil,
-            alignment: .leading
+            minWidth: Design.libraryToolbarSearchMinWidth,
+            idealWidth: Design.libraryToolbarSearchWidth,
+            maxWidth: Design.libraryToolbarSearchWidth,
+            minHeight: Design.libraryToolbarSearchHeight,
+            maxHeight: Design.libraryToolbarSearchHeight
         )
         .background(.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -143,18 +144,15 @@ struct LibraryToolbarSearchField: View {
 struct LibraryToolbar<Actions: View>: View {
     let placeholder: String
     @Binding private var text: String
-    private let searchExpands: Bool
     private let actions: () -> Actions
 
     init(
         placeholder: String,
         text: Binding<String>,
-        searchExpands: Bool = true,
         @ViewBuilder actions: @escaping () -> Actions
     ) {
         self.placeholder = placeholder
         self._text = text
-        self.searchExpands = searchExpands
         self.actions = actions
     }
 
@@ -162,15 +160,45 @@ struct LibraryToolbar<Actions: View>: View {
         HStack(spacing: Design.libraryToolbarButtonGap) {
             LibraryToolbarSearchField(
                 placeholder: placeholder,
-                text: $text,
-                expands: searchExpands
+                text: $text
             )
-            .layoutPriority(searchExpands ? 1 : 0)
 
-            actions()
+            LibraryToolbarActionRow {
+                actions()
+            }
         }
         .frame(maxWidth: .infinity, minHeight: Design.libraryToolbarHeight, alignment: .leading)
         .padding(.horizontal, Design.libraryContentInset)
+    }
+}
+
+struct LibraryToolbarActionRow<Actions: View>: View {
+    private let actions: () -> Actions
+
+    init(@ViewBuilder actions: @escaping () -> Actions) {
+        self.actions = actions
+    }
+
+    var body: some View {
+        HStack(spacing: Design.libraryToolbarButtonGap) {
+            actions()
+        }
+        .frame(
+            width: Design.libraryToolbarActionRowWidth,
+            height: Design.libraryToolbarButtonSlotHeight,
+            alignment: .leading
+        )
+    }
+}
+
+struct LibraryToolbarActionPlaceholder: View {
+    var body: some View {
+        Color.clear
+            .frame(
+                width: Design.libraryToolbarButtonSlotWidth,
+                height: Design.libraryToolbarButtonSlotHeight
+            )
+            .accessibilityHidden(true)
     }
 }
 

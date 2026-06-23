@@ -85,7 +85,9 @@ extension MusicRecognitionItem {
             !isFeaturedMusicTag($0) && !isNonGenreMusicTag($0)
         }
         guard genreTags.isEmpty else { return recognizedTags }
-        return (inferredMusicGenreTags(title: title, artist: artist, seedTags: tags) + recognizedTags)
+        let inferredGenreTags = inferredMusicGenreTags(title: title, artist: artist, seedTags: tags)
+        let requiredGenreTags = inferredGenreTags.isEmpty ? [defaultMusicGenreTag] : inferredGenreTags
+        return (requiredGenreTags + recognizedTags)
             .deduplicatedMusicGenreTags()
             .sorted()
     }
@@ -95,10 +97,6 @@ extension MusicRecognitionItem {
         if key == canonicalMusicGenreKey(fallbackMusicTag) {
             return true
         }
-        if key == canonicalMusicGenreKey(defaultMusicGenreTag) {
-            return true
-        }
-
         switch key {
         case "unknown",
             "unknown genre",
@@ -170,6 +168,68 @@ extension MusicRecognitionItem {
             return false
         }
     }
+
+    nonisolated private static let recognizedMusicGenreKeys: Set<String> = Set([
+        "acoustic blues",
+        "adult alternative",
+        "adult contemporary",
+        "afro house",
+        "afro-pop",
+        "afrobeats",
+        "alternative",
+        "alternative rock",
+        "ambient",
+        "anime",
+        "blues",
+        "cantopop",
+        "children's music",
+        "christian & gospel",
+        "classical",
+        "classical crossover",
+        "classic rock",
+        "comedy",
+        "country",
+        "dance",
+        "disco",
+        "downtempo",
+        "dubstep",
+        "edm",
+        "electronic",
+        "electronica",
+        "electropop",
+        "fitness & workout",
+        "folk",
+        "french pop",
+        "funk",
+        "hard rock",
+        "heavy metal",
+        "hip-hop/rap",
+        "holiday",
+        "house",
+        "indie",
+        "indie pop",
+        "indie rock",
+        "j-pop",
+        "jazz",
+        "k-pop",
+        "latin",
+        "lo-fi",
+        "mandopop",
+        "metal",
+        "new age",
+        "pop",
+        "punk",
+        "r&b/soul",
+        "reggae",
+        "rock",
+        "singer/songwriter",
+        "soul",
+        "soundtrack",
+        "techno",
+        "trance",
+        "vocal",
+        "world"
+    ].map(canonicalMusicGenreKey))
 
     nonisolated static func canonicalMusicGenreTag(_ tag: String) -> String? {
         let key = canonicalMusicGenreKey(tag)
@@ -358,7 +418,8 @@ extension MusicRecognitionItem {
     }
 
     nonisolated var displayTags: [String] {
-        Self.cleanedMusicTags(tags, title: title, artist: artist)
+        let genreTags = Self.cleanedGenreTags(tags, title: title, artist: artist)
+        return genreTags.isEmpty ? [Self.defaultMusicGenreTag] : genreTags
     }
 }
 

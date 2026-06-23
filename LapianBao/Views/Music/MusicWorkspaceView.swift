@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 struct MusicWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @ObservedObject var viewModel: MusicWorkspaceViewModel
+    let toolbarWidth: CGFloat?
     let goHome: (String, Double) -> Void
 
     @AppStorage(AppSettings.Key.musicSortOption) private var musicSortOptionRawValue = MusicSortOption.title.rawValue
@@ -255,10 +256,11 @@ struct MusicWorkspaceView: View {
     }
 
     private func musicHeader() -> some View {
-        LibraryToolbar(placeholder: "", text: $viewModel.searchText, searchExpands: false) {
+        LibraryToolbar(placeholder: "", text: $viewModel.searchText) {
             musicTagFilterButton
             musicSortMenu
         }
+        .frame(width: toolbarWidth, alignment: .leading)
     }
 
     private func musicCacheLoadingProgressBar(_ status: MusicWorkspaceLaunchPreparationStatus) -> some View {
@@ -501,7 +503,6 @@ struct MusicWorkspaceView: View {
         tags: [String],
         hasWaveform _: Bool,
         includesSafari: Bool,
-        hasTagEditor: Bool = false,
         actionWidth: CGFloat = MusicRowMetrics.buttonsWidth,
         sideActionWidth: CGFloat = 0
     ) -> (
@@ -512,8 +513,7 @@ struct MusicWorkspaceView: View {
         showsTags: Bool,
         showsWaveform: Bool
     ) {
-        let hasTagContent = hasTagEditor || !tags.isEmpty
-        let showsTags = hasTagContent && containerWidth >= (includesSafari ? 560 : 500)
+        let showsTags = !tags.isEmpty && containerWidth >= (includesSafari ? 560 : 500)
         let showsWaveform = containerWidth >= (showsTags ? (includesSafari ? 800 : 760) : 620)
         let metadataWidth = MusicRowMetrics.metadataWidth
         let safariWidth: CGFloat = includesSafari ? 24 : 0
@@ -537,8 +537,7 @@ struct MusicWorkspaceView: View {
             flexibleWidth: flexibleWidth,
             showsTags: showsTags,
             showsWaveform: showsWaveform,
-            containerWidth: containerWidth,
-            hasTagEditor: hasTagEditor
+            containerWidth: containerWidth
         )
         let remainingWidth = max(0, flexibleWidth - tagWidth)
         let preferredInfoWidth: CGFloat = containerWidth < 820 ? 210 : 282
@@ -550,13 +549,116 @@ struct MusicWorkspaceView: View {
         return (infoWidth, tagWidth, waveformWidth, metadataWidth, showsTags, showsWaveform)
     }
 
+    private func musicRowHeight(
+        containerWidth: CGFloat,
+        tags: [String],
+        hasWaveform: Bool,
+        includesSafari: Bool,
+        actionWidth: CGFloat = MusicRowMetrics.buttonsWidth,
+        sideActionWidth: CGFloat = 0
+    ) -> CGFloat {
+        guard containerWidth > 0 else {
+            return MusicRowMetrics.rowHeight
+        }
+
+        let layout = musicRowLayout(
+            containerWidth: containerWidth,
+            tags: tags,
+            hasWaveform: hasWaveform,
+            includesSafari: includesSafari,
+            actionWidth: actionWidth,
+            sideActionWidth: sideActionWidth
+        )
+        let rowContentHeight = musicRowContentHeight(
+            tags: tags,
+            layout: layout
+        )
+        return musicRowHeight(rowContentHeight: rowContentHeight)
+    }
+
+    private func musicRowHeight(rowContentHeight: CGFloat) -> CGFloat {
+        max(MusicRowMetrics.rowHeight, rowContentHeight + MusicRowMetrics.contentInsetY * 2)
+    }
+
+    private func musicRowContentHeight(
+        tags: [String],
+        layout: (
+            infoWidth: CGFloat,
+            tagWidth: CGFloat,
+            waveformWidth: CGFloat,
+            metadataWidth: CGFloat,
+            showsTags: Bool,
+            showsWaveform: Bool
+        )
+    ) -> CGFloat {
+        guard layout.showsTags else {
+            return MusicRowMetrics.contentHeight
+        }
+
+        let tagFlowHeight = musicTagFlowHeight(
+            tags: tags,
+            maxWidth: layout.tagWidth
+        )
+        guard tagFlowHeight > 0 else {
+            return MusicRowMetrics.contentHeight
+        }
+
+        return max(
+            MusicRowMetrics.contentHeight,
+            MusicRowMetrics.tagColumnTopInset + tagFlowHeight
+        )
+    }
+
+    private func musicTagFlowHeight(
+        tags: [String],
+        maxWidth: CGFloat
+    ) -> CGFloat {
+        guard maxWidth > 0 else {
+            return 0
+        }
+
+        let itemWidths = tags.map { musicTagChipWidth(for: $0, maxWidth: maxWidth) }
+        guard !itemWidths.isEmpty else {
+            return 0
+        }
+
+        var rowCount = 1
+        var currentRowWidth: CGFloat = 0
+
+        for itemWidth in itemWidths {
+            let width = min(maxWidth, max(0, itemWidth))
+            if currentRowWidth > 0,
+               currentRowWidth + MusicRowMetrics.tagSpacing + width > maxWidth {
+                rowCount += 1
+                currentRowWidth = width
+            } else {
+                if currentRowWidth > 0 {
+                    currentRowWidth += MusicRowMetrics.tagSpacing
+                }
+                currentRowWidth += width
+            }
+        }
+
+        return CGFloat(rowCount) * MusicRowMetrics.tagChipCompactHeight
+            + CGFloat(max(0, rowCount - 1)) * MusicRowMetrics.tagSpacing
+    }
+
+    private func musicTagChipWidth(for tag: String, maxWidth: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(
+            ofSize: MusicRowMetrics.tagChipCompactFontSize,
+            weight: .semibold
+        )
+        let textWidth = (tag as NSString).size(withAttributes: [.font: font]).width
+        let estimatedWidth = ceil(textWidth) + MusicRowMetrics.tagChipCompactHorizontalPadding * 2
+        return min(maxWidth, estimatedWidth)
+    }
+
     private func musicTagColumnWidth(
         tags _: [String],
         flexibleWidth: CGFloat,
         showsTags: Bool,
         showsWaveform _: Bool,
-        containerWidth: CGFloat,
-        hasTagEditor _: Bool = false
+        containerWidth: CGFloat
     ) -> CGFloat {
         guard showsTags, flexibleWidth > 0 else { return 0 }
 
@@ -580,6 +682,13 @@ struct MusicWorkspaceView: View {
         let visibleTags = row.visibleTags
         let hasDownloadedWaveform = row.hasDownloadedWaveform
         let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
+        let estimatedRowHeight = musicRowHeight(
+            containerWidth: musicWorkspaceContentWidth,
+            tags: visibleTags,
+            hasWaveform: hasDownloadedWaveform,
+            includesSafari: false,
+            actionWidth: MusicRowMetrics.verticalButtonsWidth
+        )
 
         return GeometryReader { proxy in
             let layout = musicRowLayout(
@@ -589,6 +698,11 @@ struct MusicWorkspaceView: View {
                 includesSafari: false,
                 actionWidth: MusicRowMetrics.verticalButtonsWidth
             )
+            let rowContentHeight = musicRowContentHeight(
+                tags: visibleTags,
+                layout: layout
+            )
+            let rowHeight = musicRowHeight(rowContentHeight: rowContentHeight)
 
             HStack(alignment: .top, spacing: MusicRowMetrics.columnSpacing) {
                 musicArtwork(
@@ -605,7 +719,7 @@ struct MusicWorkspaceView: View {
                     width: layout.infoWidth
                 )
 
-                musicTagColumn(tags: visibleTags, layout: layout)
+                musicTagColumn(tags: visibleTags, layout: layout, contentHeight: rowContentHeight)
 
                 if viewModel.allowsHeavyRowMedia {
                     MusicDownloadControlsAndWaveform(
@@ -629,7 +743,7 @@ struct MusicWorkspaceView: View {
             }
             .padding(.horizontal, MusicRowMetrics.contentInsetX)
             .padding(.vertical, MusicRowMetrics.contentInsetY)
-            .frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .topLeading)
+            .frame(width: proxy.size.width, height: rowHeight, alignment: .topLeading)
             .background(.white.opacity(0.055))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -639,7 +753,7 @@ struct MusicWorkspaceView: View {
             .contentShape(Rectangle())
             .itemProviderDrag(rowDragProvider)
         }
-        .frame(height: MusicRowMetrics.rowHeight)
+        .frame(height: estimatedRowHeight)
     }
 
     private func recognizedMusicAssetRow(_ row: RecognizedMusicRowProjection) -> some View {
@@ -649,6 +763,14 @@ struct MusicWorkspaceView: View {
         let hasDownloadedWaveform = row.hasDownloadedWaveform
         let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
         let downloadedFileURLs = row.downloadedFileURLs
+        let estimatedRowHeight = musicRowHeight(
+            containerWidth: musicWorkspaceContentWidth,
+            tags: visibleTags,
+            hasWaveform: hasDownloadedWaveform,
+            includesSafari: false,
+            actionWidth: MusicRowMetrics.verticalButtonsWidth,
+            sideActionWidth: MusicRowMetrics.sideActionWidth
+        )
 
         return GeometryReader { proxy in
             let layout = musicRowLayout(
@@ -656,10 +778,14 @@ struct MusicWorkspaceView: View {
                 tags: visibleTags,
                 hasWaveform: hasDownloadedWaveform,
                 includesSafari: false,
-                hasTagEditor: true,
                 actionWidth: MusicRowMetrics.verticalButtonsWidth,
                 sideActionWidth: MusicRowMetrics.sideActionWidth
             )
+            let rowContentHeight = musicRowContentHeight(
+                tags: visibleTags,
+                layout: layout
+            )
+            let rowHeight = musicRowHeight(rowContentHeight: rowContentHeight)
 
             HStack(alignment: .top, spacing: MusicRowMetrics.columnSpacing) {
                 Button {
@@ -687,9 +813,7 @@ struct MusicWorkspaceView: View {
                 musicTagColumn(
                     tags: visibleTags,
                     layout: layout,
-                    suggestedTags: row.suggestedTags,
-                    onAdd: { libraryStore.addMusicTag($0, to: asset.song, in: asset.videoPath) },
-                    onRemove: { libraryStore.removeMusicTag($0, from: asset.song, in: asset.videoPath) }
+                    contentHeight: rowContentHeight
                 )
 
                 if viewModel.allowsHeavyRowMedia {
@@ -721,7 +845,7 @@ struct MusicWorkspaceView: View {
             }
             .padding(.horizontal, MusicRowMetrics.contentInsetX)
             .padding(.vertical, MusicRowMetrics.contentInsetY)
-            .frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .topLeading)
+            .frame(width: proxy.size.width, height: rowHeight, alignment: .topLeading)
             .background(.white.opacity(0.055))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -731,7 +855,7 @@ struct MusicWorkspaceView: View {
             .contentShape(Rectangle())
             .itemProviderDrag(rowDragProvider)
         }
-        .frame(height: MusicRowMetrics.rowHeight)
+        .frame(height: estimatedRowHeight)
     }
 
     private func localMusicGroupRow(_ row: LocalMusicGroupRowProjection) -> some View {
@@ -744,6 +868,14 @@ struct MusicWorkspaceView: View {
         let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
         let sourceText = row.sourceText
         let fileURLs = row.fileURLs
+        let estimatedRowHeight = musicRowHeight(
+            containerWidth: musicWorkspaceContentWidth,
+            tags: visibleTags,
+            hasWaveform: true,
+            includesSafari: false,
+            actionWidth: MusicRowMetrics.verticalButtonsWidth,
+            sideActionWidth: MusicRowMetrics.sideActionWidth
+        )
 
         return GeometryReader { proxy in
             let layout = musicRowLayout(
@@ -751,10 +883,14 @@ struct MusicWorkspaceView: View {
                 tags: visibleTags,
                 hasWaveform: true,
                 includesSafari: false,
-                hasTagEditor: true,
                 actionWidth: MusicRowMetrics.verticalButtonsWidth,
                 sideActionWidth: MusicRowMetrics.sideActionWidth
             )
+            let rowContentHeight = musicRowContentHeight(
+                tags: visibleTags,
+                layout: layout
+            )
+            let rowHeight = musicRowHeight(rowContentHeight: rowContentHeight)
             HStack(alignment: .top, spacing: MusicRowMetrics.columnSpacing) {
                 Button {
                     if let primaryFileURL {
@@ -783,9 +919,7 @@ struct MusicWorkspaceView: View {
                 musicTagColumn(
                     tags: visibleTags,
                     layout: layout,
-                    suggestedTags: row.suggestedTags,
-                    onAdd: { addLocalMusicGroupTag($0, to: group) },
-                    onRemove: { removeLocalMusicGroupTag($0, from: group) }
+                    contentHeight: rowContentHeight
                 )
 
                 if viewModel.allowsHeavyRowMedia {
@@ -817,7 +951,7 @@ struct MusicWorkspaceView: View {
             }
             .padding(.horizontal, MusicRowMetrics.contentInsetX)
             .padding(.vertical, MusicRowMetrics.contentInsetY)
-            .frame(width: proxy.size.width, height: MusicRowMetrics.rowHeight, alignment: .topLeading)
+            .frame(width: proxy.size.width, height: rowHeight, alignment: .topLeading)
             .background(.white.opacity(0.055))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -827,27 +961,7 @@ struct MusicWorkspaceView: View {
             .contentShape(Rectangle())
             .itemProviderDrag(rowDragProvider)
         }
-        .frame(height: MusicRowMetrics.rowHeight)
-    }
-
-    private func addLocalMusicGroupTag(_ tag: String, to group: LocalMusicGroup) {
-        let builder = makeMusicProjectionBuilder()
-        for asset in group.assets {
-            libraryStore.addLocalMusicTag(tag, to: asset)
-            if let song = builder.localMusicDisplaySong(for: asset) {
-                libraryStore.addMusicTag(tag, to: song, in: asset.filePath)
-            }
-        }
-    }
-
-    private func removeLocalMusicGroupTag(_ tag: String, from group: LocalMusicGroup) {
-        let builder = makeMusicProjectionBuilder()
-        for asset in group.assets {
-            libraryStore.removeLocalMusicTag(tag, from: asset)
-            if let song = builder.localMusicDisplaySong(for: asset) {
-                libraryStore.removeMusicTag(tag, from: song, in: asset.filePath)
-            }
-        }
+        .frame(height: estimatedRowHeight)
     }
 
     private func localMusicActionColumn(group: LocalMusicGroup, fileURLs: [URL]) -> some View {
@@ -978,30 +1092,17 @@ struct MusicWorkspaceView: View {
             showsTags: Bool,
             showsWaveform: Bool
         ),
-        suggestedTags: [String] = [],
-        onAdd: ((String) -> Void)? = nil,
-        onRemove: ((String) -> Void)? = nil
+        contentHeight: CGFloat = MusicRowMetrics.contentHeight
     ) -> some View {
         if layout.showsTags {
-            if let onRemove {
-                EditableMusicTagStrip(
-                    title: "音乐标签",
-                    tags: tags,
-                    suggestedTags: suggestedTags,
-                    onAdd: onAdd,
-                    onRemove: onRemove
-                )
-                .padding(.top, MusicRowMetrics.tagColumnTopInset)
-                .frame(width: layout.tagWidth, height: MusicRowMetrics.artworkSize, alignment: .topLeading)
-                .clipped()
-            } else if !tags.isEmpty {
+            if !tags.isEmpty {
                 MusicEntryTagStrip(tags: tags)
                     .padding(.top, MusicRowMetrics.tagColumnTopInset)
-                    .frame(width: layout.tagWidth, height: MusicRowMetrics.artworkSize, alignment: .topLeading)
+                    .frame(width: layout.tagWidth, height: contentHeight, alignment: .topLeading)
                     .clipped()
             } else {
                 Color.clear
-                    .frame(width: layout.tagWidth, height: MusicRowMetrics.artworkSize, alignment: .topLeading)
+                    .frame(width: layout.tagWidth, height: contentHeight, alignment: .topLeading)
             }
         }
     }
@@ -1179,53 +1280,6 @@ struct MusicWorkspaceView: View {
 
 }
 
-private struct EditableMusicTagStrip: View {
-    let title: String
-    let tags: [String]
-    let suggestedTags: [String]
-    let onAdd: ((String) -> Void)?
-    let onRemove: (String) -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(1, proxy.size.width)
-
-            editableTagFlow(maxChipWidth: width)
-                .padding(.top, 4)
-                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .clipped()
-        .transaction { transaction in
-            transaction.disablesAnimations = true
-        }
-    }
-
-    private func editableTagFlow(maxChipWidth: CGFloat) -> some View {
-        MusicEntryTagFlowLayout(spacing: MusicRowMetrics.tagSpacing, rowSpacing: MusicRowMetrics.tagSpacing) {
-            ForEach(tags, id: \.self) { tag in
-                EditableMusicTagChip(
-                    tag: tag,
-                    size: .compact,
-                    maxChipWidth: maxChipWidth,
-                    onRemove: { onRemove(tag) }
-                )
-            }
-
-            if let onAdd {
-                MusicEntryTagAddChip(
-                    title: title,
-                    tags: tags,
-                    suggestedTags: suggestedTags,
-                    size: .compact,
-                    onAdd: onAdd,
-                    onRemove: onRemove
-                )
-            }
-        }
-    }
-}
-
 private struct MusicEntryTagStrip: View {
     let tags: [String]
 
@@ -1248,89 +1302,6 @@ private struct MusicEntryTagStrip: View {
     }
 }
 
-private struct EditableMusicTagChip: View {
-    let tag: String
-    let size: MusicEntryTagChip.Size
-    let maxChipWidth: CGFloat
-    let onRemove: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        MusicEntryTagChip(tag: tag, size: size, maxChipWidth: maxChipWidth)
-            .overlay(alignment: .topTrailing) {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 6.5, weight: .heavy))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .frame(width: 11, height: 11)
-                        .background(Color.black.opacity(0.72), in: Circle())
-                        .overlay {
-                            Circle()
-                                .stroke(.white.opacity(0.20), lineWidth: 0.6)
-                        }
-                }
-                .buttonStyle(.plain)
-                .opacity(isHovered ? 1 : 0)
-                .scaleEffect(isHovered ? 1 : 0.72)
-                .offset(x: 4, y: -4)
-                .contentShape(Circle())
-            }
-            .contentShape(Rectangle())
-            .onHover { isHovered = $0 }
-    }
-}
-
-private struct MusicEntryTagAddChip: View {
-    let title: String
-    let tags: [String]
-    let suggestedTags: [String]
-    let size: MusicEntryTagChip.Size
-    let onAdd: (String) -> Void
-    let onRemove: (String) -> Void
-
-    @State private var isPresented = false
-    @State private var isHovered = false
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            CenteredPlusGlyph(size: max(7, size.fontSize * 0.88), thickness: 1.2)
-                .foregroundStyle(isHovered ? Design.tagChipForeground : .secondary)
-                .frame(width: addChipWidth - size.horizontalPadding * 2, height: size.height, alignment: .center)
-                .padding(.horizontal, size.horizontalPadding)
-                .frame(width: addChipWidth, height: size.height, alignment: .center)
-                .background(isHovered ? Design.tagChipProminentFill : Design.tagChipFill)
-                .clipShape(Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(isHovered ? Design.tagChipSelectedStroke : Design.tagChipStroke, lineWidth: 0.8)
-                }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .fixedSize(horizontal: true, vertical: false)
-        .onHover { isHovered = $0 }
-        .popover(isPresented: $isPresented, arrowEdge: .trailing) {
-            TagEditorSection(
-                title: title,
-                domain: .music,
-                tags: tags,
-                suggestedTags: suggestedTags,
-                chipSize: .compact,
-                onAdd: onAdd,
-                onRemove: onRemove
-            )
-            .padding(12)
-        }
-    }
-
-    private var addChipWidth: CGFloat {
-        size.height + size.horizontalPadding * 2
-    }
-}
-
 private struct MusicEntryTagChip: View {
     enum Size {
         case regular
@@ -1340,7 +1311,7 @@ private struct MusicEntryTagChip: View {
         var fontSize: CGFloat {
             switch self {
             case .regular: return 11
-            case .compact: return 9.5
+            case .compact: return MusicRowMetrics.tagChipCompactFontSize
             case .mini: return 8.5
             }
         }
@@ -1348,7 +1319,7 @@ private struct MusicEntryTagChip: View {
         var horizontalPadding: CGFloat {
             switch self {
             case .regular: return 7
-            case .compact: return 5.5
+            case .compact: return MusicRowMetrics.tagChipCompactHorizontalPadding
             case .mini: return 4.5
             }
         }
@@ -1356,7 +1327,7 @@ private struct MusicEntryTagChip: View {
         var height: CGFloat {
             switch self {
             case .regular: return 18
-            case .compact: return 16
+            case .compact: return MusicRowMetrics.tagChipCompactHeight
             case .mini: return 14
             }
         }

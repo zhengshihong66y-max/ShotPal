@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="shapeClip">
+      <rect x="-84" y="342" width="500" height="340" rx="76"/>
+    </clipPath>
+    <linearGradient id="baseGradient" x1="0" y1="438" x2="1054" y2="604" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff453a"/>
+      <stop offset="0.08" stop-color="#ff3b30"/>
+      <stop offset="0.15" stop-color="#ff6a2a"/>
+      <stop offset="0.23" stop-color="#ff9f0a"/>
+      <stop offset="0.33" stop-color="#fff05a"/>
+      <stop offset="0.43" stop-color="#b9ff57"/>
+      <stop offset="0.53" stop-color="#55ee67"/>
+      <stop offset="0.62" stop-color="#56e4d4"/>
+      <stop offset="0.7" stop-color="#7ae2ff"/>
+      <stop offset="0.79" stop-color="#2f98ff"/>
+      <stop offset="0.89" stop-color="#9078ff"/>
+      <stop offset="1" stop-color="#ff72d2"/>
+    </linearGradient>
+    <linearGradient id="topLight" x1="0" y1="342" x2="0" y2="690" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.34"/>
+      <stop offset="0.18" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="0.52" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bottomHold" x1="0" y1="352" x2="0" y2="704" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="0.72" stop-color="#000000" stop-opacity="0.015"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.10"/>
+    </linearGradient>
+    <radialGradient id="redBloom" cx="2%" cy="50%" r="34%">
+      <stop offset="0" stop-color="#ff5a4f" stop-opacity="0.90"/>
+      <stop offset="0.44" stop-color="#ff3b30" stop-opacity="0.48"/>
+      <stop offset="1" stop-color="#ff3b30" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="warmGlow" cx="24%" cy="36%" r="45%">
+      <stop offset="0" stop-color="#fff680" stop-opacity="0.62"/>
+      <stop offset="0.44" stop-color="#ffb21a" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#ff9f0a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cyanBloom" cx="57%" cy="54%" r="44%">
+      <stop offset="0" stop-color="#a2ffff" stop-opacity="0.70"/>
+      <stop offset="0.46" stop-color="#5de3ff" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#0a84ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violetBloom" cx="91%" cy="44%" r="42%">
+      <stop offset="0" stop-color="#ffabea" stop-opacity="0.72"/>
+      <stop offset="0.42" stop-color="#b28aff" stop-opacity="0.36"/>
+      <stop offset="1" stop-color="#0a84ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#shapeClip)">
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#baseGradient)"/>
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#redBloom)" opacity="0.42"/>
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#warmGlow)" opacity="0.32"/>
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#cyanBloom)" opacity="0.42"/>
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#violetBloom)" opacity="0.40"/>
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#topLight)" opacity="0.20"/>
+    <rect x="-96" y="286" width="1216" height="468" fill="url(#bottomHold)" opacity="0.07"/>
+  </g>
+  <rect x="-79" y="347" width="490" height="330" rx="72" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="10"/>
+  <rect x="-74" y="352" width="480" height="320" rx="68" fill="none" stroke="#000000" stroke-opacity="0.10" stroke-width="8"/>
+</svg>

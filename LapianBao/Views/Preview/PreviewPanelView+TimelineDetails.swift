@@ -24,8 +24,7 @@ extension PreviewPanelView {
     }
 
     func frameTimelineDetailContent(
-        for video: VideoItem,
-        activeProgressTick: Double? = nil
+        for video: VideoItem
     ) -> some View {
         ScenePanelView(
             video: video,
@@ -39,7 +38,9 @@ extension PreviewPanelView {
             isHydratingSceneThumbnails: libraryStore.isHydratingSceneThumbnails(for: video),
             sampledFrames: libraryStore.sampledFrames(for: video),
             activeItemID: activeSceneItemID(for: video),
-            activeProgressTick: activeProgressTick,
+            playbackDuration: controller.duration,
+            playbackRate: controller.playbackRate,
+            isPlaybackPlaying: controller.isPlaying,
             openStoryboardBoard: { openStoryboardBoard(video) },
             exportStoryboard: { exportCurrentStoryboard(for: video) },
             storyboardExportTitle: storyboardExportButtonTitle(for: video)
@@ -294,6 +295,7 @@ extension PreviewPanelView {
 
     func frameTimeline(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         let cuts = libraryStore.sceneCutsByVideoPath[video.url.path] ?? []
+        let viewportStart = displayedTimelineOffset(for: clock.progress)
 
         return FrameScrubberView(
             frames: frameStripImages(for: video),
@@ -313,7 +315,7 @@ extension PreviewPanelView {
             onScreenshot: { libraryStore.captureCurrentFrame(video: video, time: controller.elapsed) },
             onAnnotate: { beginAnnotation(.frame, sourceTab: .frames) },
             onAnnotationSelect: { openAnnotation($0, sourceTab: .frames) },
-            viewportStart: timelineOffset,
+            viewportStart: viewportStart,
             viewportSpan: timelineViewportSpan,
             duration: controller.duration,
             zoomLevel: timelineZoom,
@@ -340,9 +342,10 @@ extension PreviewPanelView {
             annotationItems: normalizedAnnotations(for: video, kind: .audio),
             onAnnotationSelect: { openAnnotation($0, sourceTab: .audio) },
             onClearSelection: { clearAudioSelection() },
-            viewportSpan: Design.centeredWaveformViewportSpan,
+            viewportSpan: audioTimelineViewportSpan,
             playheadTint: timelinePlayheadTint,
-            panViewport: panAudioTimelinePlayback
+            panViewport: panAudioTimelinePlayback,
+            zoomViewport: zoomAudioTimelineViewport
         )
     }
 
@@ -368,15 +371,17 @@ extension PreviewPanelView {
         let title = editingAnnotation.map { "编辑\($0.kind.title)批注" }
             ?? "添加\(pendingAnnotationKind.title)批注 · \(previewTimecodeText)"
 
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.headline)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.88)
             AnnotationEditorTextView(text: $annotationText)
                 .frame(maxWidth: .infinity)
-                .frame(height: 104)
+                .frame(height: 122)
                 .background(.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            HStack {
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            HStack(spacing: 12) {
                 if let editingAnnotation {
                     Button(role: .destructive) {
                         libraryStore.deleteAnnotation(editingAnnotation)
@@ -404,11 +409,11 @@ extension PreviewPanelView {
                     editingAnnotationID = nil
                     isAnnotationPopoverPresented = false
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(annotationText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(14)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
     }
 
     func beginAnnotation(_ kind: AnnotationItem.Kind, sourceTab: PreviewTab) {
@@ -471,8 +476,8 @@ private struct AnnotationEditorTextView: NSViewRepresentable {
         textView.backgroundColor = .clear
         textView.textColor = .white
         textView.insertionPointColor = .white
-        textView.font = .systemFont(ofSize: 16, weight: .regular)
-        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.font = .systemFont(ofSize: 15, weight: .regular)
+        textView.textContainerInset = NSSize(width: 12, height: 10)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.isHorizontallyResizable = false
@@ -497,7 +502,7 @@ private struct AnnotationEditorTextView: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
-        textView.textContainerInset = NSSize(width: 0, height: 8)
+        textView.textContainerInset = NSSize(width: 12, height: 10)
         textView.textContainer?.lineFragmentPadding = 0
     }
 

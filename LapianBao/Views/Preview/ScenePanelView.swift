@@ -71,7 +71,9 @@ struct ScenePanelView: View, Equatable {
     let isHydratingSceneThumbnails: Bool
     let sampledFrames: [SampledFrame]
     var activeItemID: String?
-    var activeProgressTick: Double?
+    let playbackDuration: Double
+    let playbackRate: Double
+    let isPlaybackPlaying: Bool
     let openStoryboardBoard: () -> Void
     let exportStoryboard: () -> Void
     let storyboardExportTitle: String
@@ -91,7 +93,9 @@ struct ScenePanelView: View, Equatable {
             && lhs.isHydratingSceneThumbnails == rhs.isHydratingSceneThumbnails
             && lhs.sceneCutSignature == rhs.sceneCutSignature
             && lhs.sampledFrameSignature == rhs.sampledFrameSignature
-            && lhs.activeProgressTick == rhs.activeProgressTick
+            && lhs.playbackDuration == rhs.playbackDuration
+            && lhs.playbackRate == rhs.playbackRate
+            && lhs.isPlaybackPlaying == rhs.isPlaybackPlaying
             && lhs.storyboardExportTitle == rhs.storyboardExportTitle
     }
 
@@ -120,7 +124,7 @@ struct ScenePanelView: View, Equatable {
                                         isScreenshot: item.sample?.kind == .screenshot,
                                         isSelected: selectedItemID == item.id,
                                         isActive: activeItemID == item.id,
-                                        activeProgress: activeProgress(for: item),
+                                        activePlayback: activePlayback(for: item),
                                         onTap: {
                                             selectedItemID = item.id
                                             controller.seekToSeconds(item.time)
@@ -473,12 +477,19 @@ struct ScenePanelView: View, Equatable {
         formatDuration(max(0, item.endTime - item.time))
     }
 
-    private func activeProgress(for item: SceneGridItem) -> Double? {
+    private func activePlayback(for item: SceneGridItem) -> SceneCutTileActivePlayback? {
         guard activeItemID == item.id else { return nil }
         let start = item.time
         let end = sceneEndTime(for: item)
         guard end > start else { return nil }
-        return min(1, max(0, (controller.elapsed - start) / (end - start)))
+        return SceneCutTileActivePlayback(
+            clock: controller.clock,
+            startTime: start,
+            endTime: end,
+            duration: playbackDuration,
+            playbackRate: playbackRate,
+            isPlaying: isPlaybackPlaying
+        )
     }
 
     private func sceneEndTime(for item: SceneGridItem) -> Double {

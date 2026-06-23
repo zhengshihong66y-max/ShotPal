@@ -58,7 +58,7 @@ final class AppWindowManager {
             backing: .buffered,
             defer: false
         )
-        window.title = "LapianBao"
+        window.title = "拉片宝"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = .clear

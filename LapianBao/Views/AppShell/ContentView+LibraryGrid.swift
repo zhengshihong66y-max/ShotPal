@@ -325,6 +325,8 @@ extension ContentView {
         action: @escaping () -> Void
     ) -> some View {
         let isDimmed = !isEnabled && !isSelected
+        let textWidth = libraryFilterChipTextWidth(for: title)
+        let countWidth = libraryFilterChipCountWidth(for: count)
 
         return Button(action: action) {
             HStack(spacing: 4) {
@@ -332,12 +334,16 @@ extension ContentView {
                     .font(.system(size: 10, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 116, alignment: .leading)
+                    .frame(width: textWidth, height: 12, alignment: .leading)
+                    .layoutPriority(0)
 
                 Text("\(count)")
                     .font(Design.numericFont(size: 9, weight: .bold))
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .white.opacity(0.86) : .secondary.opacity(isDimmed ? 0.34 : 0.82))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(2)
+                    .frame(width: countWidth, height: 12, alignment: .center)
             }
             .foregroundStyle(isSelected ? .white.opacity(0.94) : .secondary.opacity(isDimmed ? 0.42 : 1))
             .padding(.horizontal, 7)
@@ -363,64 +369,49 @@ extension ContentView {
     ) -> some View {
         let isRenaming = libraryTagRenameTarget == title
         let titleForeground = libraryFilterChipForeground(isSelected: isSelected)
-        let countForeground = libraryFilterChipCountForeground(isSelected: isSelected)
-        let textWidth = libraryEditableTagTextWidth(for: title)
+        let textWidth = libraryFilterChipTextWidth(for: title)
+        let countWidth = libraryFilterChipCountWidth(for: count)
 
-        return ZStack(alignment: .topTrailing) {
-            HStack(spacing: 4) {
-                if isRenaming {
-                    LibraryTagRenameTextField(
-                        text: $libraryTagRenameInput,
-                        isFocused: focusedLibraryTagRenameTarget == title,
-                        textColor: libraryFilterChipNSForeground(isSelected: isSelected),
-                        onCommit: commitLibraryTagRename
-                    )
-                    .frame(width: textWidth, height: 12, alignment: .leading)
-                } else {
-                    Text(title)
-                        .font(.system(size: 10, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(width: textWidth, alignment: .leading)
-                }
-
-                Text("\(count)")
-                    .font(Design.numericFont(size: 9, weight: .bold))
+        return HStack(spacing: 4) {
+            if isRenaming {
+                InlineTagRenameTextField(
+                    text: $libraryTagRenameInput,
+                    isFocused: focusedLibraryTagRenameTarget == title,
+                    textColor: libraryFilterChipNSForeground(isSelected: isSelected),
+                    onCommit: commitLibraryTagRename
+                )
+                .frame(width: textWidth, height: 12, alignment: .leading)
+            } else {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
                     .lineLimit(1)
-                    .foregroundStyle(countForeground)
-            }
-            .foregroundStyle(titleForeground)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(isSelected ? Design.tagChipSelectedFill : .white.opacity(0.070))
-            .clipShape(Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(isSelected ? Design.tagChipSelectedStroke : .white.opacity(0.12), lineWidth: 0.7)
-            }
-            .contentShape(Capsule())
-            .onTapGesture {
-                if !isRenaming {
-                    beginLibraryTagRename(title)
-                }
+                    .truncationMode(.middle)
+                    .frame(width: textWidth, height: 12, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        beginLibraryTagRename(title)
+                    }
             }
 
             Button(role: .destructive) {
                 deleteLibraryTag(title)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 6.6, weight: .heavy))
-                    .foregroundStyle(.white.opacity(0.90))
-                    .frame(width: 11, height: 11)
-                    .background(Color.black.opacity(0.56))
-                    .clipShape(Circle())
-                    .overlay {
-                        Circle()
-                            .stroke(.white.opacity(0.24), lineWidth: 0.6)
-                    }
+                    .font(.system(size: 7.5, weight: .heavy))
+                    .foregroundStyle(libraryFilterChipCountForeground(isSelected: isSelected))
+                    .frame(width: countWidth, height: 12, alignment: .center)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .offset(x: 3, y: -3)
+        }
+        .foregroundStyle(titleForeground)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(isSelected ? Design.tagChipSelectedFill : .white.opacity(0.045))
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .stroke(isSelected ? Design.tagChipSelectedStroke : .white.opacity(0.09), lineWidth: 0.7)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -443,10 +434,16 @@ extension ContentView {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    func libraryEditableTagTextWidth(for title: String) -> CGFloat {
+    func libraryFilterChipTextWidth(for title: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         let width = (title as NSString).size(withAttributes: [.font: font]).width
         return min(116, max(1, ceil(width) + 1))
+    }
+
+    func libraryFilterChipCountWidth(for count: Int) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 9, weight: .bold)
+        let width = ("\(count)" as NSString).size(withAttributes: [.font: font]).width
+        return max(14, ceil(width) + 6)
     }
 
     func libraryFilterChipForeground(isSelected: Bool) -> Color {
@@ -726,100 +723,4 @@ extension ContentView {
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
     }
 
-}
-
-private struct LibraryTagRenameTextField: NSViewRepresentable {
-    @Binding var text: String
-    let isFocused: Bool
-    let textColor: NSColor
-    let onCommit: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onCommit: onCommit)
-    }
-
-    func makeNSView(context: Context) -> LibraryTagRenameNSTextField {
-        let textField = LibraryTagRenameNSTextField()
-        textField.delegate = context.coordinator
-        textField.isBordered = false
-        textField.isBezeled = false
-        textField.drawsBackground = false
-        textField.focusRingType = .none
-        textField.font = .systemFont(ofSize: 10, weight: .semibold)
-        textField.textColor = textColor
-        textField.lineBreakMode = .byTruncatingTail
-        textField.cell?.usesSingleLineMode = true
-        textField.cell?.wraps = false
-        textField.stringValue = text
-        return textField
-    }
-
-    func updateNSView(_ nsView: LibraryTagRenameNSTextField, context: Context) {
-        context.coordinator.text = $text
-        context.coordinator.onCommit = onCommit
-        nsView.textColor = textColor
-        if nsView.stringValue != text {
-            nsView.stringValue = text
-        }
-
-        guard isFocused else {
-            context.coordinator.didApplyFocus = false
-            return
-        }
-        guard !context.coordinator.didApplyFocus else { return }
-        context.coordinator.didApplyFocus = true
-        DispatchQueue.main.async {
-            if let editor = nsView.currentEditor(), nsView.window?.firstResponder === editor {
-                return
-            }
-            nsView.window?.makeFirstResponder(nsView)
-            nsView.placeCaretAtEnd()
-        }
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var text: Binding<String>
-        var onCommit: () -> Void
-        var didApplyFocus = false
-
-        init(text: Binding<String>, onCommit: @escaping () -> Void) {
-            self.text = text
-            self.onCommit = onCommit
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let textField = notification.object as? NSTextField else { return }
-            text.wrappedValue = textField.stringValue
-        }
-
-        func control(
-            _ control: NSControl,
-            textView: NSTextView,
-            doCommandBy commandSelector: Selector
-        ) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                text.wrappedValue = textView.string
-                onCommit()
-                return true
-            }
-            return false
-        }
-    }
-}
-
-private final class LibraryTagRenameNSTextField: NSTextField {
-    func placeCaretAtEnd() {
-        guard let editor = currentEditor() else { return }
-        editor.selectedRange = NSRange(location: editor.string.count, length: 0)
-    }
-
-    override func becomeFirstResponder() -> Bool {
-        let result = super.becomeFirstResponder()
-        if result {
-            DispatchQueue.main.async { [weak self] in
-                self?.placeCaretAtEnd()
-            }
-        }
-        return result
-    }
 }

@@ -86,10 +86,13 @@ extension ContentView {
     }
 
     func savedImportFetchOutcome(
+        suppressMissingXiaohongshuVideos: Bool = false,
         _ body: () async throws -> InstagramSavedImportResult
     ) async -> (result: InstagramSavedImportResult?, errorMessage: String?) {
         do {
             return (try await body(), nil)
+        } catch InstagramSavedImportError.noXiaohongshuVideoLinks where suppressMissingXiaohongshuVideos {
+            return (nil, nil)
         } catch {
             return (nil, error.localizedDescription)
         }
@@ -150,7 +153,7 @@ extension ContentView {
             async let instagramOutcome = savedImportFetchOutcome {
                 try await libraryStore.latestInstagramSavedImportCandidatesFromChrome()
             }
-            async let xiaohongshuOutcome = savedImportFetchOutcome {
+            async let xiaohongshuOutcome = savedImportFetchOutcome(suppressMissingXiaohongshuVideos: true) {
                 try await libraryStore.latestXiaohongshuSavedVideoImportCandidatesFromChrome(limit: 50)
             }
 

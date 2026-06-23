@@ -1,4 +1,4 @@
-# 拉片宝
+# 拉片宝（英文名：ShotPal）
 
 最后更新：2026-06-19
 
@@ -6,7 +6,7 @@
 
 ## 软件定位
 
-拉片宝是一个 macOS 原生 SwiftUI 应用，用来把视频素材导入本地素材库，并围绕同一条视频时间线完成看片、场景识别、画面采样、声音截取、字幕转写、音乐识别和资产导出。
+拉片宝是一个 macOS 原生 SwiftUI 应用，英文名为 ShotPal，用来把视频素材导入本地素材库，并围绕同一条视频时间线完成看片、场景识别、画面采样、声音截取、字幕转写、音乐识别和资产导出。
 
 它适合个人创作者、剪辑师或需要拆解视频素材的人使用。核心目标是把拉片过程中产生的画面、声音、字幕、音乐、批注和场景切点保存下来，并且保留回到原视频时间点的能力。
 
@@ -137,7 +137,7 @@ Tools/check_launch_window.sh
 ```bash
 rm -rf build
 xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -configuration Release -derivedDataPath build build
-ditto -c -k --keepParent build/Build/Products/Release/LapianBao.app ~/Desktop/LapianBao.zip
+ditto -c -k --keepParent build/Build/Products/Release/拉片宝.app ~/Desktop/拉片宝.zip
 ```
 
 如果没有 Developer ID 签名和 notarization，对方首次打开时可能遇到 macOS 安全提示。正式分发前应补齐签名、公证和一次干净机器验收。

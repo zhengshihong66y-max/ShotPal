@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		5B41046C2FC28A33006F8246 /* LapianBao.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LapianBao.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5B41046C2FC28A33006F8246 /* 拉片宝.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "拉片宝.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		5B41046D2FC28A33006F8246 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				5B41046C2FC28A33006F8246 /* LapianBao.app */,
+				5B41046C2FC28A33006F8246 /* 拉片宝.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -66,8 +66,8 @@
 			name = LapianBao;
 			packageProductDependencies = (
 			);
-			productName = LapianBao;
-			productReference = 5B41046C2FC28A33006F8246 /* LapianBao.app */;
+			productName = "拉片宝";
+			productReference = 5B41046C2FC28A33006F8246 /* 拉片宝.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -251,15 +251,18 @@
 				ENABLE_PREVIEWS = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
-				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
+				INFOPLIST_KEY_CFBundleDisplayName = "拉片宝";
+				INFOPLIST_KEY_CFBundleName = "拉片宝";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lapianbao.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = LapianBao;
+				PRODUCT_NAME = "拉片宝";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -284,15 +287,18 @@
 				ENABLE_PREVIEWS = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
-				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
-				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "LapianBao needs access to the media library folder you choose so it can read videos and save analysis data.";
+				INFOPLIST_KEY_CFBundleDisplayName = "拉片宝";
+				INFOPLIST_KEY_CFBundleName = "拉片宝";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lapianbao.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = LapianBao;
+				PRODUCT_NAME = "拉片宝";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

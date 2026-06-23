@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-06-21",
+  "bundleResourceRoot": "RuntimeTools.bundle/Contents/Resources",
+  "embeddedResources": [
+    {
+      "id": "whisper_cli",
+      "path": "Tools/whisper.cpp/build/bin/whisper-cli",
+      "required": true,
+      "executable": true,
+      "purpose": "Local Whisper transcription runner"
+    },
+    {
+      "id": "whisper_large_v3_turbo_q5_model",
+      "path": "Tools/whisper.cpp/models/ggml-large-v3-turbo-q5_0.bin",
+      "required": true,
+      "minimumBytes": 100000000,
+      "purpose": "Default local speech-to-text model"
+    },
+    {
+      "id": "whisper_vad_model",
+      "path": "Tools/whisper.cpp/models/for-tests-silero-v6.2.0-ggml.bin",
+      "required": false,
+      "purpose": "Optional VAD model used by the transcription script"
+    },
+    {
+      "id": "whisper_script",
+      "path": "Tools/transcribe_with_whisper.sh",
+      "required": true,
+      "executable": true,
+      "purpose": "Audio extraction and Whisper orchestration"
+    },
+    {
+      "id": "ffmpeg",
+      "path": "Tools/bin/ffmpeg",
+      "required": true,
+      "executable": true,
+      "architecture": "universal arm64 x86_64",
+      "minimumMacOS": "14.0 on arm64, 13.0 on x86_64",
+      "purpose": "Audio/video probing, extraction, export, remote download post-processing"
+    },
+    {
+      "id": "ffprobe",
+      "path": "Tools/bin/ffprobe",
+      "required": true,
+      "executable": true,
+      "architecture": "universal arm64 x86_64",
+      "minimumMacOS": "14.0 on arm64, 13.0 on x86_64",
+      "purpose": "Video probing for detection scripts and import metadata"
+    },
+    {
+      "id": "python_3_11_arm64",
+      "path": "Tools/python/cpython-3.11-aarch64-apple-darwin/bin/python3.11",
+      "required": true,
+      "executable": true,
+      "architecture": "arm64",
+      "minimumMacOS": "11.0",
+      "purpose": "Bundled Python runtime used to create app-managed helper environments"
+    },
+    {
+      "id": "python_3_11_x86_64",
+      "path": "Tools/python/cpython-3.11-x86_64-apple-darwin/bin/python3.11",
+      "required": true,
+      "executable": true,
+      "architecture": "x86_64",
+      "minimumMacOS": "10.15",
+      "purpose": "Bundled Python runtime used to create app-managed helper environments"
+    },
+    {
+      "id": "music_detection_script",
+      "path": "Tools/detect_music.py",
+      "required": true,
+      "purpose": "Song recognition script"
+    },
+    {
+      "id": "scene_detection_script",
+      "path": "Tools/detect_scene_cuts_transnet.py",
+      "required": true,
+      "purpose": "TransNetV2 scene-cut script"
+    },
+    {
+      "id": "music_requirements",
+      "path": "Tools/requirements-music.txt",
+      "required": true,
+      "purpose": "Dependencies installed into the app-managed music Python runtime"
+    },
+    {
+      "id": "transnet_requirements",
+      "path": "Tools/requirements-transnet.txt",
+      "required": true,
+      "purpose": "Dependencies installed into the app-managed TransNet Python runtime"
+    },
+    {
+      "id": "music_env_setup_script",
+      "path": "Tools/setup_music_env.sh",
+      "required": false,
+      "executable": true,
+      "purpose": "Manual fallback for recreating the music Python runtime"
+    },
+    {
+      "id": "transnet_env_setup_script",
+      "path": "Tools/setup_transnet_env.sh",
+      "required": false,
+      "executable": true,
+      "purpose": "Manual fallback for recreating the TransNet Python runtime"
+    },
+    {
+      "id": "whisper_cpp_license",
+      "path": "Tools/third-party-licenses/whisper.cpp-LICENSE",
+      "required": true,
+      "purpose": "Third-party license notice"
+    },
+    {
+      "id": "ffmpeg_license_notice",
+      "path": "Tools/third-party-licenses/FFmpeg-static-binaries.md",
+      "required": true,
+      "purpose": "FFmpeg source, hash, and license notice"
+    },
+    {
+      "id": "ffmpeg_gplv3_license",
+      "path": "Tools/third-party-licenses/FFmpeg-COPYING.GPLv3",
+      "required": true,
+      "purpose": "GPLv3 license text for the bundled FFmpeg build"
+    },
+    {
+      "id": "python_standalone_notice",
+      "path": "Tools/third-party-licenses/python-build-standalone.md",
+      "required": true,
+      "purpose": "Python standalone runtime source, hash, and license notice"
+    }
+  ],
+  "appManagedRuntimeDependencies": [
+    {
+      "id": "music_python_env",
+      "installLocation": "~/Library/Application Support/LapianBao/PythonRuntimes/music-env",
+      "requirements": "Tools/requirements-music.txt",
+      "setup": "Tools/setup_music_env.sh",
+      "baseRuntime": "Tools/python/cpython-3.11-<current-architecture>-apple-darwin",
+      "reasonNotCopiedIntoApp": "Virtual environments contain machine-specific interpreter paths and are created in a writable user directory on first use."
+    },
+    {
+      "id": "transnet_python_env",
+      "installLocation": "~/Library/Application Support/LapianBao/PythonRuntimes/transnet-env",
+      "requirements": "Tools/requirements-transnet.txt",
+      "setup": "Tools/setup_transnet_env.sh",
+      "baseRuntime": "Tools/python/cpython-3.11-<current-architecture>-apple-darwin",
+      "reasonNotCopiedIntoApp": "Virtual environments contain machine-specific interpreter paths and are created in a writable user directory on first use."
+    }
+  ],
+  "externalRuntimeDependencies": [
+    {
+      "id": "yt-dlp",
+      "purpose": "Remote video download",
+      "currentResolution": "App-managed self-check/download plus PATH fallbacks",
+      "packagingNote": "The app can install an app-managed yt-dlp at runtime. A Homebrew wrapper should not be copied into the bundle."
+    }
+  ],
+  "excludedLocalArtifacts": [
+    "Tools/music-env",
+    "Tools/transnet-env",
+    "tmp",
+    "output",
+    ".codex-derived"
+  ]
+}

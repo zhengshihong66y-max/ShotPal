@@ -15,6 +15,8 @@ import UniformTypeIdentifiers
 extension LibraryStore {
     // MARK: - 小红书原生解析器
 
+    nonisolated static let xiaohongshuSavedNotesIndex = 1
+
     nonisolated static func downloadRemoteFile(
         request: URLRequest,
         to outputURL: URL,
@@ -119,7 +121,7 @@ extension LibraryStore {
 
     nonisolated static func xiaohongshuNoteHTML(from sourceURL: URL) async throws -> String {
         try await Task.detached(priority: .utility) {
-            try withExportedAccountCookies(seedURLString: "https://www.xiaohongshu.com/") { cookieURL in
+            try withExportedAccountCookies(seedURLString: xiaohongshuHomeURLString) { cookieURL in
                 var noteURLString = sourceURL.absoluteString
                 if sourceURL.query?.contains("xsec_token=") != true,
                    let noteID = xiaohongshuNoteID(from: sourceURL),
@@ -135,7 +137,7 @@ extension LibraryStore {
                     cookieFileURL: cookieURL,
                     headers: [
                         ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
-                        ("referer", "https://www.xiaohongshu.com/"),
+                        ("referer", xiaohongshuHomeURLString),
                         ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
                     ],
                     timeout: 30
@@ -154,26 +156,126 @@ extension LibraryStore {
         for noteID: String,
         cookieURL: URL
     ) -> String? {
-        guard let result = try? runCurlFetch(
-            urlString: xiaohongshuSavedCollectionURLString,
-            cookieFileURL: cookieURL,
-            headers: [
-                ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
-                ("referer", "https://www.xiaohongshu.com/"),
-                ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
-            ],
-            timeout: 24
-        ),
+        guard let profileURLString = try? xiaohongshuLoggedInProfileURLString(cookieURL: cookieURL),
+              let result = try? runCurlFetch(
+                  urlString: profileURLString,
+                  cookieFileURL: cookieURL,
+                  headers: [
+                      ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+                      ("referer", xiaohongshuHomeURLString),
+                      ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+                  ],
+                  timeout: 24
+              ),
               (200..<300).contains(result.statusCode),
               let html = String(data: result.data, encoding: .utf8)
         else { return nil }
 
-        return xiaohongshuVideoLinks(fromSavedHTML: html, limit: 50)
+        return xiaohongshuSavedVideoLinks(fromProfileHTML: html, limit: 50)
             .first { link in
                 guard let url = URL(string: link) else { return false }
                 return xiaohongshuNoteID(from: url) == noteID
                     && url.query?.contains("xsec_token=") == true
             }
+    }
+
+    nonisolated static func xiaohongshuLoggedInProfileURLString(cookieURL: URL) throws -> String {
+        let result = try runCurlFetch(
+            urlString: xiaohongshuHomeURLString,
+            cookieFileURL: cookieURL,
+            headers: [
+                ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+                ("referer", xiaohongshuHomeURLString),
+                ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+            ],
+            timeout: 24
+        )
+
+        guard (200..<300).contains(result.statusCode),
+              let html = String(data: result.data, encoding: .utf8)
+        else {
+            throw InstagramSavedImportError.chromeCookieUnavailable("无法读取小红书登录状态（HTTP \(result.statusCode)）")
+        }
+
+        guard let userID = xiaohongshuLoggedInUserID(from: html) else {
+            throw InstagramSavedImportError.chromeCookieUnavailable("无法识别小红书登录用户，请先在拉片宝设置里打开小红书并确认已登录")
+        }
+        return xiaohongshuProfileURLString(userID: userID)
+    }
+
+    nonisolated static func xiaohongshuProfileURLString(userID: String) -> String {
+        "\(xiaohongshuProfileBaseURLString)/\(userID)"
+    }
+
+    nonisolated static func xiaohongshuLoggedInUserID(from html: String) -> String? {
+        guard let root = xiaohongshuInitialStateRoot(from: html),
+              let user = root["user"] as? [String: Any]
+        else { return nil }
+
+        if let loggedIn = user["loggedIn"] as? Bool, !loggedIn {
+            return nil
+        }
+
+        if let userID = xiaohongshuUserIDValue(from: user) {
+            return userID
+        }
+        if let userInfo = user["userInfo"] as? [String: Any] {
+            return xiaohongshuUserIDValue(from: userInfo)
+        }
+        return nil
+    }
+
+    nonisolated static func xiaohongshuUserIDValue(from dictionary: [String: Any]) -> String? {
+        for key in ["userId", "userID", "user_id", "userid", "id"] {
+            guard let value = xiaohongshuStringValue(dictionary[key]),
+                  xiaohongshuLooksLikeNoteID(value)
+            else { continue }
+            return value
+        }
+        return nil
+    }
+
+    nonisolated static func xiaohongshuSavedVideoLinks(
+        fromProfileHTML html: String,
+        limit: Int
+    ) -> [String] {
+        guard let root = xiaohongshuInitialStateRoot(from: html),
+              let savedNotes = xiaohongshuSavedNotesValue(fromRoot: root)
+        else { return [] }
+
+        var links: [String] = []
+        var linkIndexesByKey: [String: Int] = [:]
+        collectXiaohongshuVideoNoteLinks(
+            from: savedNotes,
+            into: &links,
+            linkIndexesByKey: &linkIndexesByKey,
+            limit: max(1, limit)
+        )
+        return links
+    }
+
+    nonisolated static func xiaohongshuSavedNotesValue(fromRoot root: [String: Any]) -> Any? {
+        guard let user = root["user"] as? [String: Any],
+              let notes = xiaohongshuArrayValue(user["notes"]),
+              notes.indices.contains(xiaohongshuSavedNotesIndex)
+        else { return nil }
+
+        return notes[xiaohongshuSavedNotesIndex]
+    }
+
+    nonisolated static func xiaohongshuArrayValue(_ value: Any?) -> [Any]? {
+        if let array = value as? [Any] {
+            return array
+        }
+        if let dictionary = value as? [String: Any] {
+            if let rawValue = dictionary["_rawValue"] as? [Any] {
+                return rawValue
+            }
+            if let value = dictionary["value"] as? [Any] {
+                return value
+            }
+        }
+        return nil
     }
 
     nonisolated static func xiaohongshuVideoLinks(fromSavedHTML html: String, limit: Int) -> [String] {
@@ -301,7 +403,7 @@ extension LibraryStore {
             noteID: noteID,
             xsecToken: nil,
             xsecSource: nil
-        ).flatMap(URL.init(string:)) ?? URL(string: xiaohongshuSavedCollectionURLString)!
+        ).flatMap(URL.init(string:)) ?? URL(string: xiaohongshuHomeURLString)!
 
         let title = xiaohongshuCandidateTitle(from: noteObject, sourceURL: sourceURL)
         let authorName = xiaoHongShuAuthorName(from: noteObject)

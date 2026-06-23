@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="windowClip">
+      <rect x="468" y="342" width="328" height="340" rx="76"/>
+    </clipPath>
+    <linearGradient id="baseColor" x1="-84" y1="682" x2="1198" y2="342" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#30D158"/>
+      <stop offset="0.16" stop-color="#DFFF00"/>
+      <stop offset="0.32" stop-color="#64D2FF"/>
+      <stop offset="0.54" stop-color="#0A84FF"/>
+      <stop offset="0.76" stop-color="#5E5CE6"/>
+      <stop offset="0.92" stop-color="#AF52DE"/>
+      <stop offset="1" stop-color="#FF375F"/>
+    </linearGradient>
+    <radialGradient id="yellowBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(330 420) scale(230 160)">
+      <stop offset="0" stop-color="#F8FF00"/>
+      <stop offset="0.58" stop-color="#F8FF00" stop-opacity="0.46"/>
+      <stop offset="1" stop-color="#F8FF00" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cyanBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(500 630) scale(460 220)">
+      <stop offset="0" stop-color="#00F5FF"/>
+      <stop offset="0.58" stop-color="#00F5FF" stop-opacity="0.68"/>
+      <stop offset="1" stop-color="#00F5FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blueBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(690 480) scale(500 260)">
+      <stop offset="0" stop-color="#0A84FF"/>
+      <stop offset="0.58" stop-color="#0A84FF" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#0A84FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violetBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(910 620) scale(290 190)">
+      <stop offset="0" stop-color="#BF5AF2"/>
+      <stop offset="0.58" stop-color="#BF5AF2" stop-opacity="0.44"/>
+      <stop offset="1" stop-color="#BF5AF2" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="pinkBloom" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(995 430) scale(170 140)">
+      <stop offset="0" stop-color="#FF2D55"/>
+      <stop offset="0.58" stop-color="#FF2D55" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#FF2D55" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#windowClip)">
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#baseColor)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#yellowBloom)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#cyanBloom)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#blueBloom)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#violetBloom)"/>
+    <rect x="-84" y="342" width="1282" height="340" fill="url(#pinkBloom)"/>
+  </g>
+</svg>

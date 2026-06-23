@@ -34,8 +34,8 @@ struct PreviewPanelView: View {
     @Namespace var tabNamespace
     static let contentTimelineDetailBlockGap: CGFloat = 8
     static let contentTimelineDetailBlockPadding: CGFloat = 8
-    static let annotationEditorWidth: CGFloat = 288
-    static let annotationEditorHeight: CGFloat = 204
+    static let annotationEditorWidth: CGFloat = 336
+    static let annotationEditorHeight: CGFloat = 226
     static let exportActionButtonSize: CGFloat = 22
     static let exportRowContentHeight: CGFloat = 78
     static let exportRowVerticalPadding: CGFloat = 10
@@ -59,6 +59,7 @@ struct PreviewPanelView: View {
     @State var pendingTimelineExpansionVideoPath: String?
     @State var timelineZoom: Double = 1
     @State var timelineOffset: Double = 0
+    @State var audioTimelineZoom: Double = 1
     @State var timelineAutoScrollLastUpdate = Date.distantPast
     @State var timelineManualScrollProtectionUntil = Date.distantPast
     @State var sceneTimelineAutoFocusedKey: String?
@@ -142,6 +143,7 @@ struct PreviewPanelView: View {
             pendingTimelineExpansionTab = nil
             pendingTimelineExpansionVideoPath = nil
             resetTimelineViewport()
+            resetAudioTimelineViewport()
             consumePendingSeekRequestIfNeeded()
             stopKeyboardShuttle()
             stopExportAudioClipPlayback()

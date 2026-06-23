@@ -171,10 +171,6 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         return RecognizedMusicRowProjection(
             asset: asset,
             visibleTags: displayedMusicTags(visibleTags(for: asset.song)),
-            suggestedTags: musicTagSuggestions(
-                title: asset.song.title,
-                artist: asset.song.artist
-            ),
             downloadJobs: downloadJobs,
             hasDownloadedWaveform: hasCompletedMusicDownload(downloadJobs),
             downloadedFileURLs: completedMusicFileURLs(from: downloadJobs)
@@ -194,7 +190,6 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             displayTitle: group.title,
             displayArtist: group.artist,
             visibleTags: displayedMusicTags(visibleTags(for: group)),
-            suggestedTags: musicTagSuggestions(for: group),
             primaryFileURL: localMusicFileURL(for: group.primaryAsset),
             fileURLs: localMusicFileURLs(for: group),
             sourceText: localMusicGroupSourceText(
@@ -1209,8 +1204,8 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     }
 
     func visibleTags(for song: MusicRecognitionItem) -> [String] {
-        musicMetadataFilteredTags(
-            MusicRecognitionItem.cleanedMusicTags(song.displayTags, title: song.title, artist: song.artist),
+        requiredVisibleMusicTags(
+            MusicRecognitionItem.cleanedGenreTags(song.tags, title: song.title, artist: song.artist),
             metadataValues: [song.title, song.artist]
         )
     }
@@ -1222,16 +1217,18 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     func visibleTags(for asset: LocalMusicAsset, song: MusicRecognitionItem?) -> [String] {
         let title = localMusicDisplayTitle(for: asset, song: song)
         let artist = song?.artist.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let songTags = song.map { visibleTags(for: $0) } ?? []
-        return musicMetadataFilteredTags(
-            MusicRecognitionItem.cleanedMusicTags(songTags + asset.tags, title: title, artist: artist),
+        let songTags = song.map {
+            MusicRecognitionItem.cleanedGenreTags($0.tags, title: $0.title, artist: $0.artist)
+        } ?? []
+        return requiredVisibleMusicTags(
+            MusicRecognitionItem.cleanedGenreTags(songTags + asset.tags, title: title, artist: artist),
             metadataValues: musicMetadataValues(for: asset, title: title, artist: artist)
         )
     }
 
     func visibleTags(for group: LocalMusicGroup) -> [String] {
-        musicMetadataFilteredTags(
-            MusicRecognitionItem.cleanedMusicTags(group.tags, title: group.title, artist: group.artist),
+        requiredVisibleMusicTags(
+            MusicRecognitionItem.cleanedGenreTags(group.tags, title: group.title, artist: group.artist),
             metadataValues: musicMetadataValues(for: group)
         )
     }
@@ -1242,20 +1239,11 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         }
     }
 
-    func musicTagSuggestions(title: String, artist: String, extraMetadataValues: [String] = []) -> [String] {
-        musicMetadataFilteredTags(
-            input.allMusicTags,
-            metadataValues: [title, artist] + extraMetadataValues
+    func requiredVisibleMusicTags(_ tags: [String], metadataValues: [String]) -> [String] {
+        let visibleTags = displayedMusicTags(
+            musicMetadataFilteredTags(tags, metadataValues: metadataValues)
         )
-        .filter { !isFeaturedMusicTag($0) && !MusicRecognitionItem.isFallbackMusicTag($0) }
-    }
-
-    func musicTagSuggestions(for group: LocalMusicGroup) -> [String] {
-        musicMetadataFilteredTags(
-            input.allMusicTags,
-            metadataValues: musicMetadataValues(for: group)
-        )
-        .filter { !isFeaturedMusicTag($0) && !MusicRecognitionItem.isFallbackMusicTag($0) }
+        return visibleTags.isEmpty ? [MusicRecognitionItem.defaultMusicGenreTag] : visibleTags
     }
 
     func isFeaturedMusicTag(_ tag: String) -> Bool {

@@ -157,6 +157,11 @@ extension PreviewPanelView {
         min(1, max(0.02, 1 / max(timelineZoom, 1)))
     }
 
+    var audioTimelineViewportSpan: Double {
+        let baseSpan = max(0.02, min(1, Design.centeredWaveformViewportSpan))
+        return min(1, max(0.02, baseSpan / max(audioTimelineZoom, 1)))
+    }
+
     var timelineLiveFollowFrameInterval: TimeInterval {
         1.0 / 30.0
     }
@@ -183,7 +188,6 @@ extension PreviewPanelView {
 
     func focusSceneTimelineOnOpeningIfNeeded() {
         guard
-            activePreviewTab == .frames,
             let video = libraryStore.selectedVideo,
             timelineViewportSpan >= 0.999,
             timelineOffset <= 0.0005
@@ -236,6 +240,38 @@ extension PreviewPanelView {
         controller.seekToProgress(controller.progress + delta)
     }
 
+    func displayedTimelineOffset(for progress: Double) -> Double {
+        let span = timelineViewportSpan
+        guard span < 0.999 else { return 0 }
+        guard controller.isPlaying || keyboardShuttleDirection != 0 else { return timelineOffset }
+        guard Date() >= timelineManualScrollProtectionUntil else { return timelineOffset }
+
+        let clamped = min(1, max(0, progress))
+        let maxOffset = max(0, 1 - span)
+        let margin = min(0.08, span * 0.18)
+        let visibleStart = timelineOffset
+        let visibleEnd = timelineOffset + span
+
+        if clamped < visibleStart + margin {
+            return max(0, clamped - margin)
+        }
+        if clamped > visibleEnd - margin {
+            return min(maxOffset, clamped + margin - span)
+        }
+        return timelineOffset
+    }
+
+    func zoomAudioTimelineViewport(_ factor: Double, anchor _: Double) {
+        let nextZoom = min(50, max(1, audioTimelineZoom * factor))
+        guard abs(nextZoom - audioTimelineZoom) > 0.000001 else { return }
+
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            audioTimelineZoom = nextZoom
+        }
+    }
+
     func zoomTimelineViewport(_ factor: Double, anchor: Double) {
         let oldSpan = timelineViewportSpan
         let anchorProgress = timelineOffset + min(1, max(0, anchor)) * oldSpan
@@ -258,6 +294,14 @@ extension PreviewPanelView {
         updateTimelineViewportWithoutAnimation(zoom: 1, offset: 0)
         timelineAutoScrollLastUpdate = .distantPast
         timelineManualScrollProtectionUntil = .distantPast
+    }
+
+    func resetAudioTimelineViewport() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            audioTimelineZoom = 1
+        }
     }
 
     func keepTimelineProgressVisible(_ progress: Double) {

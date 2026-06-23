@@ -145,6 +145,7 @@ struct ContentView: View {
     @ViewBuilder
     func mainLayout(isCompact: Bool, containerWidth: CGFloat) -> some View {
         let activeMediaPanelWidth = resolvedMediaPanelWidth(containerWidth: containerWidth)
+        let mediaWorkspaceToolbarWidth = homeMediaContentWidth(containerWidth: containerWidth)
 
         HStack(spacing: Design.panelSpacing) {
             if presentedAppWorkspace == .frames ||
@@ -155,7 +156,7 @@ struct ContentView: View {
                     .background(Design.sidebarBg)
                     .zIndex(10)
 
-                workspaceView
+                workspaceView(toolbarWidth: mediaWorkspaceToolbarWidth)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Design.sidebarBg)
                     .zIndex(presentedAppWorkspace == .frames ? 2 : 0)
@@ -164,7 +165,7 @@ struct ContentView: View {
                     libraryColumn(isCompact: true)
                         .frame(maxWidth: .infinity, maxHeight: 280)
 
-                    workspaceView
+                    workspaceView(toolbarWidth: nil)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
@@ -173,7 +174,7 @@ struct ContentView: View {
                         libraryColumn(isCompact: false)
                             .frame(width: activeMediaPanelWidth)
 
-                        workspaceView
+                        workspaceView(toolbarWidth: nil)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(Design.contentBg)
                     }
@@ -196,6 +197,13 @@ struct ContentView: View {
             return clampedMediaPanelWidth(frameMediaPanelWidth ?? defaultWidth, containerWidth: containerWidth)
         }
         return clampedMediaPanelWidth(mediaPanelWidth, containerWidth: containerWidth)
+    }
+
+    func homeMediaContentWidth(containerWidth: CGFloat) -> CGFloat {
+        let minimumSidebarWidth: CGFloat = 320
+        let maximumSidebarWidth: CGFloat = 660
+        let homePanelWidth = min(maximumSidebarWidth, max(minimumSidebarWidth, CGFloat(mediaPanelWidth)))
+        return max(0, min(homePanelWidth, containerWidth) - Design.railWidth)
     }
 
     func clampedMediaPanelWidth(_ width: Double, containerWidth: CGFloat) -> CGFloat {
@@ -333,7 +341,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    var workspaceView: some View {
+    func workspaceView(toolbarWidth: CGFloat? = nil) -> some View {
         ZStack {
             switch presentedAppWorkspace {
             case .home:
@@ -348,6 +356,7 @@ struct ContentView: View {
                     selectedFrameID: $frameSelectedFrameID,
                     boardMode: $frameBoardMode,
                     previewController: previewController,
+                    toolbarWidth: toolbarWidth,
                     goHome: jumpToVideo
                 )
             case .music:
@@ -359,6 +368,7 @@ struct ContentView: View {
             if hasMountedMusicWorkspace || presentedAppWorkspace == .music {
                 MusicWorkspaceView(
                     viewModel: musicWorkspaceViewModel,
+                    toolbarWidth: toolbarWidth,
                     goHome: jumpToVideo
                 )
                 .opacity(presentedAppWorkspace == .music ? 1 : 0)
@@ -461,10 +471,15 @@ struct ContentView: View {
                 sidebarCollapseButton
                     .padding(.bottom, 12)
             } else {
-                HStack {
-                    Text("拉片宝")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("拉片宝")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text("English name: ShotPal")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     sidebarCollapseButton
                 }
