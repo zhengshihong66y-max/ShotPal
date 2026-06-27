@@ -23,8 +23,8 @@ extension ContentView {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
                             importInputSection
-                            pendingImportVideosSection
-                            downloadTimelineSection
+                            downloadProgressSection
+                            downloadHistorySection
                         }
                         .padding(18)
                     }
@@ -33,7 +33,7 @@ extension ContentView {
                     HStack(alignment: .top, spacing: 0) {
                         VStack(alignment: .leading, spacing: 14) {
                             importInputSection
-                            pendingImportVideosSection
+                            downloadProgressSection
                         }
                         .padding(18)
                         .frame(width: leftColumnWidth, alignment: .top)
@@ -44,23 +44,13 @@ extension ContentView {
                             .fill(.white.opacity(0.06))
                             .frame(width: 1)
 
-                        downloadTimelineSection
+                        downloadHistorySection
                             .padding(18)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .background(Design.contentBg)
                     }
                 }
             }
-        }
-        .onAppear {
-            refreshSavedImportCandidatesIfNeeded()
-            if !isSavedImportRefreshing {
-                libraryStore.prewarmSavedCollectionCookieCache()
-            }
-        }
-        .onChange(of: libraryStore.libraryURL) { _, libraryURL in
-            guard libraryURL != nil else { return }
-            prewarmSavedImportCandidatesIfPossible()
         }
     }
 
@@ -80,30 +70,24 @@ extension ContentView {
                             .frame(height: 22)
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("清空导入链接")
+                    .accessibilityIdentifier("import_clear_links_button")
                 }
             }
 
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $importURLText)
-                    .font(.callout)
-                    .frame(minHeight: 72, maxHeight: 96)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(.white.opacity(0.10), lineWidth: 1)
-                    }
-
-                if importURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("每行一个链接，支持 Instagram、YouTube、小红书、Bilibili、抖音…")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .padding(14)
-                        .allowsHitTesting(false)
-                }
+            ImportURLTextEditor(
+                text: $importURLText,
+                placeholder: "每行一个链接，支持 Instagram、YouTube、小红书、Bilibili、抖音…"
+            )
+            .frame(minHeight: 72, maxHeight: 96)
+            .background(.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(.white.opacity(0.10), lineWidth: 1)
             }
+            .accessibilityLabel("导入链接输入框")
+            .accessibilityIdentifier("import_url_text_editor")
 
             HStack(alignment: .center, spacing: 10) {
                 if !manualImportVideos.isEmpty {
@@ -132,6 +116,8 @@ extension ContentView {
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("关闭导入面板")
+                .accessibilityIdentifier("import_close_button")
 
                 Button {
                     startRemoteImport()
@@ -143,60 +129,40 @@ extension ContentView {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(manualImportVideos.isEmpty)
+                .accessibilityLabel("开始下载导入链接")
+                .accessibilityIdentifier("import_start_download_button")
             }
             .frame(height: 30)
         }
     }
 
-    var pendingImportVideosSection: some View {
+    var downloadProgressSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Label("未添加收藏", systemImage: "bookmark")
+            HStack {
+                Label("下载进度", systemImage: "arrow.down.circle")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-
-                Spacer(minLength: 8)
-
-                Button {
-                    refreshSavedImportCandidates(restartExisting: true)
-                } label: {
-                    ZStack {
-                        if isSavedImportRefreshing {
-                            ProgressView()
-                                .controlSize(.small)
-                                .scaleEffect(0.55)
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                    }
-                    .frame(width: 24, height: 22)
-                }
-                .buttonStyle(.borderless)
-                .disabled(libraryStore.libraryURL == nil)
+                Spacer()
+                Text(importProgressSummary)
+                    .font(Design.numericCaption())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
 
-            if isSavedImportRefreshing && pendingImportVideos.isEmpty {
-                Text("请先在设置里完成 IG 或小红书账号登录")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: 170, alignment: .center)
-                    .frame(maxHeight: .infinity)
-            } else if pendingImportVideos.isEmpty {
+            if activeImportJobs.isEmpty {
                 AppEmptyState(
-                    title: "暂无未添加收藏",
+                    title: "暂无进行中的下载",
                     systemImage: "tray",
                     style: .compact
                 )
-                .frame(maxWidth: .infinity, minHeight: 170)
-                .frame(maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 170)
+                    .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(pendingImportVideos) { video in
-                            pendingImportVideoRow(video)
+                        ForEach(activeImportJobs) { job in
+                            importProgressJobStatus(job)
                         }
                     }
                 }
@@ -204,182 +170,50 @@ extension ContentView {
                 .frame(maxHeight: .infinity)
             }
 
-            HStack(alignment: .center, spacing: 10) {
-                savedImportRefreshStatusFooter
-
-                Spacer(minLength: 10)
-
-                Button {
-                    startAllSavedImportCandidates()
-                } label: {
-                    Label("全部下载", systemImage: "arrow.down.circle.fill")
-                        .fontWeight(.semibold)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(pendingImportVideos.isEmpty || isSavedImportSerialRunning)
-                .keyboardShortcut("d", modifiers: [.command, .shift])
-            }
-            .frame(height: 30)
+            downloadProgressFooter
+                .frame(height: 30, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder
-    var savedImportRefreshStatusFooter: some View {
-        if !isSavedImportSerialRunning, let text = savedImportRefreshStatusText {
-            Text(text)
+    var downloadProgressFooter: some View {
+        if activeImportJobs.isEmpty {
+            Text(libraryStore.remoteImportJobs.isEmpty ? "粘贴链接后点击下载，任务会显示在这里" : "当前没有正在下载的任务")
                 .font(.caption2)
-                .foregroundStyle(savedImportRefreshStatusIsError ? Color.orange.opacity(0.92) : .secondary)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 340, alignment: .leading)
         }
     }
 
-    var savedImportRefreshStatusText: String? {
-        if libraryStore.libraryURL == nil {
-            return "请先打开素材库文件夹"
-        }
-        if isSavedImportRefreshing {
-            return savedImportRefreshMessage ?? "正在拉取 IG 和小红书收藏..."
-        }
-        return savedImportRefreshMessage
-    }
-
-    var savedImportRefreshStatusIsError: Bool {
-        libraryStore.libraryURL == nil || savedImportRefreshIsError
-    }
-
-    func pendingImportVideoRow(_ video: PendingImportVideo) -> some View {
-        let tint = video.isSupported
-            ? VideoSourcePlatform.color(for: video.platform)
-            : Color.orange.opacity(0.86)
-
-        return HStack(alignment: .center, spacing: 10) {
-            pendingImportVideoCover(video, tint: tint)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(video.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.88))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Text(pendingImportVideoSubtitle(video))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 4) {
-                Button {
-                    startRemoteImport(video)
-                } label: {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(video.isSupported ? Color.accentColor : .secondary)
-
-                Button {
-                    ignorePendingImportVideo(video)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 9)
-        .background(.white.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.white.opacity(0.07), lineWidth: 1)
-        }
-    }
-
-    func pendingImportVideoCover(_ video: PendingImportVideo, tint: Color) -> some View {
-        ZStack {
-            if let data = video.thumbnailData,
-               let image = NSImage(data: data) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(tint.opacity(0.12))
-
-                Image(systemName: VideoSourcePlatform.iconName(for: video.platform))
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(tint)
-            }
-
-            if video.isMetadataLoading && video.thumbnailData == nil {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.48)
-            }
-        }
-        .frame(width: 54, height: 42)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(alignment: .bottomTrailing) {
-            Image(systemName: VideoSourcePlatform.iconName(for: video.platform))
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.94))
-                .frame(width: 15, height: 15)
-                .background(tint.opacity(0.92))
-                .clipShape(Circle())
-                .padding(4)
-                .opacity(video.thumbnailData == nil ? 0 : 1)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(tint.opacity(video.thumbnailData == nil ? 0.22 : 0.28), lineWidth: 1)
-        }
-    }
-
-    func pendingImportVideoSubtitle(_ video: PendingImportVideo) -> String {
-        guard let authorName = video.authorName,
-              !authorName.isEmpty
-        else { return video.subtitle }
-        return "\(authorName) · \(video.subtitle)"
-    }
-
-    var downloadTimelineSection: some View {
+    var downloadHistorySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("下载队列与记录", systemImage: "arrow.down.circle")
+                Label("下载记录", systemImage: "clock.arrow.circlepath")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(downloadTimelineSummary)
+                Text(downloadHistorySummary)
                     .font(Design.numericCaption())
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
 
-            if downloadTimelineJobs.isEmpty {
+            if importHistoryItems.isEmpty {
                 AppEmptyState(
-                    title: "暂无下载任务",
-                    systemImage: "tray",
+                    title: "暂无下载记录",
+                    systemImage: "clock",
                     style: .compact
                 )
                     .frame(maxWidth: .infinity, minHeight: 220)
+                    .frame(maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(downloadTimelineJobs) { job in
-                            importJobStatus(job)
+                        ForEach(importHistoryItems) { item in
+                            importHistoryListItem(item)
                         }
                     }
                 }
@@ -395,10 +229,145 @@ extension ContentView {
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.borderless)
                     .padding(.top, 2)
+                    .accessibilityLabel("清空已完成下载记录")
+                    .accessibilityIdentifier("import_clear_finished_records_button")
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+}
+
+private struct ImportURLTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> ImportURLTextEditorView {
+        let view = ImportURLTextEditorView()
+        view.textView.delegate = context.coordinator
+        view.configure(text: text, placeholder: placeholder)
+        context.coordinator.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: ImportURLTextEditorView, context: Context) {
+        context.coordinator.text = $text
+        nsView.textView.delegate = context.coordinator
+        nsView.configure(text: text, placeholder: placeholder)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+        weak var view: ImportURLTextEditorView?
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text.wrappedValue = textView.string
+            view?.updatePlaceholderVisibility()
+        }
+    }
+}
+
+private final class ImportURLTextEditorView: NSView {
+    let textView = NSTextView()
+
+    private let scrollView = NSScrollView()
+    private let placeholderView = PassthroughTextView()
+    private let textInset = NSSize(width: 14, height: 12)
+    private let editorFont = NSFont.systemFont(ofSize: 13, weight: .regular)
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScroller?.controlSize = .small
+
+        configureTextView(textView, isPlaceholder: false)
+        scrollView.documentView = textView
+        addSubview(scrollView)
+
+        configureTextView(placeholderView, isPlaceholder: true)
+        addSubview(placeholderView)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        scrollView.frame = bounds
+        placeholderView.frame = bounds
+        textView.textContainer?.containerSize = NSSize(width: max(0, bounds.width), height: CGFloat.greatestFiniteMagnitude)
+        placeholderView.textContainer?.containerSize = NSSize(width: max(0, bounds.width), height: CGFloat.greatestFiniteMagnitude)
+    }
+
+    func configure(text: String, placeholder: String) {
+        if textView.string != text {
+            textView.string = text
+        }
+        if placeholderView.string != placeholder {
+            placeholderView.string = placeholder
+        }
+        configureTextView(textView, isPlaceholder: false)
+        configureTextView(placeholderView, isPlaceholder: true)
+        updatePlaceholderVisibility()
+    }
+
+    func updatePlaceholderVisibility() {
+        placeholderView.isHidden = !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func configureTextView(_ textView: NSTextView, isPlaceholder: Bool) {
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.drawsBackground = false
+        textView.backgroundColor = .clear
+        textView.font = editorFont
+        textView.textContainerInset = textInset
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        if isPlaceholder {
+            textView.isEditable = false
+            textView.isSelectable = false
+            textView.textColor = NSColor.tertiaryLabelColor
+            textView.insertionPointColor = .clear
+        } else {
+            textView.isEditable = true
+            textView.isSelectable = true
+            textView.allowsUndo = true
+            textView.textColor = .labelColor
+            textView.insertionPointColor = .labelColor
+        }
+    }
+}
+
+private final class PassthroughTextView: NSTextView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
 }

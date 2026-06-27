@@ -36,6 +36,7 @@ extension ContentView {
                 }
                 .shadow(color: .black.opacity(0.38), radius: 28, y: 18)
                 .zIndex(1)
+                .accessibilityLabel("导入面板")
         }
         .frame(width: containerSize.width, height: containerSize.height)
         .zIndex(20)

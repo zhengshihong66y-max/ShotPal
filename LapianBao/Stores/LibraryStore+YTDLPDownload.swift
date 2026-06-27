@@ -80,13 +80,10 @@ extension LibraryStore {
                 arguments += ["--ffmpeg-location", ffmpegDirectoryPath]
             }
             arguments += ytdlpFormatSelectionArguments()
-            arguments += extraArguments
             if isBilibiliURL(sourceURL) {
-                arguments += [
-                    "--referer", "https://www.bilibili.com/",
-                    "--extractor-args", "bilibili:prefer_multi_flv=False"
-                ]
+                arguments += ytdlpBilibiliHTTPHeaderArguments()
             }
+            arguments += extraArguments
             arguments += [
                 "--paths", destinationDirectory.path,
                 "-o", outputTemplate,
@@ -309,6 +306,9 @@ extension LibraryStore {
         ]
         arguments += ytdlpProbeNetworkArguments(isYouTube: isYouTubeURL(downloaderSourceURL))
         arguments += ytdlpFormatSelectionArguments()
+        if isBilibiliURL(sourceURL) {
+            arguments += ytdlpBilibiliHTTPHeaderArguments()
+        }
         arguments += extraArguments
         arguments += [
             downloaderSourceURL.absoluteString
@@ -364,90 +364,68 @@ extension LibraryStore {
         var arguments: [String]
     }
 
-    nonisolated static func ytdlpAccountCookieAttempts() -> [YTDLPArgumentAttempt] {
-        guard let arguments = cachedAccountCookieYTDLPArguments() else { return [] }
-        return [YTDLPArgumentAttempt(label: "拉片宝登录态", arguments: arguments)]
-    }
-
     nonisolated static func ytdlpArgumentAttempts(for sourceURL: URL) -> [YTDLPArgumentAttempt] {
         if isYouTubeURL(sourceURL) {
             return ytdlpYouTubeArgumentAttempts()
         }
         if isInstagramURL(sourceURL) {
-            let accountCookieAttempts = ytdlpAccountCookieAttempts()
-            let browserCookieAttempts = ytdlpBrowserCookieAttempts()
             var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
-            attempts += accountCookieAttempts
-            attempts += browserCookieAttempts
             for proxyURL in currentYTDLPProxyURLs() {
                 let proxyArguments = ["--proxy", proxyURL]
                 let label = ytdlpProxyAttemptLabel(for: proxyURL)
                 attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
-                for cookieAttempt in accountCookieAttempts {
-                    attempts.append(YTDLPArgumentAttempt(
-                        label: "\(label) + \(cookieAttempt.label)",
-                        arguments: proxyArguments + cookieAttempt.arguments
-                    ))
-                }
-                for cookieAttempt in browserCookieAttempts {
-                    attempts.append(YTDLPArgumentAttempt(
-                        label: "\(label) + \(cookieAttempt.label)",
-                        arguments: proxyArguments + cookieAttempt.arguments
-                    ))
-                }
             }
             return uniqueYTDLPArgumentAttempts(attempts)
+        }
+        if isBilibiliURL(sourceURL) {
+            return ytdlpBilibiliArgumentAttempts()
         }
         return [YTDLPArgumentAttempt(arguments: [])]
     }
 
+    nonisolated static func ytdlpBilibiliHTTPHeaderArguments() -> [String] {
+        [
+            "--referer", "https://www.bilibili.com/",
+            "--add-header", "Origin:https://www.bilibili.com"
+        ]
+    }
+
+    nonisolated static func ytdlpBilibiliArgumentAttempts() -> [YTDLPArgumentAttempt] {
+        let dashArguments = ["--extractor-args", "bilibili:prefer_multi_flv=False"]
+        let multiFLVArguments = ["--extractor-args", "bilibili:prefer_multi_flv=True"]
+        var attempts = [
+            YTDLPArgumentAttempt(label: "Bilibili DASH", arguments: dashArguments),
+            YTDLPArgumentAttempt(label: "Bilibili 单文件 MP4", arguments: dashArguments + ["-f", "b[ext=mp4]/b"]),
+            YTDLPArgumentAttempt(label: "Bilibili 兼容格式", arguments: dashArguments + ["-f", "b"]),
+            YTDLPArgumentAttempt(label: "Bilibili multi-FLV", arguments: multiFLVArguments + ["-f", "b"])
+        ]
+
+        for proxyURL in currentYTDLPProxyURLs() {
+            let proxyArguments = ["--proxy", proxyURL]
+            let label = ytdlpProxyAttemptLabel(for: proxyURL)
+            attempts.append(YTDLPArgumentAttempt(label: "\(label) Bilibili DASH", arguments: proxyArguments + dashArguments))
+            attempts.append(YTDLPArgumentAttempt(label: "\(label) Bilibili 兼容格式", arguments: proxyArguments + dashArguments + ["-f", "b"]))
+        }
+        return uniqueYTDLPArgumentAttempts(attempts)
+    }
+
     nonisolated static func ytdlpYouTubeArgumentAttempts() -> [YTDLPArgumentAttempt] {
-        let accountCookieAttempts = ytdlpAccountCookieAttempts()
-        let browserCookieAttempts = ytdlpBrowserCookieAttempts()
         let clientArguments = ytdlpYouTubeClientArguments()
         var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
-        attempts += accountCookieAttempts
-        attempts += browserCookieAttempts
 
         for proxyURL in currentYTDLPProxyURLs() {
             let proxyArguments = ["--proxy", proxyURL]
             let label = ytdlpProxyAttemptLabel(for: proxyURL)
             attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
-            for cookieAttempt in accountCookieAttempts {
-                attempts.append(YTDLPArgumentAttempt(
-                    label: "\(label) + \(cookieAttempt.label)",
-                    arguments: proxyArguments + cookieAttempt.arguments
-                ))
-            }
-            for cookieAttempt in browserCookieAttempts {
-                attempts.append(YTDLPArgumentAttempt(
-                    label: "\(label) + \(cookieAttempt.label)",
-                    arguments: proxyArguments + cookieAttempt.arguments
-                ))
-            }
             attempts.append(YTDLPArgumentAttempt(label: "\(label)备用客户端", arguments: proxyArguments + clientArguments))
         }
 
         attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
-        for cookieAttempt in accountCookieAttempts {
-            attempts.append(YTDLPArgumentAttempt(
-                label: "\(cookieAttempt.label) + 备用客户端",
-                arguments: cookieAttempt.arguments + clientArguments
-            ))
-        }
-        for cookieAttempt in browserCookieAttempts {
-            attempts.append(YTDLPArgumentAttempt(
-                label: "\(cookieAttempt.label) + 备用客户端",
-                arguments: cookieAttempt.arguments + clientArguments
-            ))
-        }
         attempts.append(YTDLPArgumentAttempt(label: "远程组件", arguments: ["--remote-components", "ejs:github"] + clientArguments))
         return uniqueYTDLPArgumentAttempts(attempts)
     }
 
     nonisolated static func ytdlpYouTubeSelfCheckArgumentAttempts() -> [YTDLPArgumentAttempt] {
-        let accountCookieAttempts = Array(ytdlpAccountCookieAttempts().prefix(1))
-        let browserCookieAttempts = Array(ytdlpBrowserCookieAttempts().prefix(1))
         let proxyURLs = currentYTDLPProxyURLs()
         let clientArguments = ytdlpYouTubeClientArguments()
         var attempts: [YTDLPArgumentAttempt] = []
@@ -455,71 +433,14 @@ extension LibraryStore {
         if let proxyURL = proxyURLs.first {
             let proxyArguments = ["--proxy", proxyURL]
             let proxyLabel = ytdlpProxyAttemptLabel(for: proxyURL)
-            for cookieAttempt in accountCookieAttempts {
-                attempts.append(YTDLPArgumentAttempt(
-                    label: "\(proxyLabel) + \(cookieAttempt.label)",
-                    arguments: proxyArguments + cookieAttempt.arguments
-                ))
-            }
-            for cookieAttempt in browserCookieAttempts {
-                attempts.append(YTDLPArgumentAttempt(
-                    label: "\(proxyLabel) + \(cookieAttempt.label)",
-                    arguments: proxyArguments + cookieAttempt.arguments
-                ))
-            }
             attempts.append(YTDLPArgumentAttempt(label: proxyLabel, arguments: proxyArguments))
             attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel)备用客户端", arguments: proxyArguments + clientArguments))
         } else {
-            attempts += accountCookieAttempts
-            attempts += browserCookieAttempts
             attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
         }
 
         attempts.append(YTDLPArgumentAttempt(label: "本地解析", arguments: []))
         return Array(uniqueYTDLPArgumentAttempts(attempts).prefix(4))
-    }
-
-    nonisolated static func ytdlpBrowserCookieAttempts() -> [YTDLPArgumentAttempt] {
-        let homeURL = FileManager.default.homeDirectoryForCurrentUser
-        let candidates = browserCookieCandidates()
-        var attempts = candidates.compactMap { candidate -> YTDLPArgumentAttempt? in
-            if let relativeProfilePath = ytdlpBrowserProfileRelativePath(for: candidate.browserName) {
-                let path = homeURL.appendingPathComponent(relativeProfilePath).path
-                guard FileManager.default.fileExists(atPath: path) else { return nil }
-            }
-            return YTDLPArgumentAttempt(
-                label: "\(candidate.label) Cookie",
-                arguments: ["--cookies-from-browser", candidate.browserName]
-            )
-        }
-        if attempts.isEmpty, let candidate = candidates.first {
-            attempts.append(YTDLPArgumentAttempt(
-                label: "\(candidate.label) Cookie",
-                arguments: ["--cookies-from-browser", candidate.browserName]
-            ))
-        }
-        return attempts
-    }
-
-    nonisolated static func ytdlpBrowserProfileRelativePath(for browserName: String) -> String? {
-        switch browserName {
-        case "safari":
-            return "Library/Containers/com.apple.Safari/Data/Library/Cookies"
-        case "chrome":
-            return "Library/Application Support/Google/Chrome"
-        case "edge":
-            return "Library/Application Support/Microsoft Edge"
-        case "brave":
-            return "Library/Application Support/BraveSoftware/Brave-Browser"
-        case "firefox":
-            return "Library/Application Support/Firefox"
-        case "chromium":
-            return "Library/Application Support/Chromium"
-        case "vivaldi":
-            return "Library/Application Support/Vivaldi"
-        default:
-            return nil
-        }
     }
 
     nonisolated static func uniqueYTDLPArgumentAttempts(_ attempts: [YTDLPArgumentAttempt]) -> [YTDLPArgumentAttempt] {
@@ -737,19 +658,27 @@ extension LibraryStore {
         fallback: String = "yt-dlp 下载失败"
     ) -> String {
         let concise = conciseYTDLPError(message, fallback: fallback)
+        if isBilibiliURL(sourceURL), isBilibiliPreconditionFailure(concise) {
+            return "Bilibili 返回 412 风控：已使用公开 Origin/Referer 请求头，仍失败时请确认链接可公开访问、代理出口稳定，或稍后重试。"
+        }
+
         guard isYouTubeURL(sourceURL),
               isYouTubeBotVerificationFailure(concise)
         else { return concise }
 
-        return "YouTube 要求登录验证：请先在拉片宝设置里登录对应账号后重试。若仍失败，可以回退到 Chrome、Edge、Brave 或 Firefox 的登录态，或配置可用代理。"
+        return "YouTube 要求登录验证：当前版本不读取浏览器账号登录态，请换公开链接、配置可用代理或稍后重试。"
     }
 
     nonisolated static func isYouTubeBotVerificationFailure(_ message: String) -> Bool {
         let lowercased = message.lowercased()
         return lowercased.contains("sign in to confirm")
             && lowercased.contains("not a bot")
-            || lowercased.contains("use --cookies-from-browser")
-            && lowercased.contains("youtube")
+    }
+
+    nonisolated static func isBilibiliPreconditionFailure(_ message: String) -> Bool {
+        let lowercased = message.lowercased()
+        return lowercased.contains("http error 412")
+            || lowercased.contains("precondition failed")
     }
 
     nonisolated static func isYouTubeURL(_ url: URL) -> Bool {
@@ -792,6 +721,11 @@ extension LibraryStore {
     }
 
     nonisolated static func ytdlpRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
+        if isBilibiliURL(sourceURL),
+           let metadata = await ytdlpPrintedRemoteImportCandidateMetadata(for: sourceURL) {
+            return metadata
+        }
+
         guard let ytdlp = localYTDLPURL() else {
             return RemoteImportCandidateMetadata()
         }
@@ -830,6 +764,100 @@ extension LibraryStore {
         )
     }
 
+    nonisolated static func ytdlpPrintedRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata? {
+        guard let ytdlp = localYTDLPURL() else { return nil }
+
+        return await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = ytdlp
+            process.environment = downloaderProcessEnvironment()
+            let downloaderSourceURL = ytdlpSourceURL(for: sourceURL)
+            var arguments = ytdlpPlaylistSelectionArguments(for: sourceURL) + [
+                "--skip-download",
+                "--no-warnings",
+                "--print", "title",
+                "--print", "uploader",
+                "--print", "thumbnail",
+            ]
+            arguments += ytdlpProbeNetworkArguments(isYouTube: isYouTubeURL(downloaderSourceURL))
+            if isBilibiliURL(sourceURL) {
+                arguments += ytdlpBilibiliHTTPHeaderArguments()
+            }
+            arguments += ytdlpArgumentAttempts(for: sourceURL).first?.arguments ?? []
+            arguments += [
+                downloaderSourceURL.absoluteString
+            ]
+            process.arguments = arguments
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            let outputCollector = PipeDataCollector()
+            let errorCollector = PipeDataCollector()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                outputCollector.append(handle.availableData)
+            }
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                errorCollector.append(handle.availableData)
+            }
+
+            do {
+                try process.run()
+            } catch {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                return nil
+            }
+
+            let semaphore = DispatchSemaphore(value: 0)
+            DispatchQueue.global(qos: .utility).async {
+                process.waitUntilExit()
+                semaphore.signal()
+            }
+
+            if semaphore.wait(timeout: .now() + 20) == .timedOut {
+                if process.isRunning {
+                    process.terminate()
+                }
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                return nil
+            }
+
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            guard process.terminationStatus == 0 else { return nil }
+
+            let lines = (String(data: outputCollector.data, encoding: .utf8) ?? "")
+                .split(whereSeparator: \.isNewline)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .map { $0 == "NA" ? "" : $0 }
+            let title = screenedSourceTitle(
+                rawTitle: lines.indices.contains(0) ? lines[0] : nil,
+                description: nil,
+                sourceURL: sourceURL
+            )
+            let authorName = normalizedSourceAuthorName(lines.indices.contains(1) ? lines[1] : "")
+
+            let thumbnailData: Data?
+            if lines.indices.contains(2),
+               let thumbnailURL = URL(string: lines[2]) {
+                thumbnailData = await fetchRemoteImageData(from: thumbnailURL)
+            } else {
+                thumbnailData = nil
+            }
+
+            return RemoteImportCandidateMetadata(
+                title: title,
+                authorName: authorName,
+                thumbnailData: thumbnailData
+            )
+        }.value
+    }
+
     nonisolated static func xiaohongshuRemoteImportCandidateMetadataIfNeeded(
         for sourceURL: URL
     ) async -> RemoteImportCandidateMetadata? {
@@ -851,6 +879,9 @@ extension LibraryStore {
                 "--no-warnings",
             ]
             arguments += ytdlpProbeNetworkArguments(isYouTube: isYouTubeURL(downloaderSourceURL))
+            if isBilibiliURL(sourceURL) {
+                arguments += ytdlpBilibiliHTTPHeaderArguments()
+            }
             arguments += ytdlpArgumentAttempts(for: sourceURL).first?.arguments ?? []
             arguments += [
                 downloaderSourceURL.absoluteString

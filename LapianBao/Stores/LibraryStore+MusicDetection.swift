@@ -501,7 +501,24 @@ extension LibraryStore {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard !lines.isEmpty else { return fallback }
-        return lines.suffix(6).joined(separator: "\n")
+
+        let meaningfulLines = lines.filter { !isIgnorableYTDLPDiagnosticLine($0) }
+        let candidates = meaningfulLines.isEmpty ? lines : meaningfulLines
+        if let errorIndex = candidates.firstIndex(where: { $0.localizedCaseInsensitiveContains("ERROR:") }) {
+            return candidates[errorIndex...].prefix(6).joined(separator: "\n")
+        }
+        return candidates.suffix(6).joined(separator: "\n")
+    }
+
+    nonisolated static func isIgnorableYTDLPDiagnosticLine(_ line: String) -> Bool {
+        let lowercased = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lowercased.hasPrefix("warning:")
+            || lowercased.hasPrefix("[download]")
+            || lowercased.hasPrefix("[info]")
+            || lowercased.hasPrefix("[debug]")
+            || lowercased.contains("has already been downloaded")
+            || lowercased.contains("destination:")
+            || lowercased.contains("merging formats")
     }
 
     // MARK: – Music detection helpers

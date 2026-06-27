@@ -108,6 +108,19 @@ extension PreviewPanelView {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(0.88))
+        .accessibilityLabel(help)
+        .accessibilityIdentifier(previewExportButtonIdentifier(for: help))
+    }
+
+    func previewExportButtonIdentifier(for help: String) -> String {
+        switch help {
+        case "打开导出区":
+            return "preview_export_panel_open_button"
+        case "关闭导出区":
+            return "preview_export_panel_close_button"
+        default:
+            return "preview_export_panel_action_button"
+        }
     }
 
     var exportFilterPicker: some View {
@@ -122,6 +135,8 @@ extension PreviewPanelView {
                     exportFilterButtonLabel(for: filter)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("显示\(filter.rawValue)导出项")
+                .accessibilityIdentifier("export_filter_\(exportFilterAccessibilityKey(filter))_button")
             }
         }
         .padding(3)
@@ -148,6 +163,19 @@ extension PreviewPanelView {
         .background(isSelected ? Color.white.opacity(0.14) : Color.clear)
         .clipShape(Capsule())
         .contentShape(Capsule())
+    }
+
+    func exportFilterAccessibilityKey(_ filter: ExportPanelFilter) -> String {
+        switch filter {
+        case .recent:
+            return "recent"
+        case .images:
+            return "images"
+        case .audio:
+            return "audio"
+        case .music:
+            return "music"
+        }
     }
 
     func exportFilterRunningProgress(for filter: ExportPanelFilter) -> (progress: Double, percentText: String?)? {
@@ -371,9 +399,12 @@ extension PreviewPanelView {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("跳到这张画面")
+            .accessibilityIdentifier("export_frame_row_\(frame.id.uuidString)")
 
             exportItemActionColumn(
                 showInFinderURL: libraryStore.imageExportURL(for: frame),
+                accessibilityIdentifierPrefix: "export_frame_\(frame.id.uuidString)",
                 jumpHelp: "跳到这张画面",
                 deleteHelp: "删除这张画面",
                 onJump: {
@@ -663,9 +694,12 @@ extension PreviewPanelView {
                 toggleExportAudioClipPlayback(clip)
             }
             .itemProviderDrag(audioClipDragProvider(for: clip))
+            .accessibilityLabel(isPlaying ? "暂停导出声音片段" : "播放导出声音片段")
+            .accessibilityIdentifier("export_audio_row_\(clip.id.uuidString)")
 
             exportItemActionColumn(
                 showInFinderURL: libraryStore.audioClipFileURL(for: clip),
+                accessibilityIdentifierPrefix: "export_audio_\(clip.id.uuidString)",
                 jumpHelp: "回到原视频位置",
                 deleteHelp: "删除声音片段",
                 onJump: {
@@ -820,9 +854,12 @@ extension PreviewPanelView {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("跳到字幕起点")
+            .accessibilityIdentifier("export_transcript_row_\(export.id.uuidString)")
 
             exportItemActionColumn(
                 showInFinderURL: transcriptExportFileURL(for: export),
+                accessibilityIdentifierPrefix: "export_transcript_\(export.id.uuidString)",
                 jumpHelp: "跳到字幕起点",
                 deleteHelp: "删除字幕条目",
                 onJump: {
@@ -873,6 +910,8 @@ extension PreviewPanelView {
         }
         .buttonStyle(.plain)
         .disabled(!FileManager.default.fileExists(atPath: clip.videoPath))
+        .accessibilityLabel(isPlaying ? "暂停导出声音片段" : "播放导出声音片段")
+        .accessibilityIdentifier("export_audio_play_button_\(clip.id.uuidString)")
     }
 
     func jumpToExportLocation(path: String, time: Double) {
@@ -894,6 +933,7 @@ extension PreviewPanelView {
     func exportItemActionColumn(
         showInFinderURL: URL?,
         showInFinderHelp: String = "在访达显示",
+        accessibilityIdentifierPrefix: String,
         jumpHelp: String,
         deleteHelp: String,
         onJump: @escaping () -> Void,
@@ -915,16 +955,22 @@ extension PreviewPanelView {
             }
             .buttonStyle(.plain)
             .disabled(showInFinderURL == nil)
+            .accessibilityLabel(showInFinderHelp)
+            .accessibilityIdentifier("\(accessibilityIdentifierPrefix)_show_in_finder_button")
 
             Button(action: onJump) {
                 exportItemActionIcon("arrowshape.turn.up.left", tint: .white.opacity(0.70), size: buttonSize)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(jumpHelp)
+            .accessibilityIdentifier("\(accessibilityIdentifierPrefix)_jump_button")
 
             Button(role: .destructive, action: onDelete) {
                 exportItemActionIcon("trash", tint: .white.opacity(0.70), size: buttonSize)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(deleteHelp)
+            .accessibilityIdentifier("\(accessibilityIdentifierPrefix)_delete_button")
         }
         .frame(width: buttonSize)
         .frame(height: Self.exportRowContentHeight, alignment: .center)

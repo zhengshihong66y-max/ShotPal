@@ -14,13 +14,6 @@ import UniformTypeIdentifiers
 
 extension ContentView {
     func closeImportPanel() {
-        savedImportRefreshTask?.cancel()
-        savedImportRefreshTask = nil
-        savedImportRefreshID = nil
-        savedImportMetadataTask?.cancel()
-        savedImportMetadataTask = nil
-        savedImportMetadataID = nil
-        isSavedImportRefreshing = false
         withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
             isImportSheetPresented = false
         }
@@ -37,259 +30,6 @@ extension ContentView {
         let remainingURLs = LibraryStore.remoteImportURLs(from: importURLText)
             .filter { !importedIDs.contains(importCandidateID(for: $0)) }
         importURLText = remainingURLs.joined(separator: "\n")
-    }
-
-    func startAllSavedImportCandidates() {
-        guard !isSavedImportSerialRunning else { return }
-        let videos = pendingImportVideos
-        guard !videos.isEmpty else { return }
-
-        libraryStore.saveInstagramImportEndpoint(importEndpointText)
-        let rawText = videos.map(\.urlString).joined(separator: "\n")
-        removeSavedImportCandidates(videos)
-        isSavedImportSerialRunning = true
-        savedImportRefreshIsError = false
-        savedImportRefreshMessage = "已将 \(videos.count) 个收藏视频加入下载队列，正在排队下载..."
-        savedImportSerialTask?.cancel()
-        savedImportSerialTask = Task { @MainActor in
-            defer {
-                isSavedImportSerialRunning = false
-                savedImportSerialTask = nil
-            }
-            await libraryStore.importRemoteVideosSerially(from: rawText)
-            guard !Task.isCancelled else { return }
-            savedImportRefreshIsError = false
-            savedImportRefreshMessage = "全部下载任务已处理完成"
-        }
-    }
-
-    func startRemoteImport(_ pendingVideo: PendingImportVideo) {
-        libraryStore.saveInstagramImportEndpoint(importEndpointText)
-        libraryStore.importRemoteVideos(from: pendingVideo.urlString)
-        removePendingImportVideo(pendingVideo)
-    }
-
-    func removePendingImportVideo(_ pendingVideo: PendingImportVideo) {
-        removeSavedImportCandidates([pendingVideo])
-    }
-
-    func ignorePendingImportVideo(_ pendingVideo: PendingImportVideo) {
-        if let sourceURL = URL(string: pendingVideo.urlString) {
-            libraryStore.recordSavedImportStatus(sourceURL: sourceURL, status: "ignored")
-        }
-        removePendingImportVideo(pendingVideo)
-    }
-
-    func removeSavedImportCandidates(_ videos: [PendingImportVideo]) {
-        let removedIDs = Set(videos.map(\.id))
-        savedImportCandidates.removeAll { removedIDs.contains($0.id) }
-    }
-
-    func savedImportFetchOutcome(
-        suppressMissingXiaohongshuVideos: Bool = false,
-        _ body: () async throws -> InstagramSavedImportResult
-    ) async -> (result: InstagramSavedImportResult?, errorMessage: String?) {
-        do {
-            return (try await body(), nil)
-        } catch InstagramSavedImportError.noXiaohongshuVideoLinks where suppressMissingXiaohongshuVideos {
-            return (nil, nil)
-        } catch {
-            return (nil, error.localizedDescription)
-        }
-    }
-
-    func refreshSavedImportCandidatesIfNeeded(force: Bool = false) {
-        guard force || savedImportCandidates.isEmpty || savedImportRefreshMessage == nil else { return }
-        refreshSavedImportCandidates()
-    }
-
-    func prewarmSavedImportCandidatesIfPossible() {
-        guard libraryStore.libraryURL != nil else { return }
-        guard !isSavedImportRefreshing else { return }
-        guard savedImportCandidates.isEmpty else { return }
-        guard savedImportRefreshMessage == nil else { return }
-        refreshSavedImportCandidates()
-    }
-
-    func refreshSavedImportCandidates(restartExisting: Bool = false) {
-        if isSavedImportRefreshing {
-            guard restartExisting else { return }
-            savedImportRefreshTask?.cancel()
-        }
-
-        guard libraryStore.libraryURL != nil else {
-            savedImportRefreshTask = nil
-            savedImportRefreshID = nil
-            isSavedImportRefreshing = false
-            savedImportRefreshIsError = true
-            savedImportRefreshMessage = "请先打开一个素材库文件夹，再刷新收藏"
-            return
-        }
-
-        savedImportRefreshTask?.cancel()
-        savedImportMetadataTask?.cancel()
-        savedImportMetadataTask = nil
-        savedImportMetadataID = nil
-        let refreshID = UUID()
-        savedImportRefreshID = refreshID
-        isSavedImportRefreshing = true
-        savedImportRefreshIsError = false
-        savedImportRefreshMessage = "正在拉取 IG 和小红书收藏..."
-
-        savedImportRefreshTask = Task { @MainActor in
-            defer {
-                if savedImportRefreshID == refreshID {
-                    isSavedImportRefreshing = false
-                    savedImportRefreshTask = nil
-                    savedImportRefreshID = nil
-                }
-            }
-
-            var links: [String] = []
-            var metadataByLink: [String: SavedImportCandidateMetadata] = [:]
-            var summaries: [String] = []
-            var errors: [String] = []
-
-            async let instagramOutcome = savedImportFetchOutcome {
-                try await libraryStore.latestInstagramSavedImportCandidatesFromChrome()
-            }
-            async let xiaohongshuOutcome = savedImportFetchOutcome(suppressMissingXiaohongshuVideos: true) {
-                try await libraryStore.latestXiaohongshuSavedVideoImportCandidatesFromChrome(limit: 50)
-            }
-
-            let (instagramResult, xiaohongshuResult) = await (instagramOutcome, xiaohongshuOutcome)
-
-            if let result = instagramResult.result {
-                links.append(contentsOf: result.queuedLinks)
-                metadataByLink.merge(result.queuedMetadataByLink) { current, fallback in
-                    current.merging(fallback)
-                }
-                summaries.append("IG \(result.queuedCount)")
-            } else if let errorMessage = instagramResult.errorMessage {
-                errors.append("IG：\(errorMessage)")
-            }
-
-            guard !Task.isCancelled, savedImportRefreshID == refreshID else { return }
-
-            if let result = xiaohongshuResult.result {
-                links.append(contentsOf: result.queuedLinks)
-                metadataByLink.merge(result.queuedMetadataByLink) { current, fallback in
-                    current.merging(fallback)
-                }
-                summaries.append("小红书 \(result.queuedCount)")
-            } else if let errorMessage = xiaohongshuResult.errorMessage {
-                errors.append("小红书：\(errorMessage)")
-            }
-
-            guard !Task.isCancelled, savedImportRefreshID == refreshID else { return }
-
-            let alreadyAddedIDs = queuedOrImportedImportCandidateIDs
-            let candidates = importVideos(from: links, metadataByLink: metadataByLink)
-                .filter { !alreadyAddedIDs.contains($0.id) }
-                .filter { !libraryStore.savedImportCandidateIsIgnored(sourceURLString: $0.urlString) }
-            savedImportCandidates = candidates
-            startSavedImportCandidateMetadataEnrichment(for: candidates)
-            savedImportRefreshIsError = candidates.isEmpty && !errors.isEmpty
-
-            if candidates.isEmpty {
-                savedImportRefreshMessage = errors.isEmpty
-                    ? "IG 和小红书收藏里没有未添加的视频"
-                    : errors.joined(separator: " · ")
-            } else if errors.isEmpty {
-                savedImportRefreshMessage = "\(summaries.joined(separator: " · "))，共 \(candidates.count) 个未添加"
-            } else {
-                savedImportRefreshMessage = "已拉取 \(candidates.count) 个未添加 · \(errors.joined(separator: " · "))"
-            }
-        }
-    }
-
-    func startSavedImportCandidateMetadataEnrichment(for candidates: [PendingImportVideo]) {
-        savedImportMetadataTask?.cancel()
-        let enrichmentCandidates = candidates.filter(savedImportCandidateNeedsEnrichment)
-        guard !enrichmentCandidates.isEmpty else {
-            savedImportMetadataTask = nil
-            savedImportMetadataID = nil
-            return
-        }
-
-        let metadataID = UUID()
-        savedImportMetadataID = metadataID
-
-        savedImportMetadataTask = Task { @MainActor in
-            defer {
-                if savedImportMetadataID == metadataID {
-                    savedImportMetadataTask = nil
-                    savedImportMetadataID = nil
-                }
-            }
-
-            let batches = savedImportMetadataBatches(from: enrichmentCandidates, size: 6)
-            for batch in batches {
-                guard !Task.isCancelled, savedImportMetadataID == metadataID else { return }
-                let updates = await enrichedSavedImportCandidates(batch)
-                guard !Task.isCancelled, savedImportMetadataID == metadataID else { return }
-                for update in updates {
-                    applySavedImportCandidateMetadata(update)
-                }
-            }
-        }
-    }
-
-    func savedImportMetadataBatches(
-        from candidates: [PendingImportVideo],
-        size: Int
-    ) -> [[PendingImportVideo]] {
-        guard size > 0 else { return [candidates] }
-        var batches: [[PendingImportVideo]] = []
-        var index = candidates.startIndex
-        while index < candidates.endIndex {
-            let end = candidates.index(index, offsetBy: size, limitedBy: candidates.endIndex) ?? candidates.endIndex
-            batches.append(Array(candidates[index..<end]))
-            index = end
-        }
-        return batches
-    }
-
-    func enrichedSavedImportCandidates(_ candidates: [PendingImportVideo]) async -> [PendingImportVideo] {
-        await withTaskGroup(of: PendingImportVideo?.self, returning: [PendingImportVideo].self) { group in
-            for candidate in candidates where candidate.isSupported {
-                let thumbnailURLString = cleanedSavedImportMetadataText(candidate.thumbnailURLString)
-                group.addTask {
-                    var updated = candidate
-
-                    if updated.thumbnailData == nil,
-                       let thumbnailURLString,
-                       let thumbnailURL = URL(string: thumbnailURLString) {
-                        updated.thumbnailData = await LibraryStore.fetchRemoteImageData(from: thumbnailURL)
-                    }
-
-                    updated.isMetadataLoading = false
-                    return updated
-                }
-            }
-
-            var updates: [PendingImportVideo] = []
-            for await candidate in group {
-                if let candidate {
-                    updates.append(candidate)
-                }
-            }
-            return updates
-        }
-    }
-
-    func applySavedImportCandidateMetadata(_ updatedCandidate: PendingImportVideo) {
-        guard let index = savedImportCandidates.firstIndex(where: { $0.id == updatedCandidate.id }) else { return }
-        savedImportCandidates[index] = updatedCandidate
-    }
-
-    func savedImportCandidateNeedsEnrichment(_ candidate: PendingImportVideo) -> Bool {
-        guard candidate.isSupported else { return false }
-        if candidate.thumbnailData == nil,
-           cleanedSavedImportMetadataText(candidate.thumbnailURLString) != nil {
-            return true
-        }
-        return false
     }
 
     var detectedImportPlatform: String {
@@ -325,71 +65,26 @@ extension ContentView {
             .filter { !alreadyAddedIDs.contains($0.id) }
     }
 
-    var pendingImportVideos: [PendingImportVideo] {
-        let alreadyAddedIDs = queuedOrImportedImportCandidateIDs
-        var seenIDs = Set<String>()
-
-        return savedImportCandidates.filter { candidate in
-            !alreadyAddedIDs.contains(candidate.id) && seenIDs.insert(candidate.id).inserted
-        }
-    }
-
-    func importVideos(
-        from links: [String],
-        metadataByLink: [String: SavedImportCandidateMetadata] = [:]
-    ) -> [PendingImportVideo] {
-        let metadataByID = savedImportMetadataByCandidateID(from: metadataByLink)
+    func importVideos(from links: [String]) -> [PendingImportVideo] {
         var seenIDs = Set<String>()
         return links.compactMap { link in
-            let id = importCandidateID(for: link)
-            guard let video = importVideoCandidate(from: link, metadata: metadataByID[id]) else { return nil }
+            guard let video = importVideoCandidate(from: link) else { return nil }
             guard seenIDs.insert(video.id).inserted else { return nil }
             return video
         }
     }
 
-    func savedImportMetadataByCandidateID(
-        from metadataByLink: [String: SavedImportCandidateMetadata]
-    ) -> [String: SavedImportCandidateMetadata] {
-        var metadataByID: [String: SavedImportCandidateMetadata] = [:]
-        for (link, metadata) in metadataByLink where metadata.hasAnyValue {
-            let id = importCandidateID(for: link)
-            if let current = metadataByID[id] {
-                metadataByID[id] = current.merging(metadata)
-            } else {
-                metadataByID[id] = metadata
-            }
-        }
-        return metadataByID
-    }
-
-    func importVideoCandidate(
-        from rawURL: String,
-        metadata: SavedImportCandidateMetadata? = nil
-    ) -> PendingImportVideo? {
+    func importVideoCandidate(from rawURL: String) -> PendingImportVideo? {
         guard let url = URL(string: rawURL) else { return nil }
         let platform = LibraryStore.platformName(for: url)
-        let cleanedMetadata = SavedImportCandidateMetadata(
-            title: cleanedSavedImportMetadataText(metadata?.title),
-            authorName: cleanedSavedImportMetadataText(metadata?.authorName),
-            thumbnailURLString: cleanedSavedImportMetadataText(metadata?.thumbnailURLString)
-        )
         return PendingImportVideo(
             id: importCandidateID(for: rawURL),
             urlString: rawURL,
             platform: platform ?? "未知平台",
-            title: cleanedMetadata.title ?? pendingImportTitle(for: url, platform: platform),
+            title: pendingImportTitle(for: url, platform: platform),
             subtitle: pendingImportSubtitle(for: url),
-            authorName: cleanedMetadata.authorName,
-            thumbnailURLString: cleanedMetadata.thumbnailURLString,
-            hasSeededMetadata: cleanedMetadata.hasAnyValue,
             isSupported: platform != nil
         )
-    }
-
-    func cleanedSavedImportMetadataText(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     var queuedOrImportedImportCandidateIDs: Set<String> {
@@ -586,13 +281,40 @@ extension ContentView {
         return "\(finishedImportCount) 已完成"
     }
 
+    var downloadHistorySummary: String {
+        let totalCount = finishedImportCount + failedImportCount
+        guard totalCount > 0 else { return "" }
+        if failedImportCount > 0 {
+            return "\(finishedImportCount) 完成 · \(failedImportCount) 失败"
+        }
+        return "\(finishedImportCount) 条记录"
+    }
+
     var activeImportOverallProgress: Double? {
         guard !activeImportJobs.isEmpty else { return nil }
-        let progressValues = activeImportJobs.compactMap { job in
-            job.downloadProgress.map(normalizedProgressFraction)
+        let progressValues = activeImportJobs.map { job in
+            normalizedImportProgress(for: job)
         }
-        guard progressValues.count == activeImportJobs.count else { return nil }
         return progressValues.reduce(0, +) / Double(progressValues.count)
+    }
+
+    func normalizedImportProgress(for job: RemoteImportJob) -> Double {
+        if let progress = job.downloadProgress {
+            return normalizedProgressFraction(progress)
+        }
+
+        switch job.status {
+        case .idle, .paused, .importing:
+            return 0
+        case .transcoding:
+            return 0.92
+        case .finalizing:
+            return 0.98
+        case .succeeded:
+            return 1
+        case .failed:
+            return 0
+        }
     }
 
     func isActiveImportJob(_ job: RemoteImportJob) -> Bool {
@@ -726,17 +448,26 @@ extension ContentView {
         }
     }
 
-    func importActiveJobStatus(_ job: RemoteImportJob) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            importJobCover(for: job, width: 100, height: 56)
+    func importProgressJobStatus(_ job: RemoteImportJob) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            importJobCover(for: job, width: 54, height: 42)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(importActiveStatusText(for: job))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(height: 18)
+                HStack(spacing: 8) {
+                    Text(importProgressTitleText(for: job))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(job.candidateTitle == nil ? Color.secondary : Color.white.opacity(0.88))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 6)
+
+                    Text(importProgressBadgeText(for: job))
+                        .font(Design.numericCaption(weight: .semibold))
+                        .foregroundStyle(importStatusTint(for: job))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
 
                 Text(job.sourceURL.absoluteString)
                     .font(.caption2)
@@ -744,7 +475,52 @@ extension ContentView {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
+
+                importActiveProgressBar(for: job)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            importJobActions(for: job)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 9)
+        .background(.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.white.opacity(0.07), lineWidth: 1)
+        }
+    }
+
+    func importProgressTitleText(for job: RemoteImportJob) -> String {
+        job.candidateTitle ?? importStatusTitle(for: job)
+    }
+
+    func importProgressBadgeText(for job: RemoteImportJob) -> String {
+        progressPercentText(normalizedImportProgress(for: job))
+    }
+
+    func importActiveJobStatus(_ job: RemoteImportJob) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            importJobCover(for: job, width: 100, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(importActiveTitleText(for: job))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(job.candidateTitle == nil ? Color.secondary : Color.white.opacity(0.88))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(height: 18)
+
+                Text(importActiveSubtitleText(for: job))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
                     .frame(height: 16)
+
+                importActiveProgressBar(for: job)
             }
             .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
 
@@ -760,6 +536,63 @@ extension ContentView {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(.white.opacity(0.07), lineWidth: 1)
         }
+    }
+
+    func importActiveProgressBar(for job: RemoteImportJob) -> some View {
+        let progress = normalizedImportProgress(for: job)
+        let tint = importStatusTint(for: job)
+
+        return GeometryReader { proxy in
+            let width = max(0, proxy.size.width)
+
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(.white.opacity(0.075))
+
+                if progress > 0 {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(tint.opacity(0.90))
+                        .frame(width: max(4, width * CGFloat(progress)))
+                }
+            }
+        }
+        .frame(height: 4)
+        .padding(.top, 5)
+        .accessibilityLabel("下载进度")
+        .accessibilityValue(progressPercentText(progress))
+    }
+
+    func importActiveTitleText(for job: RemoteImportJob) -> String {
+        job.candidateTitle ?? importActiveStatusText(for: job)
+    }
+
+    func importActiveSubtitleText(for job: RemoteImportJob) -> String {
+        guard job.candidateTitle != nil else {
+            return job.sourceURL.absoluteString
+        }
+
+        let detailText = importJobMetadataDetailText(for: job, leadingText: importActiveStatusText(for: job))
+        return detailText.isEmpty ? job.sourceURL.absoluteString : detailText
+    }
+
+    func importHistorySubtitleText(for job: RemoteImportJob) -> String {
+        guard let title = job.candidateTitle, !title.isEmpty else {
+            return job.sourceURL.absoluteString
+        }
+
+        let detailText = importJobMetadataDetailText(for: job, leadingText: nil)
+        return detailText.isEmpty ? title : "\(title) · \(detailText)"
+    }
+
+    func importJobMetadataDetailText(for job: RemoteImportJob, leadingText: String?) -> String {
+        var parts: [String] = []
+        if let leadingText, !leadingText.isEmpty {
+            parts.append(leadingText)
+        }
+        if let authorName = job.candidateAuthorName, !authorName.isEmpty {
+            parts.append(authorName)
+        }
+        return parts.joined(separator: " · ")
     }
 
     func importActiveStatusText(for job: RemoteImportJob) -> String {
@@ -804,7 +637,7 @@ extension ContentView {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                Text(job.sourceURL.absoluteString)
+                Text(importHistorySubtitleText(for: job))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -882,21 +715,21 @@ extension ContentView {
     func importJobActions(for job: RemoteImportJob) -> some View {
         VStack(spacing: 4) {
             if case .paused = job.status {
-                importJobActionButton(icon: "play.fill", help: "继续下载") {
+                importJobActionButton(icon: "play.fill", help: "继续下载", identifier: "import_job_resume_\(job.id.uuidString)") {
                     libraryStore.resumeRemoteImportJob(id: job.id)
                 }
             } else if isActiveImportJob(job) {
-                importJobActionButton(icon: "pause.fill", help: "暂停下载") {
+                importJobActionButton(icon: "pause.fill", help: "暂停下载", identifier: "import_job_pause_\(job.id.uuidString)") {
                     libraryStore.pauseRemoteImportJob(id: job.id)
                 }
             } else if job.outputPath != nil {
-                importJobActionButton(icon: "arrow.turn.up.right", help: "跳转到视频") {
+                importJobActionButton(icon: "arrow.turn.up.right", help: "跳转到视频", identifier: "import_job_jump_\(job.id.uuidString)") {
                     libraryStore.jumpToRemoteImportJob(id: job.id)
                     closeImportPanel()
                 }
             }
 
-            importJobActionButton(icon: "trash", help: "删除条目") {
+            importJobActionButton(icon: "trash", help: "删除条目", identifier: "import_job_delete_\(job.id.uuidString)") {
                 libraryStore.deleteRemoteImportJob(id: job.id)
             }
         }
@@ -921,7 +754,12 @@ extension ContentView {
         }
     }
 
-    func importJobActionButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
+    func importJobActionButton(
+        icon: String,
+        help: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 10.5, weight: .semibold))
@@ -931,6 +769,8 @@ extension ContentView {
                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(help)
+        .accessibilityIdentifier(identifier)
     }
 
     func importStatusTitle(for job: RemoteImportJob) -> String {

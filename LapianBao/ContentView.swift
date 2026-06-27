@@ -35,20 +35,12 @@ struct ContentView: View {
     @State var selectedLibraryPlatforms: Set<String> = []
     @State var selectedLibraryAuthors: Set<String> = []
     @State var isLibrarySidebarFilterAreaPresented = true
-    @State var savedImportCandidates: [PendingImportVideo] = []
-    @State var isSavedImportRefreshing = false
-    @State var savedImportRefreshMessage: String?
-    @State var savedImportRefreshIsError = false
-    @State var savedImportRefreshTask: Task<Void, Never>?
-    @State var savedImportRefreshID: UUID?
-    @State var savedImportMetadataTask: Task<Void, Never>?
-    @State var savedImportMetadataID: UUID?
-    @State var savedImportSerialTask: Task<Void, Never>?
-    @State var isSavedImportSerialRunning = false
     @State var expandedImportBatchIDs: Set<UUID> = []
     @State var observedPasteboardChangeCount = NSPasteboard.general.changeCount
     @State var isImportDropTargeted = false
     @State var isTagFilterMenuPresented = false
+    @State var activeLibraryCardMenuID: String?
+    @State var libraryCardMenuDismissToken = 0
     @State var frameFilterVideoPath: String?
     @State var frameSelectedFrameID: UUID?
     @State var frameBoardMode: FramesBoardMode = .collection
@@ -294,6 +286,8 @@ struct ContentView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("切换到\(workspace.title)")
+        .accessibilityIdentifier("workspace_\(workspace.rawValue)_button")
     }
 
     func mediaPanelDivider(containerWidth: CGFloat) -> some View {
@@ -530,6 +524,8 @@ struct ContentView: View {
                 }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏")
+        .accessibilityIdentifier("sidebar_collapse_button")
     }
 
     @ViewBuilder
@@ -580,6 +576,8 @@ struct ContentView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("切换到\(label)")
+        .accessibilityIdentifier("sidebar_workspace_\(label)_button")
         .padding(.horizontal, isSidebarCollapsed ? 8 : 4)
         .padding(.vertical, isSidebarCollapsed ? 1 : 0)
     }

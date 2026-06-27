@@ -34,6 +34,7 @@ extension LibraryStore {
         var ytdlpFailure: Error?
         var xiaohongshuNativeFailure: Error?
         let ytdlp = usableYTDLPURL()
+        let isBilibiliSource = platform == "Bilibili" || isBilibiliURL(sourceURL)
 
         // Instagram 图文轮播里可能有多段视频：先按轮播顺序打包成一个视频再入库。
         if rawURL == nil, platform == "Instagram",
@@ -129,6 +130,14 @@ extension LibraryStore {
         guard let downloadedURL = rawURL else {
             if isYouTubeURL(sourceURL), let ytdlpFailure {
                 throw ytdlpFailure
+            }
+            if isBilibiliSource {
+                if let ytdlpFailure {
+                    throw ytdlpFailure
+                }
+                if ytdlp == nil {
+                    throw RemoteImportError.downloaderFailed("Bilibili 下载需要 yt-dlp，请先在设置里运行 yt-dlp 自检。")
+                }
             }
             if platform == "小红书", let xiaohongshuNativeFailure {
                 throw xiaohongshuNativeFailure

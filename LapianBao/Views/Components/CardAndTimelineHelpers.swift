@@ -33,22 +33,43 @@ struct CardInlineTagChip: View {
 }
 
 struct FadingVerticalScrollIndicators: NSViewRepresentable {
+    var onScroll: (() -> Void)?
+
     final class Coordinator {
         weak var configuredScrollView: NSScrollView?
+        weak var observedClipView: NSClipView?
+        var boundsObserver: NSObjectProtocol?
+        var onScroll: (() -> Void)?
         var isLookupScheduled = false
+
+        deinit {
+            removeBoundsObserver()
+        }
+
+        func removeBoundsObserver() {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            boundsObserver = nil
+            observedClipView = nil
+        }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        let coordinator = Coordinator()
+        coordinator.onScroll = onScroll
+        return coordinator
     }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
+        context.coordinator.onScroll = onScroll
         Self.configureSoon(from: view, coordinator: context.coordinator)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onScroll = onScroll
         Self.configureSoon(from: nsView, coordinator: context.coordinator)
     }
 
@@ -69,6 +90,7 @@ struct FadingVerticalScrollIndicators: NSViewRepresentable {
     private static func configureIfAvailable(from view: NSView, coordinator: Coordinator) -> Bool {
         if let scrollView = coordinator.configuredScrollView {
             configure(scrollView)
+            updateScrollObserver(for: scrollView, coordinator: coordinator)
             return true
         }
 
@@ -77,6 +99,7 @@ struct FadingVerticalScrollIndicators: NSViewRepresentable {
         }
         coordinator.configuredScrollView = scrollView
         configure(scrollView)
+        updateScrollObserver(for: scrollView, coordinator: coordinator)
         return true
     }
 
@@ -111,13 +134,34 @@ struct FadingVerticalScrollIndicators: NSViewRepresentable {
             scrollView.verticalScroller?.controlSize = .small
         }
     }
+
+    private static func updateScrollObserver(for scrollView: NSScrollView, coordinator: Coordinator) {
+        guard coordinator.onScroll != nil else {
+            coordinator.removeBoundsObserver()
+            return
+        }
+
+        let clipView = scrollView.contentView
+        guard coordinator.observedClipView !== clipView else { return }
+
+        coordinator.removeBoundsObserver()
+        coordinator.observedClipView = clipView
+        clipView.postsBoundsChangedNotifications = true
+        coordinator.boundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { [weak coordinator] _ in
+            coordinator?.onScroll?()
+        }
+    }
 }
 
 extension View {
-    func fadingVerticalScrollIndicators() -> some View {
+    func fadingVerticalScrollIndicators(onScroll: (() -> Void)? = nil) -> some View {
         self
             .scrollIndicators(.automatic)
-            .background(FadingVerticalScrollIndicators())
+            .background(FadingVerticalScrollIndicators(onScroll: onScroll))
     }
 }
 
@@ -899,8 +943,8 @@ struct FrameScrubberView: View {
         ZStack {
             // 播放控制组：ZStack 默认居中 → 播放键始终在正中心
             HStack(spacing: 4) {
-                navButton(icon: "backward.end.fill", help: "上一个场景", action: prevScene)
-                navButton(icon: "gobackward.1",      help: "后退一帧",   action: stepBack)
+                navButton(icon: "backward.end.fill", help: "上一个场景", identifier: "timeline_previous_scene_button", action: prevScene)
+                navButton(icon: "gobackward.1",      help: "后退一帧", identifier: "timeline_step_back_button", action: stepBack)
 
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
@@ -910,9 +954,11 @@ struct FrameScrubberView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isPlaying ? "暂停播放" : "播放")
+                .accessibilityIdentifier("timeline_play_pause_button")
 
-                navButton(icon: "goforward.1",      help: "前进一帧",   action: stepForward)
-                navButton(icon: "forward.end.fill", help: "下一个场景", action: nextScene)
+                navButton(icon: "goforward.1", help: "前进一帧", identifier: "timeline_step_forward_button", action: stepForward)
+                navButton(icon: "forward.end.fill", help: "下一个场景", identifier: "timeline_next_scene_button", action: nextScene)
             }
 
             // 右侧辅助区：timecode + 图标按钮（无文字标签）
@@ -929,12 +975,16 @@ struct FrameScrubberView: View {
                         Image(systemName: "camera.fill")
                             .frame(width: 22, height: 22)
                     }
+                    .accessibilityLabel("截取当前帧")
+                    .accessibilityIdentifier("timeline_capture_frame_button")
                 }
                 if let fn = onAnnotate {
                     Button(action: fn) {
                         Image(systemName: "text.bubble.fill")
                             .frame(width: 22, height: 22)
                     }
+                    .accessibilityLabel("添加批注")
+                    .accessibilityIdentifier("timeline_add_annotation_button")
                 }
             }
             .frame(maxWidth: .infinity)
@@ -944,7 +994,12 @@ struct FrameScrubberView: View {
     }
 
     @ViewBuilder
-    private func navButton(icon: String, help: String, action: (() -> Void)?) -> some View {
+    private func navButton(
+        icon: String,
+        help: String,
+        identifier: String,
+        action: (() -> Void)?
+    ) -> some View {
         Button { action?() } label: {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
@@ -953,6 +1008,8 @@ struct FrameScrubberView: View {
         .buttonStyle(.plain)
         .foregroundStyle(action == nil ? .quaternary : .secondary)
         .disabled(action == nil)
+        .accessibilityLabel(help)
+        .accessibilityIdentifier(identifier)
     }
 
     private func globalProgress(from location: CGPoint, width: CGFloat) -> Double {

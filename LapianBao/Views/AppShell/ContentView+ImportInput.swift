@@ -15,7 +15,6 @@ import UniformTypeIdentifiers
 extension ContentView {
     var importTile: some View {
         Button {
-            libraryStore.prewarmSavedCollectionCookieCache()
             importEndpointText = libraryStore.instagramImportEndpoint
             autoFillClipboardURL()
             withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
@@ -38,6 +37,8 @@ extension ContentView {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("打开导入面板")
+        .accessibilityIdentifier("library_import_tile")
     }
 
     func autoFillClipboardURL() {
@@ -84,7 +85,6 @@ extension ContentView {
         guard !urls.isEmpty else { return }
 
         pasteImportURLs(urls)
-        libraryStore.prewarmSavedCollectionCookieCache()
         importEndpointText = libraryStore.instagramImportEndpoint
         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             isImportSheetPresented = true

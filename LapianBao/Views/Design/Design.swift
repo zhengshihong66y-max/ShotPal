@@ -118,6 +118,8 @@ enum Design {
 
 struct LibraryToolbarSearchField: View {
     let placeholder: String
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
     @Binding var text: String
 
     var body: some View {
@@ -126,7 +128,12 @@ struct LibraryToolbarSearchField: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            ClickActivatedSearchTextField(placeholder: placeholder, text: $text)
+            ClickActivatedSearchTextField(
+                placeholder: placeholder,
+                text: $text,
+                accessibilityLabel: accessibilityLabel,
+                accessibilityIdentifier: accessibilityIdentifier
+            )
         }
         .padding(.horizontal, 9)
         .frame(
@@ -138,20 +145,28 @@ struct LibraryToolbarSearchField: View {
         )
         .background(.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
 struct LibraryToolbar<Actions: View>: View {
     let placeholder: String
+    let searchAccessibilityLabel: String
+    let searchAccessibilityIdentifier: String
     @Binding private var text: String
     private let actions: () -> Actions
 
     init(
         placeholder: String,
         text: Binding<String>,
+        searchAccessibilityLabel: String = "搜索",
+        searchAccessibilityIdentifier: String = "library_toolbar_search_field",
         @ViewBuilder actions: @escaping () -> Actions
     ) {
         self.placeholder = placeholder
+        self.searchAccessibilityLabel = searchAccessibilityLabel
+        self.searchAccessibilityIdentifier = searchAccessibilityIdentifier
         self._text = text
         self.actions = actions
     }
@@ -160,6 +175,8 @@ struct LibraryToolbar<Actions: View>: View {
         HStack(spacing: Design.libraryToolbarButtonGap) {
             LibraryToolbarSearchField(
                 placeholder: placeholder,
+                accessibilityLabel: searchAccessibilityLabel,
+                accessibilityIdentifier: searchAccessibilityIdentifier,
                 text: $text
             )
 
@@ -251,6 +268,8 @@ func libraryToolbarBadge(_ count: Int) -> some View {
 struct ClickActivatedSearchTextField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -270,6 +289,8 @@ struct ClickActivatedSearchTextField: NSViewRepresentable {
         textField.lineBreakMode = .byTruncatingTail
         textField.cell?.usesSingleLineMode = true
         textField.cell?.wraps = false
+        textField.setAccessibilityLabel(accessibilityLabel)
+        textField.setAccessibilityIdentifier(accessibilityIdentifier)
         return textField
     }
 
@@ -279,6 +300,8 @@ struct ClickActivatedSearchTextField: NSViewRepresentable {
             nsView.stringValue = text
         }
         nsView.placeholderString = placeholder
+        nsView.setAccessibilityLabel(accessibilityLabel)
+        nsView.setAccessibilityIdentifier(accessibilityIdentifier)
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {

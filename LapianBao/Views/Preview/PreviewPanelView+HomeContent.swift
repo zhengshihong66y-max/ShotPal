@@ -51,6 +51,8 @@ extension PreviewPanelView {
                         }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("切换到\(tab.rawValue)")
+                .accessibilityIdentifier("preview_tab_\(tabAccessibilityKey(tab))_button")
             }
         }
         .padding(3)
@@ -78,6 +80,28 @@ extension PreviewPanelView {
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(help)
+        .accessibilityIdentifier("timeline_action_\(timelineActionAccessibilityKey(label))_button")
+    }
+
+    func tabAccessibilityKey(_ tab: PreviewTab) -> String {
+        switch tab {
+        case .frames:
+            return "frames"
+        case .audio:
+            return "audio"
+        case .content:
+            return "content"
+        }
+    }
+
+    func timelineActionAccessibilityKey(_ label: String) -> String {
+        label
+            .unicodeScalars
+            .map { scalar -> String in
+                CharacterSet.alphanumerics.contains(scalar) ? String(scalar).lowercased() : "_"
+            }
+            .joined()
     }
 
     // MARK: – Timeline & content areas
@@ -106,8 +130,12 @@ extension PreviewPanelView {
         if activePreviewTab == .audio {
             HStack(spacing: 8) {
                 Button("In") { setAudioInPoint() }
+                    .accessibilityLabel("设置声音入点")
+                    .accessibilityIdentifier("audio_set_in_point_button")
 
                 Button("Out") { setAudioOutPoint() }
+                    .accessibilityLabel("设置声音出点")
+                    .accessibilityIdentifier("audio_set_out_point_button")
 
                 Divider().frame(height: 14)
 
@@ -121,6 +149,8 @@ extension PreviewPanelView {
                 }
                 .buttonStyle(.plain)
                 .disabled(audioInPoint == nil || audioOutPoint == nil || libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
+                .accessibilityLabel("导出声音选区")
+                .accessibilityIdentifier("audio_export_selection_button")
 
                 Spacer()
 
@@ -328,6 +358,7 @@ extension PreviewPanelView {
 
             exportItemActionColumn(
                 showInFinderURL: libraryStore.audioClipFileURL(for: clip),
+                accessibilityIdentifierPrefix: "home_audio_clip_\(clip.id.uuidString)",
                 jumpHelp: "回到原视频位置",
                 deleteHelp: "删除声音片段",
                 onJump: {

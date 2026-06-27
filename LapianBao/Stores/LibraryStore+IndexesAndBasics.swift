@@ -1109,7 +1109,6 @@ extension LibraryStore {
     }
 
     func prepareExternalServiceWork() {
-        prewarmSavedCollectionCookieCache()
     }
 
     func startExternalServiceSelfCheckPreflightIfNeeded() {

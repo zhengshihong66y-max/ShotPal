@@ -18,8 +18,6 @@ nonisolated enum ProjectRepository {
         static let resourceCache = ".lapianbao_resource_cache.json"
         static let musicWorkspaceCache = ".lapianbao_music_workspace_cache.json"
         static let resourceAssetTags = ".lapianbao_asset_tags.json"
-        static let instagramSavedBaseline = ".lapianbao_ig_saved_baseline.json"
-        static let xiaohongshuSavedBaseline = ".lapianbao_xhs_saved_baseline.json"
     }
 
     static func url(in libraryURL: URL, fileName: String) -> URL {
@@ -60,14 +58,6 @@ nonisolated enum ProjectRepository {
 
     static func resourceAssetTagsURL(in libraryURL: URL) -> URL {
         url(in: libraryURL, fileName: FileName.resourceAssetTags)
-    }
-
-    static func instagramSavedBaselineURL(in libraryURL: URL) -> URL {
-        url(in: libraryURL, fileName: FileName.instagramSavedBaseline)
-    }
-
-    static func xiaohongshuSavedBaselineURL(in libraryURL: URL) -> URL {
-        url(in: libraryURL, fileName: FileName.xiaohongshuSavedBaseline)
     }
 
     static func relativePath(for path: String, base libraryURL: URL) -> String {

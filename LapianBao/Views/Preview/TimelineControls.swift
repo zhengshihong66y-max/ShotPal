@@ -383,6 +383,8 @@ struct PreviewPlayerView: View {
                 .stroke(.white.opacity(0.14), lineWidth: 1)
         }
         .contentShape(Rectangle())
+        .accessibilityLabel("播放器画面")
+        .accessibilityIdentifier("preview_player_surface")
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in

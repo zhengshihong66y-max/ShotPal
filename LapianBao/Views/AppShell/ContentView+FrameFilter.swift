@@ -36,7 +36,9 @@ extension ContentView {
                 .padding(.vertical, 2)
                 .padding(.horizontal, Design.libraryContentInset)
             }
-            .fadingVerticalScrollIndicators()
+            .fadingVerticalScrollIndicators(onScroll: {
+                dismissLibraryCardMenusForScroll()
+            })
             .overlay {
                 if videosWithCollectedFrames.isEmpty {
                     AppEmptyState(
@@ -103,6 +105,11 @@ extension ContentView {
                 },
                 onDelete: {
                     libraryStore.removeVideo(video)
+                },
+                menuIdentity: video.url.path,
+                menuDismissToken: libraryCardMenuDismissToken,
+                onMenuPresentationChanged: { identity, isPresented in
+                    handleLibraryCardMenuPresentationChange(identity, isPresented: isPresented)
                 },
                 dragItemProvider: { videoDragItemProvider(for: video) }
             )

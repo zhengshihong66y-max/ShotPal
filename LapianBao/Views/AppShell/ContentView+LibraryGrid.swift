@@ -80,7 +80,9 @@ extension ContentView {
                         .padding(.vertical, 2)
                         .padding(.horizontal, Design.libraryContentInset)
                     }
-                    .fadingVerticalScrollIndicators()
+                    .fadingVerticalScrollIndicators(onScroll: {
+                        dismissLibraryCardMenusForScroll()
+                    })
                 }
             }
         }
@@ -570,6 +572,8 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
+        .accessibilityLabel("打开导入面板")
+        .accessibilityIdentifier("library_import_button")
     }
 
     var libraryFilterVisibilityButton: some View {
@@ -594,6 +598,8 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
+        .accessibilityLabel(isLibrarySidebarFilterAreaPresented ? "隐藏素材筛选" : "显示素材筛选")
+        .accessibilityIdentifier("library_filter_toggle_button")
     }
 
     var tagFilterMenu: some View {
@@ -721,6 +727,8 @@ extension ContentView {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .accessibilityLabel("素材排序菜单")
+        .accessibilityIdentifier("library_sort_menu")
     }
 
 }

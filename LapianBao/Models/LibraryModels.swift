@@ -847,63 +847,6 @@ struct RemoteImportJob: Identifiable, Equatable {
     var downloadSpeed: String? = nil
     var outputPath: String? = nil
     var thumbnailData: Data? = nil
-}
-
-struct SavedImportCandidateMetadata: Equatable, Sendable {
-    var title: String? = nil
-    var authorName: String? = nil
-    var thumbnailURLString: String? = nil
-
-    nonisolated var hasAnyValue: Bool {
-        title?.isEmpty == false
-            || authorName?.isEmpty == false
-            || thumbnailURLString?.isEmpty == false
-    }
-
-    nonisolated func merging(_ fallback: SavedImportCandidateMetadata?) -> SavedImportCandidateMetadata {
-        guard let fallback else { return self }
-        return SavedImportCandidateMetadata(
-            title: title ?? fallback.title,
-            authorName: authorName ?? fallback.authorName,
-            thumbnailURLString: thumbnailURLString ?? fallback.thumbnailURLString
-        )
-    }
-}
-
-struct SavedImportCandidate: Equatable, Sendable {
-    var urlString: String
-    var metadata: SavedImportCandidateMetadata? = nil
-}
-
-struct InstagramSavedImportResult: Equatable, Sendable {
-    var foundCount: Int
-    var skippedCount: Int
-    var queuedCount: Int
-    var queuedLinks: [String]
-    var queuedMetadataByLink: [String: SavedImportCandidateMetadata] = [:]
-    var scannedPageCount: Int = 1
-    var stoppedAtKnownBaseline: Bool = false
-}
-
-enum InstagramSavedImportError: LocalizedError {
-    case noLibrary
-    case noLinks
-    case noXiaohongshuVideoLinks
-    case chromeCookieUnavailable(String)
-    case timedOut
-
-    var errorDescription: String? {
-        switch self {
-        case .noLibrary:
-            return "请先打开一个素材库文件夹"
-        case .noLinks:
-            return "没有读到 Instagram 收藏链接，请先在拉片宝设置里登录 Instagram，并确认收藏页可访问"
-        case .noXiaohongshuVideoLinks:
-            return "没有读到小红书收藏视频，请先在拉片宝设置里登录小红书，并确认收藏页里有视频笔记"
-        case .chromeCookieUnavailable(let message):
-            return message
-        case .timedOut:
-            return "读取收藏页超时"
-        }
-    }
+    var candidateTitle: String? = nil
+    var candidateAuthorName: String? = nil
 }

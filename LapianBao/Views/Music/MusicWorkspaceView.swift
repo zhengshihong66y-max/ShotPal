@@ -306,6 +306,8 @@ struct MusicWorkspaceView: View {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
+        .accessibilityLabel(viewModel.isMusicTagFilterBarPresented ? "隐藏音乐标签筛选" : "显示音乐标签筛选")
+        .accessibilityIdentifier("music_tag_filter_toggle_button")
     }
 
     private var musicSortMenu: some View {
@@ -339,6 +341,8 @@ struct MusicWorkspaceView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .accessibilityLabel("音乐排序菜单")
+        .accessibilityIdentifier("music_sort_menu")
     }
 
     private func musicQuickFilterArea(

@@ -144,6 +144,8 @@ extension PreviewPanelView {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .accessibilityLabel("导出字幕")
+        .accessibilityIdentifier("transcript_export_button")
     }
 
     func storyboardExportButtonTitle(for video: VideoItem) -> String {

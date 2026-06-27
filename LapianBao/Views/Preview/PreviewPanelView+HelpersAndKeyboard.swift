@@ -12,6 +12,8 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+private let sceneCutActivationBoundaryTolerance: Double = 0.02
+
 extension PreviewPanelView {
     // MARK: – Helper views / computed properties
 
@@ -51,7 +53,7 @@ extension PreviewPanelView {
 
     func activeSceneItemID(for video: VideoItem) -> String? {
         guard let cuts = libraryStore.sceneCutsByVideoPath[video.url.path], !cuts.isEmpty else { return nil }
-        let target = controller.elapsed
+        let target = controller.elapsed + sceneCutActivationBoundaryTolerance
         var lower = 0
         var upper = cuts.count
         while lower < upper {

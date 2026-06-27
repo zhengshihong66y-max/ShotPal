@@ -127,7 +127,7 @@ struct ScenePanelView: View, Equatable {
                                         activePlayback: activePlayback(for: item),
                                         onTap: {
                                             selectedItemID = item.id
-                                            controller.seekToSeconds(item.time)
+                                            controller.seekToSeconds(sceneGridSeekTime(for: item), snapToFrame: false)
                                         },
                                         tags: item.sample?.tags ?? [],
                                         suggestedTags: libraryStore.allFrameTags,
@@ -193,6 +193,8 @@ struct ScenePanelView: View, Equatable {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .accessibilityLabel(storyboardButtonTitle)
+        .accessibilityIdentifier("scene_storyboard_mode_button")
     }
 
     private var storyboardExportButton: some View {
@@ -210,6 +212,8 @@ struct ScenePanelView: View, Equatable {
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .accessibilityLabel(storyboardExportTitle)
+        .accessibilityIdentifier("scene_storyboard_export_button")
     }
 
     private var storyboardButtonTitle: String {
@@ -471,6 +475,23 @@ struct ScenePanelView: View, Equatable {
                 fallbackImage: item.thumbnailImage
             )
         }
+    }
+
+    private func sceneGridSeekTime(for item: SceneGridItem) -> Double {
+        guard item.cut != nil else { return item.time }
+
+        let start = max(0, item.time)
+        guard start > 0 else { return 0 }
+
+        let end = sceneEndTime(for: item)
+        guard end > start else { return start }
+
+        let frameStep = 1 / max(controller.frameRate, 1)
+        let nudge = min(max(frameStep, 0.02), 0.05)
+        let upperBound = max(start, min(end - 0.001, controller.duration))
+        guard upperBound > start else { return start }
+
+        return min(upperBound, start + nudge)
     }
 
     private func sceneDurationLabel(for item: SceneGridItem) -> String {

@@ -710,6 +710,12 @@ def require_initial_music_cache_prewarm_guardrails(sources: dict[str, str]) -> N
 
 def require_video_tag_popover_spacing_guardrails(sources: dict[str, str]) -> None:
     video_tile = sources.get("LapianBao/Views/Library/LibraryVideoTile.swift", "")
+    content_view = sources.get("LapianBao/ContentView.swift", "")
+    library_grid = sources.get("LapianBao/Views/AppShell/ContentView+LibraryGrid.swift", "")
+    video_tiles = sources.get("LapianBao/Views/AppShell/ContentView+VideoTiles.swift", "")
+    frame_filter = sources.get("LapianBao/Views/AppShell/ContentView+FrameFilter.swift", "")
+    card_helpers = sources.get("LapianBao/Views/Components/CardAndTimelineHelpers.swift", "")
+    agents = read("AGENTS.md")
     more_popover = section_between(
         video_tile,
         "private var morePopover: some View",
@@ -722,6 +728,25 @@ def require_video_tag_popover_spacing_guardrails(sources: dict[str, str]) -> Non
         and ".padding(.top, tagVerticalInset)" in more_popover
         and ".padding(.bottom, tagVerticalInset)" in more_popover,
         "Video tag popover must keep the input-to-tags and tags-to-divider vertical spacing equal.",
+    )
+    require(
+        "var onScroll: (() -> Void)?" in card_helpers
+        and "NSView.boundsDidChangeNotification" in card_helpers
+        and "coordinator?.onScroll?()" in card_helpers
+        and "@State var activeLibraryCardMenuID: String?" in content_view
+        and "@State var libraryCardMenuDismissToken = 0" in content_view
+        and "func dismissLibraryCardMenusForScroll()" in video_tiles
+        and "guard activeLibraryCardMenuID != nil else { return }" in video_tiles
+        and "libraryCardMenuDismissToken += 1" in video_tiles
+        and "menuIdentity: video.url.path" in video_tiles
+        and "menuDismissToken: libraryCardMenuDismissToken" in video_tiles
+        and "onMenuPresentationChanged" in video_tile
+        and ".onChange(of: menuDismissToken)" in video_tile
+        and "dismissTransientMenus()" in video_tile
+        and ".fadingVerticalScrollIndicators(onScroll: {" in library_grid
+        and ".fadingVerticalScrollIndicators(onScroll: {" in frame_filter
+        and "视频卡片标签小菜单和平台小菜单不能跟随视频网格上下滚动" in agents,
+        "Library video card tag/source popovers must dismiss on grid scroll instead of following the scrolling card anchor.",
     )
 
     timeline = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineLayout.swift", "")
@@ -1260,103 +1285,43 @@ def require_frame_detail_playback_guardrails(sources: dict[str, str]) -> None:
     )
 
 
-def require_bilibili_official_display_name_guardrails(sources: dict[str, str]) -> None:
-    display_sources = {
-        "LapianBao/LibraryStore.swift": sources.get("LapianBao/LibraryStore.swift", ""),
-        "LapianBao/Views/Settings/SettingsWorkspaceView.swift": sources.get(
-            "LapianBao/Views/Settings/SettingsWorkspaceView.swift",
-            "",
-        ),
-    }
-    offenders = [
-        relative
-        for relative, text in display_sources.items()
-        if "B站已登录" in text or "B站未登录" in text
+def require_account_login_and_saved_import_removed_guardrails(sources: dict[str, str]) -> None:
+    combined = "\n".join(
+        text
+        for relative, text in sources.items()
+        if relative.startswith("LapianBao/") or relative.startswith("README")
+    )
+    removed_files = [
+        "LapianBao/Stores/LibraryStore+AccountCookies.swift",
+        "LapianBao/Stores/LibraryStore+BrowserCookies.swift",
+        "LapianBao/Stores/LibraryStore+SavedImportBaselines.swift",
     ]
     require(
-        not offenders
-        and all("Bilibili 已登录" in text and "Bilibili 未登录" in text for text in display_sources.values()),
-        f"Account login UI must use the official Bilibili display name: {', '.join(offenders)}.",
+        all(path not in sources for path in removed_files),
+        "Account cookie and saved-import baseline source files must stay removed.",
     )
+    forbidden_tokens = [
+        "withExportedAccountCookies",
+        "withExportedChromeCookies",
+        "AccountCookieSummary",
+        "AccountLoginTarget",
+        "prewarmSavedCollectionCookieCache",
+        "latestInstagramSavedImportCandidatesFromChrome",
+        "latestXiaohongshuSavedVideoImportCandidatesFromChrome",
+        "fetchLatestInstagramSaved",
+        "fetchLatestXiaohongshuSaved",
+        "SavedImportCandidate",
+        "InstagramSavedImport",
+        "ChromeCookieFileCache",
+        "cachedOrExportedChromeCookieURL",
+        "browserCookieCandidates",
+        "--cookies-from-browser",
+    ]
+    offenders = [token for token in forbidden_tokens if token in combined]
     require(
-        all("Instagram 已登录" in text and "Instagram 未登录" in text for text in display_sources.values())
-        and all("IG 已登录" not in text and "IG 未登录" not in text for text in display_sources.values()),
-        "Account login UI must use the full Instagram display name instead of IG.",
-    )
-
-
-def require_account_cookie_detection_guardrails(sources: dict[str, str]) -> None:
-    account_cookies = sources.get("LapianBao/Stores/LibraryStore+AccountCookies.swift", "")
-    instagram_auth_names = section_between(
-        account_cookies,
-        "nonisolated private static let instagramAuthenticatedCookieNames",
-        "nonisolated private static let xiaohongshuAuthenticatedCookieNames",
-    )
-    xiaohongshu_auth_names = section_between(
-        account_cookies,
-        "nonisolated private static let xiaohongshuAuthenticatedCookieNames",
-        "nonisolated private static let youtubeAuthenticatedCookieNames",
-    )
-    youtube_auth_names = section_between(
-        account_cookies,
-        "nonisolated private static let youtubeAuthenticatedCookieNames",
-        "nonisolated private static let bilibiliAuthenticatedCookieNames",
-    )
-    bilibili_auth_names = section_between(
-        account_cookies,
-        "nonisolated private static let bilibiliAuthenticatedCookieNames",
-        "nonisolated private static let douyinAuthenticatedCookieNames",
-    )
-    douyin_auth_names = section_between(
-        account_cookies,
-        "nonisolated private static let douyinAuthenticatedCookieNames",
-        "nonisolated private static func hasNonEmptyCookieValue",
-    )
-    require(
-        '"sessionid"' in instagram_auth_names
-        and '"ds_user_id"' not in instagram_auth_names,
-        "Instagram login detection must require a real session cookie, not a user-id hint cookie.",
-    )
-    require(
-        '"web_session"' in xiaohongshu_auth_names
-        and '"webId"' not in xiaohongshu_auth_names,
-        "Xiaohongshu login detection must require web_session and must not treat webId as authenticated.",
-    )
-    require(
-        '"SID"' in youtube_auth_names
-        and '"__Secure-1PSID"' in youtube_auth_names
-        and '"LOGIN_INFO"' not in youtube_auth_names,
-        "YouTube login detection must require strong Google session cookies and must not treat LOGIN_INFO as authenticated.",
-    )
-    require(
-        '"SESSDATA"' in bilibili_auth_names
-        and '"DedeUserID"' not in bilibili_auth_names
-        and '"bili_jct"' not in bilibili_auth_names,
-        "Bilibili login detection must require SESSDATA and must not treat user-id or CSRF cookies as authenticated.",
-    )
-    require(
-        '"sessionid"' in douyin_auth_names
-        and '"sid_guard"' in douyin_auth_names
-        and '"s_v_web_id"' not in douyin_auth_names
-        and '"passport_csrf_token"' not in douyin_auth_names
-        and '"LOGIN_STATUS"' not in douyin_auth_names,
-        "Douyin login detection must not treat visitor or CSRF cookies as authenticated sessions.",
-    )
-    require(
-        "nonisolated private static func isAuthenticatedCookie(" in account_cookies
-        and "hasNonEmptyCookieValue(value)" in account_cookies
-        and "isAuthenticatedInstagramCookie(name: $0.name, value: $0.value)" in account_cookies
-        and "isAuthenticatedXiaohongshuCookie(name: $0.name, value: $0.value)" in account_cookies
-        and "isAuthenticatedYouTubeCookie(name: $0.name, value: $0.value)" in account_cookies
-        and "isAuthenticatedBilibiliCookie(name: $0.name, value: $0.value)" in account_cookies
-        and "isAuthenticatedDouyinCookie(name: $0.name, value: $0.value)" in account_cookies
-        and "let value = columns[6]" in account_cookies
-        and "isAuthenticatedInstagramCookie(name: name, value: value)" in account_cookies
-        and "isAuthenticatedXiaohongshuCookie(name: name, value: value)" in account_cookies
-        and "isAuthenticatedYouTubeCookie(name: name, value: value)" in account_cookies
-        and "isAuthenticatedBilibiliCookie(name: name, value: value)" in account_cookies
-        and "isAuthenticatedDouyinCookie(name: name, value: value)" in account_cookies,
-        "Account status must require strong non-empty session cookies for both WebKit and Netscape cookie sources.",
+        not offenders,
+        "Account login, browser-cookie, and saved-collection import code must stay removed: "
+        + ", ".join(offenders),
     )
 
 
@@ -1492,6 +1457,17 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
         "Expanded frame timeline progress must update only the active tile overlay at 60fps instead of rebuilding the scene grid.",
     )
     require(
+        "controller.seekToSeconds(sceneGridSeekTime(for: item), snapToFrame: false)" in scene_panel
+        and "private func sceneGridSeekTime(for item: SceneGridItem) -> Double" in scene_panel
+        and "let frameStep = 1 / max(controller.frameRate, 1)" in scene_panel
+        and "let nudge = min(max(frameStep, 0.02), 0.05)" in scene_panel
+        and "sceneCutActivationBoundaryTolerance" in helpers
+        and "let target = controller.elapsed + sceneCutActivationBoundaryTolerance" in helpers
+        and "分镜网格点击场景卡片时不能直接 seek 到剪辑点边界" in agents
+        and "`activeSceneItemID` 也要保留剪辑点边界容差" in agents,
+        "Scene grid tile clicks must seek just inside the selected segment and keep active-tile boundary tolerance.",
+    )
+    require(
         "主页画面时间线的默认缩放由场景数量决定" in agents
         and "不要依赖当前激活的是不是画面 tab" in agents
         and "不要再套第二层进度插值" in agents,
@@ -1550,11 +1526,6 @@ def require_no_app_tooltips_guardrails(sources: dict[str, str]) -> None:
 
 def require_settings_row_description_guardrails(sources: dict[str, str]) -> None:
     settings = sources.get("LapianBao/Views/Settings/SettingsWorkspaceView.swift", "")
-    account_column = section_between(
-        settings,
-        "private func accountLoginInfoColumn() -> some View",
-        "private func accountLoginStatusLink",
-    )
     downloader_card = section_between(
         settings,
         "private func downloaderSelfCheckCard() -> some View",
@@ -1568,16 +1539,8 @@ def require_settings_row_description_guardrails(sources: dict[str, str]) -> None
     require(
         "private static let rowTextSpacing: CGFloat = 4" in settings
         and "private static let rowDescriptionColor = Color.white.opacity(0.58)" in settings
-        and settings.count("VStack(alignment: .leading, spacing: Self.rowTextSpacing)") >= 2,
+        and settings.count("VStack(alignment: .leading, spacing: Self.rowTextSpacing)") >= 1,
         "Settings rows with title, note, and status must use fixed spacing and a shared gray description color.",
-    )
-    require(
-        "仅用于下载授权，不读取账号密码。" in account_column
-        and ".foregroundStyle(Self.rowDescriptionColor)" in account_column
-        and "let isLoggedIn = target.isLoggedIn(summary)" in settings
-        and "let color: Color = isLoggedIn ? .green : Color.yellow.opacity(0.92)" in settings
-        and "Spacer(minLength: 0)" not in account_column,
-        "Account login settings row must show the concise authorization note in gray, logged-in statuses in green, and logged-out statuses in yellow.",
     )
     require(
         'description: "使用开源下载工具，请保证网络环境。"' in downloader_card
@@ -1586,7 +1549,6 @@ def require_settings_row_description_guardrails(sources: dict[str, str]) -> None
         and "detailColor: downloaderSelfCheckDetailColor(for: report)" in downloader_card
         and "private func downloaderSelfCheckDetailColor(for report: DownloaderSelfCheckReport) -> Color" in settings
         and "report.status == .succeeded ? .green : Color.yellow.opacity(0.92)" in settings
-        and "Text(target.statusText(in: summary))" in settings
         and "Spacer(minLength: 0)" not in compact_info_column,
         "Downloader self-check settings row must show the concise network note in gray and version row as green on success or yellow otherwise.",
     )
@@ -1695,46 +1657,30 @@ def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None
         "func importActiveJobStatus",
         "func importActiveStatusText",
     )
+    active_progress_bar = section_between(
+        import_jobs,
+        "func importActiveProgressBar",
+        "func importActiveStatusText",
+    )
     require(
-        "importStatusDetail" not in active_status
-        and ".frame(height: 8)" not in active_status,
-        "Active import job cards must not render a separate progress bar below the status text.",
+        "importActiveProgressBar(for: job)" in active_status
+        and "func importActiveProgressBar(for job: RemoteImportJob) -> some View" in import_jobs
+        and ".frame(height: 4)" in active_progress_bar
+        and "RoundedRectangle(cornerRadius: 2" in active_progress_bar
+        and "accessibilityLabel(\"下载进度\")" in active_progress_bar,
+        "Active import job cards must render a visible compact progress bar below the source URL.",
     )
     require(
         "func importStatusDetail" not in import_jobs
         and "func importLinearProgress" not in import_jobs
         and "func importIndeterminateProgress" not in import_jobs
         and "ProgressView(value: normalizedProgressFraction(progress))" not in import_jobs,
-        "Import job progress must be represented by status percentage text, not a linear progress bar.",
+        "Import job progress must use the custom compact active progress bar instead of a system ProgressView.",
     )
     require(
         "importStatusProgressText(for: job)" in import_jobs
         and "progressPercentText(progress)" in import_jobs,
         "Import job status text must keep showing the numeric percentage when progress is known.",
-    )
-
-
-def require_saved_import_status_text_guardrails(sources: dict[str, str]) -> None:
-    import_jobs = sources.get("LapianBao/Views/AppShell/ContentView+ImportJobs.swift", "")
-    fetch_outcome = section_between(
-        import_jobs,
-        "func savedImportFetchOutcome",
-        "func refreshSavedImportCandidatesIfNeeded",
-    )
-    refresh_section = section_between(
-        import_jobs,
-        "func refreshSavedImportCandidates(restartExisting: Bool = false)",
-        "func startSavedImportCandidateMetadataEnrichment",
-    )
-    require(
-        "suppressMissingXiaohongshuVideos" in fetch_outcome
-        and "InstagramSavedImportError.noXiaohongshuVideoLinks" in fetch_outcome
-        and "return (nil, nil)" in fetch_outcome,
-        "Missing Xiaohongshu saved videos must be treated as an empty optional source, not as a visible status error.",
-    )
-    require(
-        "savedImportFetchOutcome(suppressMissingXiaohongshuVideos: true)" in refresh_section,
-        "Xiaohongshu saved import refresh must suppress the non-blocking no-video message.",
     )
 
 
@@ -1889,8 +1835,7 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
     require_frame_tag_popover_spacing_guardrails(sources)
     require_frame_tag_filter_edit_guardrails(sources)
     require_frame_detail_playback_guardrails(sources)
-    require_bilibili_official_display_name_guardrails(sources)
-    require_account_cookie_detection_guardrails(sources)
+    require_account_login_and_saved_import_removed_guardrails(sources)
     require_annotation_editor_guardrails(sources)
     require_preview_timeline_playback_viewport_guardrails(sources)
     require_no_app_tooltips_guardrails(sources)
@@ -1898,7 +1843,6 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
     require_music_preview_playback_guardrails(sources)
     require_recognized_library_restore_guardrails(sources)
     require_import_job_progress_text_guardrails(sources)
-    require_saved_import_status_text_guardrails(sources)
     require_regex_allowlist(
         sources,
         r"NotificationCenter\.default",
@@ -1906,6 +1850,7 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
             "LapianBao/AppChrome.swift",
             "LapianBao/AppEventBus.swift",
             "LapianBao/PreviewController.swift",
+            "LapianBao/Views/Components/CardAndTimelineHelpers.swift",
             "LapianBao/Views/Music/AudioMusicComponents.swift",
             "LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift",
         },
@@ -1938,7 +1883,12 @@ def main() -> None:
     preview_controller = app_swift
     content_view = app_swift
     launch_imports = swift_sources.get("LapianBao/Stores/LibraryStore+LaunchAndRemoteImports.swift", "")
+    remote_download = swift_sources.get("LapianBao/Stores/LibraryStore+RemoteDownload.swift", "")
+    remote_download_types = swift_sources.get("LapianBao/Stores/LibraryStore+RemoteDownloadTypes.swift", "")
+    ytdlp_download = swift_sources.get("LapianBao/Stores/LibraryStore+YTDLPDownload.swift", "")
+    music_detection = swift_sources.get("LapianBao/Stores/LibraryStore+MusicDetection.swift", "")
     xiaohongshu_download = swift_sources.get("LapianBao/Stores/LibraryStore+XiaohongshuDownload.swift", "")
+    requirements_music = read("Tools/requirements-music.txt")
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
 
     require(
@@ -1952,6 +1902,10 @@ def main() -> None:
         and "StartupDiagnostics.mark(.didFinishLaunching)" in app_swift
         and "StartupDiagnostics.mark(.mainWindowOrderedFront)" in app_swift,
         "Startup diagnostics must mark pre-main, AppDelegate, and window-ordering stages.",
+    )
+    require(
+        'audioop-lts==0.2.2; python_version >= "3.13"' in requirements_music,
+        "Music recognition requirements must only install audioop-lts on Python 3.13+, because bundled Python 3.11 still has audioop.",
     )
     launch_restore_section = section_between(
         launch_imports,
@@ -2077,67 +2031,50 @@ def main() -> None:
         "Frame export must use async CGImage generation instead of deprecated copyCGImage(at:actualTime:).",
     )
     for helper in [
-        "withExportedChromeCookies",
         "runCurlFetch",
-        "InstagramSavedFeedResponse",
-        "instagramVideoLinks",
-        "xiaohongshuVideoLinks",
-        "xiaohongshuSavedVideoLinks",
-        "xiaohongshuLoggedInProfileURLString",
         "isTerminalRemoteImportStatus",
         "remoteImportJobCanReceiveWorkerProgress",
-        "ChromeCookieFileCache",
-        "prewarmChromeCookieCache",
-        "cachedOrExportedChromeCookieURL",
         "instagramBundledImportURL",
         "downloadInstagramCarouselBundleIfNeeded",
         "concatenateVideosWithFFmpeg",
     ]:
         require(
             helper in library_store,
-            f"Chrome/curl saved-collection fallback helper is missing: {helper}.",
+            f"Remote import helper is missing: {helper}.",
         )
     require(
-        "chromeCookieFileCache.validCookieURL()" in library_store
-        and "chromeCookieFileCache.finishRefresh(with: cookieURL)" in library_store,
-        "Chrome cookies must be cached so saved-collection sync does not export cookies on every click.",
+        "cookieFileURL: URL? = nil" in launch_imports
+        and '--cookie", cookieFileURL.path' in launch_imports
+        and "cookieFileURL:" not in xiaohongshu_download,
+        "Plain Xiaohongshu page fetch must not pass account cookies.",
     )
     require(
-        "libraryStore.prewarmSavedCollectionCookieCache()" in content_view,
-        "Opening the import panel must prewarm Chrome cookies for saved-collection sync.",
+        "func ytdlpBilibiliArgumentAttempts()" in ytdlp_download
+        and "bilibili:prefer_multi_flv=False" in ytdlp_download
+        and "bilibili:prefer_multi_flv=True" in ytdlp_download
+        and "ytdlpBilibiliHTTPHeaderArguments()" in ytdlp_download
+        and '"--add-header", "Origin:https://www.bilibili.com"' in ytdlp_download
+        and ytdlp_download.count("arguments += ytdlpBilibiliHTTPHeaderArguments()") >= 3
+        and "ytdlpPrintedRemoteImportCandidateMetadata(for:" in ytdlp_download
+        and '"--print", "title"' in ytdlp_download
+        and '"--print", "uploader"' in ytdlp_download
+        and '"--print", "thumbnail"' in ytdlp_download
+        and "candidateTitle" in launch_imports
+        and "candidateAuthorName" in launch_imports
+        and "candidateSummary" not in library_store
+        and "importActiveTitleText(for:" in content_view
+        and "importActiveSubtitleText(for:" in content_view
+        and '["-f", "b"]' in ytdlp_download
+        and "isIgnorableYTDLPDiagnosticLine" in music_detection
+        and 'hasPrefix("warning:")' in music_detection
+        and 'let isBilibiliSource = platform == "Bilibili" || isBilibiliURL(sourceURL)' in remote_download
+        and "if isBilibiliSource {" in remote_download
+        and "if let ytdlpFailure" in remote_download,
+        "Bilibili import must send the current Origin header, try multiple yt-dlp modes, and surface the real yt-dlp failure instead of a generic all-methods error or yt-dlp warning.",
     )
     require(
-        "libraryStore.prewarmSavedCollectionCookieCache()" in app_swift,
-        "App launch must prewarm Chrome cookies before the user clicks saved-collection sync.",
-    )
-    xiaohongshu_saved_scan = section_between(
-        launch_imports,
-        "nonisolated static func fetchLatestXiaohongshuSavedVideoScanFromChromeCookies",
-        "nonisolated static func platformName",
-    )
-    require(
-        "xiaohongshuSavedCollectionURLString" not in app_swift
-        and "https://www.xiaohongshu.com/explore" not in xiaohongshu_saved_scan,
-        "Xiaohongshu saved sync must not treat the Explore discovery page as the saved collection source.",
-    )
-    require(
-        "let profileURLString = try xiaohongshuLoggedInProfileURLString(cookieURL: cookieURL)" in xiaohongshu_saved_scan
-        and "Self.xiaohongshuSavedVideoLinks(fromProfileHTML: html, limit: limit)" in xiaohongshu_saved_scan
-        and "Self.xiaohongshuVideoLinks(fromSavedHTML: html, limit: limit)" not in xiaohongshu_saved_scan,
-        "Xiaohongshu saved sync must resolve the logged-in profile and parse only the saved notes slot.",
-    )
-    xiaohongshu_token_lookup = section_between(
-        xiaohongshu_download,
-        "nonisolated static func xiaohongshuTokenizedCollectionURL",
-        "nonisolated static func xiaohongshuLoggedInProfileURLString",
-    )
-    require(
-        "xiaohongshuLoggedInProfileURLString(cookieURL: cookieURL)" in xiaohongshu_token_lookup
-        and "xiaohongshuSavedVideoLinks(fromProfileHTML: html, limit: 50)" in xiaohongshu_token_lookup,
-        "Xiaohongshu token lookup must use the logged-in profile saved notes rather than discovery feed links.",
-    )
-    require(
-        'links.append("https://www.instagram.com/p/\\(parentCode)/")' in library_store
+        "instagramBundledImportURL(for: sourceURL)" in library_store
+        and "instagramBaseContentURL(from: url)?.absoluteString" in library_store
         and 'return "\\(content.type):\\(content.shortcode)"' in library_store,
         "Instagram carousel imports must queue and de-dupe by base post so carousel videos can be bundled.",
     )
@@ -2211,16 +2148,6 @@ def main() -> None:
         )
 
     for start, end, name in [
-        (
-            "func latestInstagramSavedImportCandidatesFromChrome",
-            "func latestXiaohongshuSavedVideoImportCandidatesFromChrome",
-            "Instagram saved candidate scan",
-        ),
-        (
-            "func latestXiaohongshuSavedVideoImportCandidatesFromChrome",
-            "func recordInstagramSavedSyncSnapshot",
-            "Xiaohongshu saved candidate scan",
-        ),
         (
             "func enqueueRemoteImport",
             "func updateRemoteImportJob",

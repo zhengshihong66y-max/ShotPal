@@ -66,6 +66,9 @@ struct LibraryVideoTile: View, Equatable {
     let onRemoveTag: (String) -> Void
     let onSetSourcePlatform: (String) -> Void
     let onDelete: () -> Void
+    let menuIdentity: String
+    let menuDismissToken: Int
+    let onMenuPresentationChanged: (String, Bool) -> Void
     let dragItemProvider: (() -> NSItemProvider)?
 
     @State private var isHovered = false
@@ -85,12 +88,15 @@ struct LibraryVideoTile: View, Equatable {
             && lhs.tags == rhs.tags
             && lhs.suggestedTags == rhs.suggestedTags
             && lhs.isSelected == rhs.isSelected
+            && lhs.menuDismissToken == rhs.menuDismissToken
             && sameImage(lhs.thumbnailImage, rhs.thumbnailImage)
             // Action closures are intentionally not compared.
     }
 
     var body: some View {
         tileSurface
+        .accessibilityLabel("视频：\(displayName)")
+        .accessibilityIdentifier("library_video_tile_\(accessibilityVideoKey)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             onSelect()
@@ -104,6 +110,18 @@ struct LibraryVideoTile: View, Equatable {
         }
         .onHover { hovering in
             isHovered = hovering
+        }
+        .onChange(of: isMorePresented) { _, _ in
+            notifyMenuPresentation()
+        }
+        .onChange(of: isSourcePlatformMenuPresented) { _, _ in
+            notifyMenuPresentation()
+        }
+        .onChange(of: menuDismissToken) { _, _ in
+            dismissTransientMenus()
+        }
+        .onDisappear {
+            onMenuPresentationChanged(menuIdentity, false)
         }
         .itemProviderDrag(dragItemProvider)
     }
@@ -220,6 +238,7 @@ struct LibraryVideoTile: View, Equatable {
         let platform = sourcePlatform ?? VideoSourcePlatform.other.rawValue
 
         return Button {
+            isMorePresented = false
             isSourcePlatformMenuPresented.toggle()
         } label: {
             SourcePlatformIconBadge(platform: platform)
@@ -233,6 +252,8 @@ struct LibraryVideoTile: View, Equatable {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("设置视频平台：\(platform)")
+        .accessibilityIdentifier("library_video_platform_button_\(accessibilityVideoKey)")
         .popover(isPresented: $isSourcePlatformMenuPresented, arrowEdge: .bottom) {
             sourcePlatformMenu
                 .transaction { $0.animation = nil }
@@ -261,12 +282,15 @@ struct LibraryVideoTile: View, Equatable {
 
     private var moreButton: some View {
         Button {
+            isSourcePlatformMenuPresented = false
             isMorePresented.toggle()
         } label: {
             CardOverlayMoreIcon(shadowOpacity: 0.5, shadowRadius: 2)
         }
         .buttonStyle(.plain)
         .frame(width: CardOverlayMoreIcon.size, height: CardOverlayMoreIcon.size)
+        .accessibilityLabel("打开视频操作菜单")
+        .accessibilityIdentifier("library_video_more_button_\(accessibilityVideoKey)")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
             morePopover
                 .transaction { $0.animation = nil }
@@ -308,6 +332,8 @@ struct LibraryVideoTile: View, Equatable {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("在访达中显示视频")
+                .accessibilityIdentifier("library_video_show_in_finder_button_\(accessibilityVideoKey)")
 
                 Button(role: .destructive) {
                     isMorePresented = false
@@ -321,14 +347,40 @@ struct LibraryVideoTile: View, Equatable {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)
+                .accessibilityLabel("删除视频")
+                .accessibilityIdentifier("library_video_delete_button_\(accessibilityVideoKey)")
             }
             .padding(.vertical, 6)
         }
         .frame(minWidth: 220)
     }
 
+    private var accessibilityVideoKey: String {
+        stableHexKey(for: video.url.path)
+    }
+
+    private func stableHexKey(for string: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
+    }
+
     private var sourcePlatformChoices: [VideoSourcePlatform] {
         VideoSourcePlatform.allCases.filter { $0 != .other }
+    }
+
+    private func notifyMenuPresentation() {
+        onMenuPresentationChanged(menuIdentity, isMorePresented || isSourcePlatformMenuPresented)
+    }
+
+    private func dismissTransientMenus() {
+        guard isMorePresented || isSourcePlatformMenuPresented else { return }
+        isMorePresented = false
+        isSourcePlatformMenuPresented = false
+        onMenuPresentationChanged(menuIdentity, false)
     }
 
     private static func sameImage(_ lhs: NSImage?, _ rhs: NSImage?) -> Bool {
@@ -376,6 +428,25 @@ private struct SourcePlatformMenuRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("选择平台：\(platform.rawValue)")
+        .accessibilityIdentifier("source_platform_\(platformAccessibilityKey)_button")
+    }
+
+    private var platformAccessibilityKey: String {
+        switch platform {
+        case .instagram:
+            return "instagram"
+        case .youtube:
+            return "youtube"
+        case .xiaohongshu:
+            return "xiaohongshu"
+        case .bilibili:
+            return "bilibili"
+        case .douyin:
+            return "douyin"
+        case .other:
+            return "other"
+        }
     }
 }
 

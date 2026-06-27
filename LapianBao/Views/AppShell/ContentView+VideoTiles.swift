@@ -41,12 +41,31 @@ extension ContentView {
             onDelete: {
                 libraryStore.removeVideo(video)
             },
+            menuIdentity: video.url.path,
+            menuDismissToken: libraryCardMenuDismissToken,
+            onMenuPresentationChanged: { identity, isPresented in
+                handleLibraryCardMenuPresentationChange(identity, isPresented: isPresented)
+            },
             dragItemProvider: { videoDragItemProvider(for: video) }
         )
         .equatable()
         .onAppear {
             libraryStore.queueMetadataLoadIfNeeded(for: video, allowThumbnailGeneration: true)
         }
+    }
+
+    func handleLibraryCardMenuPresentationChange(_ identity: String, isPresented: Bool) {
+        if isPresented {
+            activeLibraryCardMenuID = identity
+        } else if activeLibraryCardMenuID == identity {
+            activeLibraryCardMenuID = nil
+        }
+    }
+
+    func dismissLibraryCardMenusForScroll() {
+        guard activeLibraryCardMenuID != nil else { return }
+        activeLibraryCardMenuID = nil
+        libraryCardMenuDismissToken += 1
     }
 
     func thumbnailImage(for video: VideoItem) -> NSImage? {

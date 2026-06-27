@@ -12,79 +12,6 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-private enum AccountLoginTarget: String, Identifiable {
-    case instagram
-    case xiaohongshu
-    case youtube
-    case bilibili
-    case douyin
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .instagram: return "Instagram 登录"
-        case .xiaohongshu: return "小红书登录"
-        case .youtube: return "YouTube 登录"
-        case .bilibili: return "Bilibili 登录"
-        case .douyin: return "抖音登录"
-        }
-    }
-
-    var startURL: URL {
-        switch self {
-        case .instagram:
-            return URL(string: "https://www.instagram.com/accounts/login/")!
-        case .xiaohongshu:
-            return URL(string: "https://www.xiaohongshu.com/explore")!
-        case .youtube:
-            return URL(string: "https://accounts.google.com/ServiceLogin?service=youtube")!
-        case .bilibili:
-            return URL(string: "https://passport.bilibili.com/login")!
-        case .douyin:
-            return URL(string: "https://www.douyin.com/")!
-        }
-    }
-
-    func statusText(in summary: AccountCookieSummary) -> String {
-        switch self {
-        case .instagram:
-            return summary.hasInstagramSession ? "Instagram 已登录" : "Instagram 未登录"
-        case .xiaohongshu:
-            return summary.hasXiaohongshuSession ? "小红书已登录" : "小红书未登录"
-        case .youtube:
-            return summary.hasYouTubeSession ? "YouTube 已登录" : "YouTube 未登录"
-        case .bilibili:
-            return summary.hasBilibiliSession ? "Bilibili 已登录" : "Bilibili 未登录"
-        case .douyin:
-            return summary.hasDouyinSession ? "抖音已登录" : "抖音未登录"
-        }
-    }
-
-    func isLoggedIn(_ summary: AccountCookieSummary) -> Bool {
-        switch self {
-        case .instagram:
-            return summary.hasInstagramSession
-        case .xiaohongshu:
-            return summary.hasXiaohongshuSession
-        case .youtube:
-            return summary.hasYouTubeSession
-        case .bilibili:
-            return summary.hasBilibiliSession
-        case .douyin:
-            return summary.hasDouyinSession
-        }
-    }
-
-    static let allLoginTargets: [AccountLoginTarget] = [
-        .instagram,
-        .xiaohongshu,
-        .youtube,
-        .bilibili,
-        .douyin
-    ]
-}
-
 struct SettingsWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @State private var shortcutRevision = 0
@@ -102,7 +29,6 @@ struct SettingsWorkspaceView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                accountLoginCard()
                 downloaderSelfCheckCard()
                 shortcutSettingsCard()
             }
@@ -114,76 +40,7 @@ struct SettingsWorkspaceView: View {
         .fadingVerticalScrollIndicators()
         .onAppear {
             removeDeprecatedSettings()
-            libraryStore.refreshAccountCookieSummary()
-            libraryStore.prewarmSavedCollectionCookieCache()
         }
-    }
-
-    private func accountLoginCard() -> some View {
-        HStack(alignment: .center, spacing: Self.rowColumnSpacing) {
-            settingsRowIcon(
-                libraryStore.accountCookieSummary.hasAnySession ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.exclamationmark",
-                tint: libraryStore.accountCookieSummary.hasAnySession ? .green : Design.annotationAccent
-            )
-
-            accountLoginInfoColumn()
-
-            settingsActionButton(
-                systemImage: "arrow.clockwise",
-                help: "刷新账号登录状态",
-                action: { refreshAccountLoginStatus(forceRefresh: true) }
-            )
-            .disabled(libraryStore.isRefreshingAccountCookieSummary)
-            .opacity(libraryStore.isRefreshingAccountCookieSummary ? 0.34 : 1)
-        }
-        .padding(.horizontal, Self.rowHorizontalPadding)
-        .padding(.vertical, Self.rowVerticalPadding)
-        .frame(height: Self.rowHeight, alignment: .center)
-        .settingsRowBackground()
-    }
-
-    private func accountLoginInfoColumn() -> some View {
-        VStack(alignment: .leading, spacing: Self.rowTextSpacing) {
-            Text("账号登录")
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Text("仅用于下载授权，不读取账号密码。")
-                .font(.caption2)
-                .foregroundStyle(Self.rowDescriptionColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            HStack(spacing: 5) {
-                ForEach(Array(AccountLoginTarget.allLoginTargets.enumerated()), id: \.element.id) { index, target in
-                    if index > 0 {
-                        Text("·")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.white)
-                    }
-                    accountLoginStatusLink(target)
-                }
-            }
-            .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, minHeight: Self.rowContentHeight, maxHeight: Self.rowContentHeight, alignment: .leading)
-    }
-
-    private func accountLoginStatusLink(_ target: AccountLoginTarget) -> some View {
-        let summary = libraryStore.accountCookieSummary
-        let isLoggedIn = target.isLoggedIn(summary)
-        let color: Color = isLoggedIn ? .green : Color.yellow.opacity(0.92)
-
-        return Button {
-            openAccountLogin(target)
-        } label: {
-            Text(target.statusText(in: summary))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(color)
-                .underline(true, color: color)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .buttonStyle(.plain)
     }
 
     private func downloaderSelfCheckCard() -> some View {
@@ -400,24 +257,6 @@ struct SettingsWorkspaceView: View {
             return "当前版本：未检测"
         }
         return "当前版本：\(version)"
-    }
-
-    private func openAccountLogin(_ target: AccountLoginTarget) {
-        NSWorkspace.shared.open(target.startURL)
-        refreshAccountLoginStatus(after: 2.0, forceRefresh: true)
-    }
-
-    private func refreshAccountLoginStatus(after delay: TimeInterval = 0, forceRefresh: Bool = false) {
-        if delay <= 0 {
-            libraryStore.refreshAccountCookieSummary(forceRefresh: forceRefresh)
-            libraryStore.prewarmSavedCollectionCookieCache()
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            libraryStore.refreshAccountCookieSummary(forceRefresh: forceRefresh)
-            libraryStore.prewarmSavedCollectionCookieCache()
-        }
     }
 
     private func removeDeprecatedSettings() {

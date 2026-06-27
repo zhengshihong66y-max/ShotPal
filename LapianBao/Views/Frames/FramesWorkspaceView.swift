@@ -606,6 +606,8 @@ struct FramesWorkspaceView: View {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
+        .accessibilityLabel(isFrameTagFilterPresented ? "隐藏画面标签筛选" : "显示画面标签筛选")
+        .accessibilityIdentifier("frames_tag_filter_toggle_button")
     }
 
     private var frameTagQuickFilterBar: some View {
@@ -860,6 +862,8 @@ struct FramesWorkspaceView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .accessibilityLabel("画面模式菜单")
+        .accessibilityIdentifier("frames_mode_menu")
         .popover(isPresented: $isStoryboardVideoPickerPresented, arrowEdge: .bottom) {
             storyboardVideoPickerPopover
         }
@@ -1206,6 +1210,8 @@ struct FramesWorkspaceView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
+        .accessibilityLabel("画面网格尺寸菜单")
+        .accessibilityIdentifier("frames_grid_size_menu")
     }
 
     private func syncStoryboardSelectionIfNeeded() {
