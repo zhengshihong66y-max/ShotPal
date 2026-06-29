@@ -2037,12 +2037,27 @@ extension LibraryStore {
         songs.map { musicItem($0, preservingTagsFrom: existingSongs) }
     }
 
+    nonisolated static func musicItems(
+        _ songs: [MusicRecognitionItem],
+        preservingStateFrom existingSongs: [MusicRecognitionItem]
+    ) -> [MusicRecognitionItem] {
+        songs.map { musicItem($0, preservingStateFrom: existingSongs) }
+    }
+
     nonisolated static func musicItem(
         _ song: MusicRecognitionItem,
         preservingTagsFrom existingSongs: [MusicRecognitionItem]
     ) -> MusicRecognitionItem {
+        musicItem(song, preservingStateFrom: existingSongs)
+    }
+
+    nonisolated static func musicItem(
+        _ song: MusicRecognitionItem,
+        preservingStateFrom existingSongs: [MusicRecognitionItem]
+    ) -> MusicRecognitionItem {
         var updated = song
         if let existing = existingSongs.first(where: { sameRecognizedSong($0, song) }) {
+            updated.id = existing.id
             updated.tags = song.tags + existing.tags
             if updated.duration <= 0, existing.duration.isFinite, existing.duration > 0 {
                 updated.duration = existing.duration

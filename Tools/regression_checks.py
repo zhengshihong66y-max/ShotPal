@@ -1992,6 +1992,21 @@ def require_preview_export_panel_scroll_guardrails(sources: dict[str, str]) -> N
         "Export panel must scroll to the newest bottom item when opened or when switching filters.",
     )
     require(
+        ".transition(.move(edge: .bottom)" not in export_content
+        and ".animation(.spring(response: 0.32" not in export_content
+        and "scrollExportPanelToLatest(ids: ids, proxy: proxy, animated: false)" in sync_tracking
+        and "withAnimation(.spring(response: 0.34" not in sync_tracking,
+        "Export panel item insertion must avoid row transition and scroll spring animations that stutter while adding new exports.",
+    )
+    require(
+        "static let exportPanelRecentItemLimit" in preview_panel
+        and "libraryStore.sampledFrames.reversed().lazy" in export_panel
+        and "libraryStore.audioClips.reversed().lazy" in export_panel
+        and "libraryStore.transcriptExports.reversed().lazy" in export_panel
+        and "Array(items.suffix(Self.exportPanelRecentItemLimit))" in export_panel,
+        "Recent export panel rendering must cap each newest source before merging so adding one item does not rebuild an unbounded cross-video list.",
+    )
+    require(
         "struct ExportPanelRequest: Equatable" in app_event_bus
         and "postOpenExportPanelRequest(path: String" in app_event_bus
         and "openExportPanelRequestPublisher" in app_event_bus
@@ -2005,6 +2020,85 @@ def require_preview_export_panel_scroll_guardrails(sources: dict[str, str]) -> N
         and "AppEventBus.postOpenExportPanelRequest(path: item.video.url.path)" in frames_workspace
         and "AppEventBus.postOpenExportPanelRequest(path: video.url.path)" in frames_workspace,
         "Adding a tag to a storyboard scene must request the home export panel after creating or updating the exported frame, from both preview and frames storyboard grids.",
+    )
+
+
+def require_audio_clip_export_performance_guardrails(sources: dict[str, str]) -> None:
+    capture_music = sources.get("LapianBao/Stores/LibraryStore+CaptureTranscriptMusic.swift", "")
+    export_audio_clip = section_between(
+        capture_music,
+        "func exportAudioClip(video: VideoItem, inTime: Double, outTime: Double)",
+        "func transcribe(video: VideoItem)",
+    )
+    waveform_index = export_audio_clip.find("let samples = await Self.makeWaveformSamples")
+    append_index = export_audio_clip.find("audioClips.append(clip)")
+    require(
+        waveform_index >= 0
+        and append_index >= 0
+        and waveform_index < append_index
+        and "waveformSamples: samples" in export_audio_clip
+        and "waveformVersion: Self.audioClipWaveformVersion" in export_audio_clip
+        and "setAudioClipWaveform(id: clip.id" not in export_audio_clip,
+        "Audio clip export must build waveform samples before inserting the export row so the export panel does not redraw the row twice.",
+    )
+    require(
+        "scanResourceLibrary(forceFullScan: true)" not in export_audio_clip
+        and "scheduleDeferredResourceLibraryScanAfterAudioClipExport()" in export_audio_clip
+        and "scanResourceLibrary(refreshMode: .deferred, loadCachedSnapshotSynchronously: false)" in capture_music,
+        "Audio clip export must defer resource-library refresh instead of forcing an immediate full scan while the export panel is animating.",
+    )
+
+
+def require_music_recognition_download_scope_guardrails(sources: dict[str, str]) -> None:
+    models = sources.get("LapianBao/Models/LibraryModels.swift", "")
+    audio_components = sources.get("LapianBao/Views/Music/AudioMusicComponents.swift", "")
+    capture_music = sources.get("LapianBao/Stores/LibraryStore+CaptureTranscriptMusic.swift", "")
+    timeline_media = sources.get("LapianBao/Stores/LibraryStore+TimelineMedia.swift", "")
+    persistence = sources.get("LapianBao/Stores/LibraryStore+PersistenceAndSources.swift", "")
+    projection_models = sources.get("LapianBao/Views/Music/MusicWorkspaceModels.swift", "")
+    projection_builder = sources.get("LapianBao/Views/Music/MusicWorkspaceProjectionBuilder.swift", "")
+
+    require(
+        "var recognitionID: UUID?" in models
+        and "case id, songKey, recognitionID" in models
+        and "try container.encodeIfPresent(recognitionID, forKey: .recognitionID)" in models,
+        "Music download jobs must persist an optional recognitionID so each recognized row can own its own download state.",
+    )
+    require(
+        "musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)" in audio_components
+        and "libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)" in audio_components
+        and "jobs.filter { $0.songKey == songKey && $0.recognitionID == nil }" in audio_components
+        and "jobs.filter { $0.recognitionID == recognitionID }" in audio_components,
+        "Recognized music rows must not reuse old title/artist download jobs; only global/search rows may use unscoped jobs.",
+    )
+    require(
+        "func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil)" in capture_music
+        and "MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: .importing)" in capture_music
+        and "var seen = Set<UUID>()" in capture_music
+        and "isMusicDownloadSatisfied(song: song, type: type, recognitionID: song.id)" in capture_music
+        and "$0.recognitionID == recognitionID" in capture_music,
+        "Music download creation and batch checks must be scoped by recognitionID for recognized items.",
+    )
+    require(
+        "Self.musicItems(songs, preservingStateFrom: currentSongs)" in capture_music
+        and "let currentSongs = weakSelf?.musicsByVideoPath[path] ?? existingSongs" in capture_music
+        and "let currentSongs = self.musicsByVideoPath[path, default: existingSongs]" in capture_music
+        and "preservingStateFrom existingSongs" in timeline_media
+        and "updated.id = existing.id" in timeline_media,
+        "Music recognition completion must preserve already-rendered row IDs so active download views do not disappear when final results replace found events.",
+    )
+    require(
+        "uniqueMusicRecognitionID(forSongKey: reconciled.songKey)" in persistence
+        and "func uniqueMusicRecognitionID(forSongKey songKey: String) -> UUID?" in persistence,
+        "Old unscoped downloads should only migrate to a recognition row when they uniquely match one existing recognition item.",
+    )
+    require(
+        "var jobsByRecognitionID: [UUID: [MusicDownloadJob]]" in projection_models
+        and "jobs.filter { $0.recognitionID == nil }" in projection_models
+        and "jobsByRecognitionID" in projection_models
+        and "let downloadJobs = musicDownloadJobs(for: asset)" in projection_builder
+        and "input.musicDownloadLookupCaches.jobsByRecognitionID[asset.song.id] ?? []" in projection_builder,
+        "Music workspace recognized rows must read recognition-scoped downloads instead of title/artist global downloads.",
     )
 
 
@@ -2211,6 +2305,8 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
     require_import_panel_link_feedback_guardrails(sources)
     require_import_job_progress_text_guardrails(sources)
     require_preview_export_panel_scroll_guardrails(sources)
+    require_audio_clip_export_performance_guardrails(sources)
+    require_music_recognition_download_scope_guardrails(sources)
     require_drag_export_provider_guardrails(sources)
     require_regex_allowlist(
         sources,

@@ -679,6 +679,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
 
     var id = UUID()
     var songKey: String
+    var recognitionID: UUID?
     var type: DownloadType
     var status: RemoteImportJob.Status
     var downloadProgress: Double?
@@ -688,7 +689,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
     var createdAt: Date = Date()
 
     private enum CodingKeys: String, CodingKey {
-        case id, songKey, type, status, statusMessage, downloadProgress, filePath, waveformSamples, isPreparingWaveform, createdAt
+        case id, songKey, recognitionID, type, status, statusMessage, downloadProgress, filePath, waveformSamples, isPreparingWaveform, createdAt
     }
 
     private enum PersistedStatus: String, Codable {
@@ -704,6 +705,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
     nonisolated init(
         id: UUID = UUID(),
         songKey: String,
+        recognitionID: UUID? = nil,
         type: DownloadType,
         status: RemoteImportJob.Status,
         downloadProgress: Double? = nil,
@@ -714,6 +716,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
     ) {
         self.id = id
         self.songKey = songKey
+        self.recognitionID = recognitionID
         self.type = type
         self.status = status
         self.downloadProgress = downloadProgress
@@ -727,6 +730,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         songKey = try container.decode(String.self, forKey: .songKey)
+        recognitionID = try container.decodeIfPresent(UUID.self, forKey: .recognitionID)
         type = try container.decode(DownloadType.self, forKey: .type)
         downloadProgress = try container.decodeIfPresent(Double.self, forKey: .downloadProgress)
         filePath = try container.decodeIfPresent(String.self, forKey: .filePath)
@@ -752,6 +756,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(songKey, forKey: .songKey)
+        try container.encodeIfPresent(recognitionID, forKey: .recognitionID)
         try container.encode(type, forKey: .type)
         try container.encodeIfPresent(downloadProgress, forKey: .downloadProgress)
         try container.encodeIfPresent(filePath, forKey: .filePath)

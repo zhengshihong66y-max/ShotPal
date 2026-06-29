@@ -824,6 +824,7 @@ struct MusicWorkspaceView: View {
                     MusicDownloadControlsAndWaveform(
                         song: asset.song,
                         downloadJobs: downloadJobs,
+                        recognitionID: asset.song.id,
                         buttonsWidth: MusicRowMetrics.verticalButtonsWidth,
                         buttonLayout: .vertical,
                         elementSpacing: MusicRowMetrics.columnSpacing,

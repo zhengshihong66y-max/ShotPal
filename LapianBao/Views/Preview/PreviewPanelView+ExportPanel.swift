@@ -245,19 +245,15 @@ extension PreviewPanelView {
                                 case .frame(let frame):
                                     exportFrameRow(frame, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
-                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 case .audio(let clip):
                                     exportAudioClipRow(clip, index: recentAudioClipIndexByID[clip.id], showsSource: true, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
-                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 case .transcript(let export):
                                     exportTranscriptRow(export, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
-                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 case .transcriptProgress(let job):
                                     exportTranscriptProgressRow(job, highlightIntensity: exportPanelHighlightedItemID == item.id ? exportPanelHighlightIntensity : 0)
                                         .id(item.id)
-                                        .transition(.move(edge: .bottom).combined(with: .opacity))
                                 }
                             }
                         }
@@ -269,7 +265,6 @@ extension PreviewPanelView {
                                 let itemID = ExportPanelItem.frame(frame).id
                                 exportFrameRow(frame, highlightIntensity: exportPanelHighlightedItemID == itemID ? exportPanelHighlightIntensity : 0)
                                     .id(itemID)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
                     case .audio:
@@ -280,7 +275,6 @@ extension PreviewPanelView {
                                 let itemID = ExportPanelItem.audio(clip).id
                                 exportAudioClipRow(clip, index: index + 1, highlightIntensity: exportPanelHighlightedItemID == itemID ? exportPanelHighlightIntensity : 0)
                                     .id(itemID)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
                     case .music:
@@ -288,7 +282,6 @@ extension PreviewPanelView {
                     }
                 }
                 .padding(.trailing, 2)
-                .animation(.spring(response: 0.32, dampingFraction: 0.82), value: visibleItemIDs)
             }
             .fadingVerticalScrollIndicators()
             .onAppear {
@@ -328,12 +321,26 @@ extension PreviewPanelView {
 
     func recentExportPanelItems() -> [ExportPanelItem] {
         let visibleVideoPaths = Set(libraryStore.videos.map { $0.url.path })
-        return exportPanelItems(
-            frames: libraryStore.sampledFrames.filter { visibleVideoPaths.contains($0.videoPath) },
-            clips: libraryStore.audioClips.filter { visibleVideoPaths.contains($0.videoPath) },
-            transcripts: libraryStore.transcriptExports.filter { visibleVideoPaths.contains($0.videoPath) },
-            transcriptJobs: libraryStore.transcriptExportJobs.values.filter { visibleVideoPaths.contains($0.videoPath) }
+        let recentFrames = libraryStore.sampledFrames.reversed().lazy
+            .filter { visibleVideoPaths.contains($0.videoPath) }
+            .prefix(Self.exportPanelRecentItemLimit)
+        let recentAudioClips = libraryStore.audioClips.reversed().lazy
+            .filter { visibleVideoPaths.contains($0.videoPath) }
+            .prefix(Self.exportPanelRecentItemLimit)
+        let recentTranscripts = libraryStore.transcriptExports.reversed().lazy
+            .filter { visibleVideoPaths.contains($0.videoPath) }
+            .prefix(Self.exportPanelRecentItemLimit)
+        let recentTranscriptJobs = libraryStore.transcriptExportJobs.values.reversed().lazy
+            .filter { visibleVideoPaths.contains($0.videoPath) }
+            .prefix(Self.exportPanelRecentItemLimit)
+        let items = exportPanelItems(
+            frames: Array(recentFrames),
+            clips: Array(recentAudioClips),
+            transcripts: Array(recentTranscripts),
+            transcriptJobs: Array(recentTranscriptJobs)
         )
+        guard items.count > Self.exportPanelRecentItemLimit else { return items }
+        return Array(items.suffix(Self.exportPanelRecentItemLimit))
     }
 
     func recentExportAudioClipIndexByID(from items: [ExportPanelItem]) -> [UUID: Int] {
@@ -364,11 +371,9 @@ extension PreviewPanelView {
         }
 
         exportPanelHighlightTask?.cancel()
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
-            exportPanelHighlightedItemID = newestID
-            exportPanelHighlightIntensity = 1
-            proxy.scrollTo(newestID, anchor: .bottom)
-        }
+        exportPanelHighlightedItemID = newestID
+        exportPanelHighlightIntensity = 1
+        scrollExportPanelToLatest(ids: ids, proxy: proxy, animated: false)
 
         exportPanelHighlightTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 900_000_000)
@@ -1256,7 +1261,7 @@ extension PreviewPanelView {
         hasher.combine(Int(contentWidth.rounded(.up)))
 
         for song in songs {
-            for job in musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs) where completedMusicFileURL(for: job) != nil {
+            for job in musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id) where completedMusicFileURL(for: job) != nil {
                 hasher.combine(job.id)
                 hasher.combine(job.filePath)
                 hasher.combine(exportMusicWaveformSamplesForRenderPrewarm(job)?.count ?? 0)
@@ -1275,7 +1280,7 @@ extension PreviewPanelView {
 
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         return songs.flatMap { song in
-            musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs).compactMap { job in
+            musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id).compactMap { job in
                 guard completedMusicFileURL(for: job) != nil else { return nil }
                 guard let samples = exportMusicWaveformSamplesForRenderPrewarm(job), !samples.isEmpty else { return nil }
                 return DownloadedMusicWaveformRenderPrewarmRequest(

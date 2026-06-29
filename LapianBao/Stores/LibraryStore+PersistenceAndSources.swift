@@ -535,6 +535,9 @@ extension LibraryStore {
     func reconciledMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
         jobs.map { job in
             var reconciled = job
+            if reconciled.recognitionID == nil {
+                reconciled.recognitionID = uniqueMusicRecognitionID(forSongKey: reconciled.songKey)
+            }
             reconciled.isPreparingWaveform = false
             if Self.isActiveDownloadStatus(reconciled.status) {
                 reconciled.status = .paused
@@ -550,6 +553,18 @@ extension LibraryStore {
             }
             return reconciled
         }
+    }
+
+    func uniqueMusicRecognitionID(forSongKey songKey: String) -> UUID? {
+        var matchedID: UUID?
+        for song in musicsByVideoPath.values.flatMap({ $0 }) where musicSongKey(song) == songKey {
+            guard let currentID = matchedID else {
+                matchedID = song.id
+                continue
+            }
+            guard currentID == song.id else { return nil }
+        }
+        return matchedID
     }
 
     func runStartupAutomationIfNeeded() {

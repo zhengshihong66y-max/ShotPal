@@ -372,6 +372,12 @@ nonisolated final class DownloadedMusicWaveformRenderCache {
         diskCacheDirectory
     }
 
+    func removeAllImages() {
+        cache.removeAllObjects()
+        guard let diskCacheDirectory else { return }
+        try? FileManager.default.removeItem(at: diskCacheDirectory)
+    }
+
     func diskImageFileCount() -> Int {
         guard let diskCacheDirectory,
               let urls = try? FileManager.default.contentsOfDirectory(

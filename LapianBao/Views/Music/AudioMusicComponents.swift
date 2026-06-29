@@ -234,7 +234,7 @@ struct MusicRecognitionActionColumn: View {
 
     private let actionTint = Color.white.opacity(0.72)
     private var downloadJobs: [MusicDownloadJob] {
-        musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
+        musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)
     }
 
     private var completedDownloadJobs: [MusicDownloadJob] {
@@ -266,13 +266,13 @@ struct MusicRecognitionActionColumn: View {
         if completedFileURLs.isEmpty {
             Menu {
                 Button {
-                    libraryStore.downloadMusic(song: song, type: .original)
+                    libraryStore.downloadMusic(song: song, type: .original, recognitionID: song.id)
                 } label: {
                     Label("下载原曲", systemImage: "arrow.down.circle")
                 }
 
                 Button {
-                    libraryStore.downloadMusic(song: song, type: .instrumental)
+                    libraryStore.downloadMusic(song: song, type: .instrumental, recognitionID: song.id)
                 } label: {
                     Label("下载伴奏", systemImage: "arrow.down.circle")
                 }
@@ -311,13 +311,13 @@ struct MusicRecognitionActionColumn: View {
                 Divider()
 
                 Button {
-                    libraryStore.downloadMusic(song: song, type: .original)
+                    libraryStore.downloadMusic(song: song, type: .original, recognitionID: song.id)
                 } label: {
                     Label("重新下载原曲", systemImage: "arrow.clockwise")
                 }
 
                 Button {
-                    libraryStore.downloadMusic(song: song, type: .instrumental)
+                    libraryStore.downloadMusic(song: song, type: .instrumental, recognitionID: song.id)
                 } label: {
                     Label("重新下载伴奏", systemImage: "arrow.clockwise")
                 }
@@ -413,7 +413,7 @@ struct ExportMusicRecognitionActionColumn: View {
                 let isDownloaded = completedFileURL(for: job) != nil
 
                 Button {
-                    libraryStore.downloadMusic(song: song, type: type)
+                    libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)
                 } label: {
                     Label(isDownloaded ? "已下载\(type.label)" : "下载\(type.label)", systemImage: "arrow.down.circle")
                 }
@@ -481,7 +481,7 @@ struct ExportMusicRecognitionRow: View {
     let onJump: () -> Void
 
     var body: some View {
-        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
+        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)
         let rowDragProvider = musicDownloadRowDragProvider(from: downloadJobs)
 
         VStack(alignment: .leading, spacing: 0) {
@@ -538,7 +538,7 @@ struct MusicRecognitionRow: View {
     let onJump: () -> Void
 
     var body: some View {
-        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs)
+        let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)
 
         GeometryReader { proxy in
             let waveformWidth = proxy.size.width >= 640
@@ -579,6 +579,7 @@ struct MusicRecognitionRow: View {
                 MusicDownloadControlsAndWaveform(
                     song: song,
                     downloadJobs: downloadJobs,
+                    recognitionID: song.id,
                     buttonsWidth: MusicRecognitionLayout.inlineDownloadButtonsWidth,
                     buttonLayout: .vertical,
                     waveformWidth: waveformWidth,
@@ -609,7 +610,15 @@ nonisolated func latestMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDo
 
 nonisolated func musicDownloadJobs(for song: MusicRecognitionItem, in jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
     let songKey = "\(song.title)|\(song.artist)"
-    return latestMusicDownloadJobs(jobs.filter { $0.songKey == songKey })
+    return latestMusicDownloadJobs(jobs.filter { $0.songKey == songKey && $0.recognitionID == nil })
+}
+
+nonisolated func musicDownloadJobs(
+    for song: MusicRecognitionItem,
+    in jobs: [MusicDownloadJob],
+    recognitionID: UUID
+) -> [MusicDownloadJob] {
+    latestMusicDownloadJobs(jobs.filter { $0.recognitionID == recognitionID })
 }
 
 struct MusicDownloadExtensionStack: View {
@@ -637,6 +646,7 @@ struct MusicDownloadControlsAndWaveform: View {
 
     let song: MusicRecognitionItem
     let downloadJobs: [MusicDownloadJob]
+    var recognitionID: UUID? = nil
     var buttonsWidth: CGFloat = 160
     var buttonLayout: MusicDownloadSelectorLayout = .horizontal
     var elementSpacing: CGFloat = 8
@@ -841,7 +851,7 @@ struct MusicDownloadControlsAndWaveform: View {
             if isDownloaded, let job {
                 previewToggleRequest = MusicPreviewToggleRequest(jobID: job.id)
             } else if !isActive {
-                libraryStore.downloadMusic(song: song, type: type)
+                libraryStore.downloadMusic(song: song, type: type, recognitionID: recognitionID)
             }
         } label: {
             HStack(spacing: 5) {
@@ -875,7 +885,7 @@ struct MusicDownloadControlsAndWaveform: View {
 
             Button {
                 selectedType = type
-                libraryStore.downloadMusic(song: song, type: type)
+                libraryStore.downloadMusic(song: song, type: type, recognitionID: recognitionID)
             } label: {
                 Label("重新下载\(type.label)", systemImage: "arrow.clockwise")
             }
@@ -1536,6 +1546,8 @@ struct MusicDownloadStatusView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!canPreviewAudio)
+                    .accessibilityLabel(isPreviewing ? "暂停已下载\(job.type.label)" : "播放已下载\(job.type.label)")
+                    .accessibilityIdentifier("export_music_download_status_\(musicDownloadTypeAccessibilityKey(job.type))_play_button")
                     Text(cleanedDisplayName)
                         .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
                         .foregroundStyle(.secondary)

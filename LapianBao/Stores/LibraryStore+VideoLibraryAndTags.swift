@@ -1796,13 +1796,10 @@ extension LibraryStore {
         sampledFrames.removeAll { $0.videoPath == path }
         annotations.removeAll { $0.videoPath == path }
         audioClips.removeAll { $0.videoPath == path }
+        let removedSongs = musicsByVideoPath[path, default: []]
         musicDetectionTasks[path]?.cancel()
         musicDetectionTasks[path] = nil
-        for song in musicsByVideoPath[path, default: []] {
-            let enrichmentKey = musicTagEnrichmentKey(for: song, in: path)
-            musicTagEnrichmentTasks[enrichmentKey]?.cancel()
-            musicTagEnrichmentTasks[enrichmentKey] = nil
-        }
+        purgeMusicRecognitionCaches(forVideoPath: path, removedSongs: removedSongs)
         musicsByVideoPath.removeValue(forKey: path)
         musicDetectionStatusByVideoPath.removeValue(forKey: path)
         sceneCutsByVideoPath.removeValue(forKey: path)

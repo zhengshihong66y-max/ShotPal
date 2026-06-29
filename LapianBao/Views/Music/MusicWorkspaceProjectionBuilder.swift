@@ -168,7 +168,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     func recognizedMusicRowProjection(
         for asset: RecognizedMusicAsset
     ) -> RecognizedMusicRowProjection {
-        let downloadJobs = musicDownloadJobs(for: asset.song)
+        let downloadJobs = musicDownloadJobs(for: asset)
         return RecognizedMusicRowProjection(
             asset: asset,
             visibleTags: displayedMusicTags(visibleTags(for: asset.song)),
@@ -597,6 +597,10 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     func musicDownloadJobs(for song: MusicRecognitionItem) -> [MusicDownloadJob] {
         let songKey = "\(song.title)|\(song.artist)"
         return input.musicDownloadLookupCaches.jobsBySongKey[songKey] ?? []
+    }
+
+    func musicDownloadJobs(for asset: RecognizedMusicAsset) -> [MusicDownloadJob] {
+        input.musicDownloadLookupCaches.jobsByRecognitionID[asset.song.id] ?? []
     }
 
     func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {
@@ -1144,7 +1148,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         if localMusicFilePaths.contains(asset.videoPath), localMusicFileExists(at: asset.videoPath) {
             return true
         }
-        return hasCompletedMusicDownload(musicDownloadJobs(for: asset.song))
+        return hasCompletedMusicDownload(musicDownloadJobs(for: asset))
     }
 
     func hasLocalMusicFile(for group: LocalMusicGroup) -> Bool {

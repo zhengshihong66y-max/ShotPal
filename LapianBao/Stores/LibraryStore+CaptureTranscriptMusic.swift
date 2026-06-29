@@ -101,42 +101,53 @@ extension LibraryStore {
         audioClipExportProgressByVideoPath[path] = 0.05
 
         Task { [weak self] in
+            guard let self else { return }
             do {
-                self?.audioClipExportProgressByVideoPath[path] = 0.18
+                audioClipExportProgressByVideoPath[path] = 0.18
                 let outputURL = try await Self.exportAudioClipFile(
                     video: video,
                     videoName: videoName,
                     start: start,
                     end: end,
-                    libraryURL: self?.libraryURL
+                    libraryURL: libraryURL
                 )
-                self?.audioClipExportProgressByVideoPath[path] = 0.62
+                audioClipExportProgressByVideoPath[path] = 0.68
+
+                let samples = await Self.makeWaveformSamples(
+                    for: outputURL,
+                    sampleCount: Self.audioClipWaveformSampleCount
+                ) ?? []
+                audioClipExportProgressByVideoPath[path] = 0.88
 
                 let clip = AudioClipItem(
                     videoPath: video.url.path,
                     videoName: videoName,
                     inTime: start,
                     outTime: end,
-                    filePath: outputURL.path
+                    filePath: outputURL.path,
+                    waveformSamples: samples,
+                    waveformVersion: Self.audioClipWaveformVersion
                 )
-                self?.audioClips.append(clip)
-                self?.saveProjectData()
-                self?.audioClipExportProgressByVideoPath[path] = 0.74
-
-                let samples = await Self.makeWaveformSamples(
-                    for: outputURL,
-                    sampleCount: Self.audioClipWaveformSampleCount
-                ) ?? []
-                self?.setAudioClipWaveform(id: clip.id, samples: samples)
-                self?.audioClipExportProgressByVideoPath[path] = 1.0
-                self?.scanResourceLibrary(forceFullScan: true)
+                audioClips.append(clip)
+                knownLocalResourcePaths.insert(outputURL.path)
+                saveProjectData()
+                audioClipExportProgressByVideoPath[path] = 1.0
+                scheduleDeferredResourceLibraryScanAfterAudioClipExport()
                 try? await Task.sleep(nanoseconds: 350_000_000)
-                self?.audioClipExportProgressByVideoPath[path] = nil
+                audioClipExportProgressByVideoPath[path] = nil
             } catch {
-                self?.audioClipExportProgressByVideoPath[path] = nil
-                self?.audioClipExportErrorByVideoPath[path] = error.localizedDescription
+                audioClipExportProgressByVideoPath[path] = nil
+                audioClipExportErrorByVideoPath[path] = error.localizedDescription
                 NSLog("LapianBao audio clip export failed: %@ %@", path, String(describing: error))
             }
+        }
+    }
+
+    private func scheduleDeferredResourceLibraryScanAfterAudioClipExport() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self else { return }
+            scanResourceLibrary(refreshMode: .deferred, loadCachedSnapshotSynchronously: false)
         }
     }
 
@@ -356,7 +367,8 @@ extension LibraryStore {
                         }
                     }
                 )
-                weakSelf?.musicsByVideoPath[path] = Self.musicItems(songs, preservingTagsFrom: existingSongs)
+                let currentSongs = weakSelf?.musicsByVideoPath[path] ?? existingSongs
+                weakSelf?.musicsByVideoPath[path] = Self.musicItems(songs, preservingStateFrom: currentSongs)
                 weakSelf?.musicDetectionStatusByVideoPath[path] = .completed
                 weakSelf?.saveProjectData()
             } catch is CancellationError {
@@ -378,11 +390,141 @@ extension LibraryStore {
 
     func deleteMusicRecognition(for video: VideoItem) {
         let path = video.url.path
+        let removedSongs = musicsByVideoPath[path, default: []]
         musicDetectionTasks[path]?.cancel()
         musicDetectionTasks[path] = nil
+        purgeMusicRecognitionCaches(forVideoPath: path, removedSongs: removedSongs)
         musicsByVideoPath.removeValue(forKey: path)
         musicDetectionStatusByVideoPath[path] = .idle
         saveProjectData()
+    }
+
+    func purgeMusicRecognitionCaches(forVideoPath path: String, removedSongs: [MusicRecognitionItem]) {
+        guard !removedSongs.isEmpty else { return }
+
+        for song in removedSongs {
+            let enrichmentKey = musicTagEnrichmentKey(for: song, in: path)
+            musicTagEnrichmentTasks[enrichmentKey]?.cancel()
+            musicTagEnrichmentTasks[enrichmentKey] = nil
+        }
+
+        let removedSongKeys = Set(removedSongs.map(musicSongKey))
+        let remainingSongKeys = Set(
+            musicsByVideoPath
+                .filter { $0.key != path }
+                .values
+                .flatMap { $0.map(musicSongKey) }
+        )
+        let orphanedSongKeys = removedSongKeys.subtracting(remainingSongKeys)
+        purgeMusicWaveformCaches(forOrphanedSongKeys: orphanedSongKeys)
+    }
+
+    func purgeMusicWaveformCaches(forOrphanedSongKeys songKeys: Set<String>) {
+        guard !songKeys.isEmpty else { return }
+
+        var affectedJobIDs = Set<UUID>()
+        var affectedFilePaths = Set<String>()
+        var didRemoveWaveformCache = false
+
+        for index in musicDownloadJobs.indices {
+            guard songKeys.contains(musicDownloadJobs[index].songKey) else { continue }
+
+            let jobID = musicDownloadJobs[index].id
+            affectedJobIDs.insert(jobID)
+
+            if let task = musicDownloadTasks[jobID] {
+                task.cancel()
+                musicDownloadTasks[jobID] = nil
+            }
+
+            if musicDownloadWaveformProgressByID.removeValue(forKey: jobID) != nil {
+                didRemoveWaveformCache = true
+            }
+
+            if let filePath = musicDownloadJobs[index].filePath {
+                let resolvedPath = libraryURL.map {
+                    Self.projectAbsolutePath(filePath, libraryURL: $0)
+                } ?? filePath
+                affectedFilePaths.insert(Self.normalizedLocalFilePath(resolvedPath))
+            }
+
+            if musicDownloadJobs[index].waveformSamples != nil || musicDownloadJobs[index].isPreparingWaveform {
+                didRemoveWaveformCache = true
+                musicDownloadJobs[index].waveformSamples = nil
+                musicDownloadJobs[index].isPreparingWaveform = false
+            }
+        }
+
+        for jobID in affectedJobIDs {
+            clearMusicPreviewJob(jobID)
+        }
+
+        if purgeLocalMusicWaveformCaches(forFilePaths: affectedFilePaths) {
+            didRemoveWaveformCache = true
+        }
+
+        guard !affectedJobIDs.isEmpty else { return }
+
+        invalidateMusicWorkspaceDisplayCache()
+        if didRemoveWaveformCache {
+            DownloadedMusicWaveformRenderCache.shared.removeAllImages()
+        }
+    }
+
+    @discardableResult
+    func purgeLocalMusicWaveformCaches(forFilePaths filePaths: Set<String>) -> Bool {
+        guard !filePaths.isEmpty else { return false }
+
+        let normalizedPaths = Set(filePaths.map(Self.normalizedLocalFilePath))
+        var didChange = false
+        var didChangePersistedCache = false
+
+        for path in normalizedPaths {
+            if localMusicWaveformSamplesByPath.removeValue(forKey: path) != nil {
+                didChange = true
+            }
+            if let task = localMusicWaveformTasks[path] {
+                task.cancel()
+                localMusicWaveformTasks[path] = nil
+                didChange = true
+            }
+            if localMusicWaveformRenderingPaths.remove(path) != nil {
+                didChange = true
+            }
+            if localMusicWaveformQueuedPaths.remove(path) != nil {
+                didChange = true
+            }
+            if localMusicWaveformProgressByPath.removeValue(forKey: path) != nil {
+                didChange = true
+            }
+
+            if let libraryURL {
+                let relativePath = Self.libraryRelativePath(for: URL(fileURLWithPath: path), base: libraryURL)
+                let cacheKey = Self.localWaveformCacheKey(kind: "music", relativePath: relativePath)
+                if localWaveformCacheByKey.removeValue(forKey: cacheKey) != nil {
+                    didChange = true
+                    didChangePersistedCache = true
+                }
+            }
+        }
+
+        let originalQueueCount = queuedLocalMusicWaveformAssets.count
+        queuedLocalMusicWaveformAssets.removeAll {
+            normalizedPaths.contains(Self.normalizedLocalFilePath($0.filePath))
+        }
+        if queuedLocalMusicWaveformAssets.count != originalQueueCount {
+            didChange = true
+        }
+
+        if didChangePersistedCache {
+            scheduleLocalWaveformCacheSave()
+        }
+        return didChange
+    }
+
+    func invalidateMusicWorkspaceDisplayCache() {
+        guard let libraryURL else { return }
+        try? FileManager.default.removeItem(at: ProjectRepository.musicWorkspaceCacheURL(in: libraryURL))
     }
 
     func recognizeLocalMusicAssetsIfNeeded(retryUnresolved: Bool = false) {
@@ -440,7 +582,8 @@ extension LibraryStore {
                     )
 
                     await MainActor.run {
-                        self.musicsByVideoPath[path] = Self.musicItems(songs, preservingTagsFrom: existingSongs)
+                        let currentSongs = self.musicsByVideoPath[path, default: existingSongs]
+                        self.musicsByVideoPath[path] = Self.musicItems(songs, preservingStateFrom: currentSongs)
                         self.musicDetectionStatusByVideoPath[path] = .completed
                         if self.deduplicateRecognizedLocalMusicAssets() {
                             self.scanResourceLibrary(forceFullScan: true)
@@ -729,9 +872,9 @@ extension LibraryStore {
         return lhs.filePath.localizedStandardCompare(rhs.filePath) == .orderedAscending
     }
 
-    func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) {
+    func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) {
         startExternalServiceSelfCheckPreflightIfNeeded()
-        guard let jobID = prepareMusicDownloadJob(song: song, type: type) else { return }
+        guard let jobID = prepareMusicDownloadJob(song: song, type: type, recognitionID: recognitionID) else { return }
         let task = Task { [weak self] in
             guard let self else { return }
             await self.runMusicDownload(jobID: jobID, song: song, type: type)
@@ -765,7 +908,7 @@ extension LibraryStore {
                 self.musicDownloadBatchJob.currentVideoName = "\(title) · \(entry.type.label)"
                 self.updateMusicDownloadBatchProgress(completed: completed, currentProgress: 0)
 
-                if let jobID = self.prepareMusicDownloadJob(song: entry.song, type: entry.type) {
+                if let jobID = self.prepareMusicDownloadJob(song: entry.song, type: entry.type, recognitionID: entry.recognitionID) {
                     await self.runMusicDownload(jobID: jobID, song: entry.song, type: entry.type)
                 }
 
@@ -782,10 +925,11 @@ extension LibraryStore {
         }
     }
 
-    func prepareMusicDownloadJob(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) -> UUID? {
+    func prepareMusicDownloadJob(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) -> UUID? {
         guard libraryURL != nil else {
             musicDownloadJobs.append(MusicDownloadJob(
                 songKey: musicSongKey(song),
+                recognitionID: recognitionID,
                 type: type,
                 status: .failed("请先打开一个素材库文件夹")
             ))
@@ -793,7 +937,7 @@ extension LibraryStore {
         }
 
         let songKey = musicSongKey(song)
-        if let existing = latestMusicDownloadJob(songKey: songKey, type: type) {
+        if let existing = latestMusicDownloadJob(songKey: songKey, type: type, recognitionID: recognitionID) {
             if Self.isActiveDownloadStatus(existing.status) {
                 return nil
             }
@@ -802,7 +946,7 @@ extension LibraryStore {
             }
         }
 
-        let job = MusicDownloadJob(songKey: songKey, type: type, status: .importing)
+        let job = MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: .importing)
         musicDownloadJobs.append(job)
         return job.id
     }
@@ -996,24 +1140,26 @@ extension LibraryStore {
         musicDownloadBatchJob.progress = Self.normalizedProgress((Double(completed) + Self.normalizedProgress(currentProgress)) / Double(total))
     }
 
-    func musicDownloadBatchQueue(types: [MusicDownloadJob.DownloadType]) -> [(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType)] {
+    func musicDownloadBatchQueue(types: [MusicDownloadJob.DownloadType]) -> [(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID)] {
         var uniqueSongs: [MusicRecognitionItem] = []
-        var seen = Set<String>()
+        var seen = Set<UUID>()
         for song in musicsByVideoPath.values.flatMap({ $0 }) {
-            if seen.insert(musicSongKey(song)).inserted {
+            if seen.insert(song.id).inserted {
                 uniqueSongs.append(song)
             }
         }
 
         return uniqueSongs.flatMap { song in
             types.compactMap { type in
-                isMusicDownloadSatisfied(song: song, type: type) ? nil : (song, type)
+                isMusicDownloadSatisfied(song: song, type: type, recognitionID: song.id)
+                    ? nil
+                    : (song: song, type: type, recognitionID: song.id)
             }
         }
     }
 
-    func isMusicDownloadSatisfied(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) -> Bool {
-        guard let job = latestMusicDownloadJob(songKey: musicSongKey(song), type: type) else { return false }
+    func isMusicDownloadSatisfied(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) -> Bool {
+        guard let job = latestMusicDownloadJob(songKey: musicSongKey(song), type: type, recognitionID: recognitionID) else { return false }
         return isSatisfiedMusicDownload(job)
     }
 
@@ -1025,8 +1171,8 @@ extension LibraryStore {
         return true
     }
 
-    func latestMusicDownloadJob(songKey: String, type: MusicDownloadJob.DownloadType) -> MusicDownloadJob? {
-        musicDownloadJobs.last { $0.songKey == songKey && $0.type == type }
+    func latestMusicDownloadJob(songKey: String, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) -> MusicDownloadJob? {
+        musicDownloadJobs.last { $0.songKey == songKey && $0.type == type && $0.recognitionID == recognitionID }
     }
 
     func musicSongKey(_ song: MusicRecognitionItem) -> String {

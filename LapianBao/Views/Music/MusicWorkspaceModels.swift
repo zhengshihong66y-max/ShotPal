@@ -54,14 +54,22 @@ nonisolated struct MusicDownloadCompletionSnapshot: Codable, Sendable, Equatable
 
 nonisolated struct MusicDownloadLookupCaches: Sendable {
     var jobsBySongKey: [String: [MusicDownloadJob]]
+    var jobsByRecognitionID: [UUID: [MusicDownloadJob]]
     var jobByNormalizedFilePath: [String: MusicDownloadJob]
 
     init(
         jobs: [MusicDownloadJob],
         completionSnapshot: MusicDownloadCompletionSnapshot
     ) {
-        jobsBySongKey = Dictionary(grouping: jobs, by: \.songKey)
+        jobsBySongKey = Dictionary(grouping: jobs.filter { $0.recognitionID == nil }, by: \.songKey)
             .mapValues(latestMusicDownloadJobs)
+        jobsByRecognitionID = Dictionary(grouping: jobs.compactMap { job -> (UUID, MusicDownloadJob)? in
+            guard let recognitionID = job.recognitionID else { return nil }
+            return (recognitionID, job)
+        }, by: { $0.0 })
+        .mapValues { pairs in
+            latestMusicDownloadJobs(pairs.map(\.1))
+        }
 
         var jobsByPath: [String: MusicDownloadJob] = [:]
         for job in jobs {
@@ -879,6 +887,7 @@ nonisolated struct MusicWorkspaceProjectionSignature: Hashable, Sendable {
         for job in input.musicDownloadJobs.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
             hasher.combine(job.id)
             hasher.combine(job.songKey)
+            hasher.combine(job.recognitionID)
             hasher.combine(job.type.rawValue)
             hasher.combine(Self.statusSignature(job.status))
             hasher.combine(job.downloadProgress)
@@ -1085,6 +1094,7 @@ nonisolated enum MusicWorkspaceDisplayCache {
         for job in input.musicDownloadJobs.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
             digest.combine(job.id)
             digest.combine(job.songKey)
+            digest.combine(job.recognitionID)
             digest.combine(job.type.rawValue)
             digest.combine(statusSignature(job.status))
             digest.combine(job.downloadProgress)
@@ -1191,6 +1201,10 @@ nonisolated private struct StableMusicWorkspaceDigest {
 
     mutating func combine(_ value: UUID) {
         append(value.uuidString)
+    }
+
+    mutating func combine(_ value: UUID?) {
+        append(value?.uuidString ?? "<nil>")
     }
 
     mutating func combine(_ value: Bool) {

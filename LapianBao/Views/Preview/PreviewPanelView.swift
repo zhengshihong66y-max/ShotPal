@@ -45,6 +45,7 @@ struct PreviewPanelView: View {
     static let exportFramePreviewMinWidth: CGFloat = 48
     static let exportFramePreviewMaxWidth: CGFloat = 142
     static let exportTranscriptIconWidth: CGFloat = exportFramePreviewWidth
+    static let exportPanelRecentItemLimit = 120
     @State var activePreviewTab: PreviewTab = .frames
     @State var annotationText = ""
     @State var pendingAnnotationKind: AnnotationItem.Kind = .frame
