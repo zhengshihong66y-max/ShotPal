@@ -30,6 +30,7 @@ struct ContentView: View {
     @FocusState var focusedLibraryTagRenameTarget: String?
     @State var isImportSheetPresented = false
     @State var importURLText = ""
+    @State var importURLFeedbackMessage: String?
     @State var importEndpointText = ""
     @State var librarySearchText = ""
     @State var selectedLibraryPlatforms: Set<String> = []
@@ -45,6 +46,7 @@ struct ContentView: View {
     @State var frameSelectedFrameID: UUID?
     @State var frameBoardMode: FramesBoardMode = .collection
     @State var pendingHomeSeekRequest: AppEventBus.SeekRequest?
+    @State var pendingExportPanelRequest: AppEventBus.ExportPanelRequest?
     @State var mediaPanelDragStartWidth: Double?
     @State var mediaPanelDragStartX: CGFloat?
     @State var isDividerHovered = false
@@ -108,6 +110,14 @@ struct ContentView: View {
             if let path = pendingStoryboardOpenPath, errors[path] != nil {
                 pendingStoryboardOpenPath = nil
             }
+        }
+        .onReceive(AppEventBus.openExportPanelRequestPublisher) { notification in
+            guard let request = AppEventBus.exportPanelRequest(from: notification) else { return }
+            if libraryStore.selectedVideo?.url.path != request.path {
+                libraryStore.selectVideo(path: request.path)
+            }
+            pendingExportPanelRequest = request
+            switchWorkspace(to: .home)
         }
     }
 
@@ -342,7 +352,8 @@ struct ContentView: View {
                 PreviewPanelView(
                     controller: previewController,
                     openStoryboardBoard: openFrameStoryboard,
-                    pendingSeekRequest: $pendingHomeSeekRequest
+                    pendingSeekRequest: $pendingHomeSeekRequest,
+                    pendingExportPanelRequest: $pendingExportPanelRequest
                 )
             case .frames:
                 FramesWorkspaceView(

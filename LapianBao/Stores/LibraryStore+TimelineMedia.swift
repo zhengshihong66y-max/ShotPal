@@ -978,7 +978,7 @@ extension LibraryStore {
 
         sceneDetectionTasks[path] = Task { [weak self] in
             do {
-                let cuts = try await Self.performSceneDetection(for: video.url) { progress in
+                let result = try await Self.performSceneDetection(for: video.url) { progress in
                     Task { @MainActor in
                         self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
                     }
@@ -990,7 +990,7 @@ extension LibraryStore {
                     return
                 }
 
-                self?.finishSceneDetection(for: video, cuts: cuts)
+                self?.finishSceneDetection(for: video, result: result)
                 self?.sceneDetectionProgress[path] = nil
                 self?.sceneDetectionTasks[path] = nil
             } catch is CancellationError {
@@ -1013,10 +1013,14 @@ extension LibraryStore {
         return error.localizedDescription
     }
 
-    func finishSceneDetection(for video: VideoItem, cuts: [SceneCut]) {
+    func finishSceneDetection(for video: VideoItem, result: SceneDetectionResult) {
+        finishSceneDetection(for: video, cuts: result.cuts, knownDuration: result.duration)
+    }
+
+    func finishSceneDetection(for video: VideoItem, cuts: [SceneCut], knownDuration: Double? = nil) {
         let path = video.url.path
         sceneDetectionErrorByVideoPath.removeValue(forKey: path)
-        setSceneCuts(cuts, for: path)
+        setSceneCuts(cuts, for: path, knownDuration: knownDuration)
         storeSceneCutCache(for: video, cuts: cuts)
     }
 
@@ -1073,7 +1077,7 @@ extension LibraryStore {
                 }
 
                 do {
-                    let cuts = try await Self.performSceneDetection(for: video.url) { [weak self] progress in
+                    let result = try await Self.performSceneDetection(for: video.url) { [weak self] progress in
                         Task { @MainActor [weak self] in
                             self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
                             self?.updateSceneBatchProgress(completed: completed, currentProgress: progress)
@@ -1082,7 +1086,7 @@ extension LibraryStore {
 
                     completed += 1
                     await MainActor.run {
-                        self.finishSceneDetection(for: video, cuts: cuts)
+                        self.finishSceneDetection(for: video, result: result)
                         self.sceneDetectionProgress[path] = nil
                         self.updateSceneBatchProgress(completed: completed, currentProgress: 0)
                     }
@@ -1131,12 +1135,17 @@ extension LibraryStore {
         guard
             sceneCutsByVideoPath[path] == nil,
             sceneDetectionTasks[path] == nil,
-            let cachedEntry = validCachedSceneCutEntry(for: video)
+            let cachedEntry = sceneCutCacheEntry(for: video, migrateRelocatedEntry: true)
         else { return }
 
         let placeholder = thumbnailImageByVideoPath[path] ?? Self.scenePlaceholderImage()
         let cachedCuts = Self.cachedSceneCuts(from: cachedEntry, placeholderImage: placeholder)
-        setSceneCuts(cachedCuts.cuts, for: path, needsThumbnailHydration: cachedCuts.needsThumbnailHydration)
+        setSceneCuts(
+            cachedCuts.cuts,
+            for: path,
+            needsThumbnailHydration: cachedCuts.needsThumbnailHydration,
+            knownDuration: cachedEntry.duration
+        )
         PerformanceDiagnostics.mark(
             "scene cache loaded cuts=\(cachedCuts.cuts.count) needsHydration=\(cachedCuts.needsThumbnailHydration)",
             path: path
@@ -1149,7 +1158,7 @@ extension LibraryStore {
         guard
             sceneThumbnailHydrationNeeded.contains(path),
             sceneThumbnailHydrationTasks[path] == nil,
-            let cachedEntry = validCachedSceneCutEntry(for: video),
+            let cachedEntry = sceneCutCacheEntry(for: video, migrateRelocatedEntry: true),
             !cachedEntry.cutTimes.isEmpty
         else { return }
 
@@ -1190,7 +1199,7 @@ extension LibraryStore {
                 return
             }
 
-            self?.setSceneCuts(cuts, for: path)
+            self?.setSceneCuts(cuts, for: path, knownDuration: cachedEntry.duration)
             self?.storeSceneCutCache(for: video, cuts: cuts)
             self?.sceneThumbnailHydrationTasks[path] = nil
             self?.bumpSceneThumbnailVersion(for: path)
@@ -1262,6 +1271,7 @@ extension LibraryStore {
         let rawPayloads = entry.cutTimes.enumerated().compactMap { index, rawTime -> (time: Double, thumbnailData: Data?)? in
             guard rawTime.isFinite else { return nil }
             let time = max(0, (rawTime * 1000).rounded() / 1000)
+            guard time > minimumSceneCutBoundaryTime else { return nil }
             return (time, index < thumbnails.count ? thumbnails[index] : nil)
         }
         .sorted { $0.time < $1.time }
@@ -1269,7 +1279,7 @@ extension LibraryStore {
         var payloads: [(time: Double, thumbnailData: Data?)] = []
         var previous: Double?
         for payload in rawPayloads {
-            guard previous.map({ payload.time - $0 >= 0.3 }) ?? true else { continue }
+            guard previous.map({ payload.time - $0 >= minimumSceneCutSpacing }) ?? true else { continue }
             payloads.append(payload)
             previous = payload.time
         }
@@ -1308,10 +1318,12 @@ extension LibraryStore {
     func setSceneCuts(
         _ cuts: [SceneCut],
         for path: String,
-        needsThumbnailHydration: Bool = false
+        needsThumbnailHydration: Bool = false,
+        knownDuration: Double? = nil
     ) {
         noteTransientMediaAccess(for: path)
         sceneDetectionErrorByVideoPath.removeValue(forKey: path)
+        rememberVideoDuration(knownDuration, for: path)
         sceneCutsByVideoPath[path] = cuts
         let shouldHydrateThumbnails = needsThumbnailHydration || cuts.contains { $0.isPlaceholder }
         if shouldHydrateThumbnails {
@@ -1321,16 +1333,41 @@ extension LibraryStore {
         }
         updateSceneStripImages(for: path)
         bumpSceneThumbnailVersion(for: path)
+        refreshSceneCutProgresses(for: path, cuts: cuts, knownDuration: knownDuration)
+        PerformanceDiagnostics.mark("scene cuts set", path: path)
+    }
+
+    func rememberVideoDuration(_ duration: Double?, for path: String) {
+        guard let duration, duration.isFinite, duration > 0 else { return }
+        durationByVideoPath[path] = duration
+        if var metadata = metadataByVideoPath[path] {
+            metadata.duration = duration
+            metadataByVideoPath[path] = metadata
+        }
+    }
+
+    func sceneCutProgressDuration(for path: String, knownDuration: Double? = nil) -> Double {
+        if let knownDuration, knownDuration.isFinite, knownDuration > 0 { return knownDuration }
+        if let duration = durationByVideoPath[path], duration.isFinite, duration > 0 { return duration }
+        if let duration = metadataByVideoPath[path]?.duration, duration.isFinite, duration > 0 { return duration }
+        return 0
+    }
+
+    func refreshSceneCutProgresses(for path: String, cuts explicitCuts: [SceneCut]? = nil, knownDuration: Double? = nil) {
+        guard let cuts = explicitCuts ?? sceneCutsByVideoPath[path] else {
+            sceneCutProgressesByVideoPath.removeValue(forKey: path)
+            return
+        }
+
         let progresses = Self.normalizedSceneCutProgresses(
             from: cuts.map(\.time),
-            duration: durationByVideoPath[path] ?? 0
+            duration: sceneCutProgressDuration(for: path, knownDuration: knownDuration)
         )
         if cuts.isEmpty || !progresses.isEmpty {
             sceneCutProgressesByVideoPath[path] = progresses
         } else {
             sceneCutProgressesByVideoPath.removeValue(forKey: path)
         }
-        PerformanceDiagnostics.mark("scene cuts set", path: path)
     }
 
     func updateSceneStripImages(for path: String) {
@@ -1391,31 +1428,6 @@ extension LibraryStore {
 
     func bumpSceneThumbnailVersion(for path: String) {
         sceneThumbnailVersionsByVideoPath[path, default: 0] += 1
-    }
-
-    func addAnnotation(video: VideoItem, time: Double, text: String, kind: AnnotationItem.Kind = .frame) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        annotations.append(AnnotationItem(
-            videoPath: video.url.path,
-            videoName: video.name,
-            time: max(0, time),
-            kind: kind,
-            text: trimmed
-        ))
-        saveProjectData()
-    }
-
-    func updateAnnotation(_ annotation: AnnotationItem, text: String) {
-        guard let index = annotations.firstIndex(where: { $0.id == annotation.id }) else { return }
-        annotations[index].text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        annotations[index].updatedAt = Date()
-        saveProjectData()
-    }
-
-    func deleteAnnotation(_ annotation: AnnotationItem) {
-        annotations.removeAll { $0.id == annotation.id }
-        saveProjectData()
     }
 
     @discardableResult

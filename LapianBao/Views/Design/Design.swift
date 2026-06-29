@@ -73,7 +73,7 @@ enum Design {
     static let timelineLaneContentHeight: CGFloat = timelineLaneHeight - timelineLaneVisualGap * 2
     static let expandedTimelineDetailHeight: CGFloat = 280
     static let sceneTimelineAutoVisibleSceneLimit = 15
-    static let sceneTimelineAutoMaxZoom: Double = 50
+    static let sceneTimelineAutoMaxZoom: Double = 240
     static let centeredWaveformViewportSpan: Double = 0.22
     static let previewExportOverlayWidthRatio: CGFloat = 1.0 / 3.0
     static let previewExportOverlayMinWidth: CGFloat = 260

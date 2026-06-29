@@ -216,6 +216,7 @@ extension PreviewPanelView {
     ) -> some View {
         let isShowingProgress = progress != nil
         let isHighlighted = isActive || isShowingProgress
+        let accessibilityText = progress.map { "识别中 \(progressPercentText($0))" } ?? help
 
         return Button(action: action) {
             Group {
@@ -240,7 +241,7 @@ extension PreviewPanelView {
             .animation(.easeOut(duration: 0.12), value: isShowingProgress)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(help)
+        .accessibilityLabel(accessibilityText)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 
@@ -467,8 +468,11 @@ extension PreviewPanelView {
                     .overlay {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .stroke(.white.opacity(0.16), lineWidth: 0.8)
+                            .allowsHitTesting(false)
                     }
                     .shadow(color: .black.opacity(0.34), radius: 18, y: 8)
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
                     .position(anchor)
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -938,6 +942,9 @@ extension PreviewPanelView {
         if nextExpandedTab != nil {
             startRecognitionForVisibleTimelineIfNeeded(tab: tab)
         }
+        if nextExpandedTab == .frames {
+            focusSceneTimelineOnOpeningIfNeeded()
+        }
     }
 
     func shouldDelayFrameTimelineExpansion(for video: VideoItem) -> Bool {
@@ -970,9 +977,10 @@ extension PreviewPanelView {
 
         switch pendingTab {
         case .frames:
+            libraryStore.loadCachedSceneCuts(for: video)
             guard
                 libraryStore.sceneDetectionProgress[pendingPath] == nil,
-                libraryStore.sceneCutsByVideoPath[pendingPath] != nil
+                libraryStore.hasSceneRecognitionResult(for: video)
             else { return }
         case .audio:
             if !libraryStore.transcriptSegmentsByVideoPath[pendingPath, default: []].isEmpty {

@@ -146,6 +146,8 @@ def require_video_media_generation_guardrails(sources: dict[str, str], app_swift
 
 def require_scene_detection_progress_guardrails(sources: dict[str, str]) -> None:
     external_runner = sources.get("LapianBao/ExternalProcessRunner.swift", "")
+    app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
+    scene_timeline_check = sources.get("LapianBao/CommandLineSceneTimelineCheck.swift", "")
     require(
         "errorLineHandler: (@Sendable (String) -> Void)? = nil" in external_runner
         and "PipeLineCollector()" in external_runner,
@@ -172,6 +174,24 @@ def require_scene_detection_progress_guardrails(sources: dict[str, str]) -> None
         and "predict_frames_with_progress" in script
         and "emit_progress(0.45 + (processed_frames / max(1, len(frames))) * 0.37)" in script,
         "TransNet helper must stream extraction and model inference progress.",
+    )
+    require(
+        "--lapianbao-scene-timeline-check" in scene_timeline_check
+        and "--lapianbao-scene-cache-restore-check" in scene_timeline_check
+        and "sceneCacheRestoreCheckResult()" in scene_timeline_check
+        and "LibraryStore.stableSceneCutTimes(from: [0, 0.0004, 2.0, 2.1, 6.0])" in scene_timeline_check
+        and "LibraryStore.normalizedSceneCutProgresses(from: stableCutTimes, duration: 10.0)" in scene_timeline_check
+        and "FrameScrubberSceneTimelineResolver.canRenderSplitTimeline" in scene_timeline_check
+        and "nonisolated static func canRenderSplitTimeline" in sources.get("LapianBao/Views/Components/CardAndTimelineHelpers.swift", "")
+        and "splitTimelineUsesFrameFallback" in scene_timeline_check
+        and "splitTimelineDoesNotRequireExactSceneImages" in scene_timeline_check
+        and "visibleSceneLimit: 15" in scene_timeline_check
+        and "maxZoom: 240" in scene_timeline_check
+        and "openingZoomUsesFifteenSceneWindow" in scene_timeline_check
+        and "denseTimelineUsesMaxZoom" in scene_timeline_check
+        and "clusteredTimelineUsesActualSceneBoundary" in scene_timeline_check
+        and "CommandLineSceneTimelineCheck.runIfRequested()" in app_delegate,
+        "Formal app executable must keep command-line smoke checks for scene timeline split state and cache path restoration.",
     )
 
     status_tiles = sources.get("LapianBao/Views/Components/StatusAndSceneTiles.swift", "")
@@ -213,10 +233,12 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
     require(
         "musicArtistTagLookup(from: recognizedAssets, localGroups: displayedLocalMusicGroups)" in make_projection
         and "repeatedMusicArtistTagLookup" not in projection_builder
-        and "static let singleSongArtistFilterCollapseThreshold = 24" in projection_builder
+        and "static let singleSongArtistFilterCollapseThreshold = 48" in projection_builder
+        and "static let collapsedArtistFilterMinimumSongCount = 2" in projection_builder
         and "guard songCount > 0 else { return nil }" in projection_builder
-        and "singleSongArtistCount > Self.singleSongArtistFilterCollapseThreshold" in projection_builder
-        and "entry.value.songCount > 1 || selectedArtistValues.contains(entry.value.displayName)" in projection_builder
+        and "Self.shouldCollapseSingleSongArtistFilters(singleSongArtistCount: singleSongArtistCount)" in projection_builder
+        and "Self.shouldDisplayArtistInCollapsedFilter(songCount: entry.value.songCount)" in projection_builder
+        and "|| selectedArtistValues.contains(entry.value.displayName)" in projection_builder
         and "guard songCount > 1 else { return nil }" not in projection_builder,
         "Music artist filters must include single-song artists until the adaptive single-song artist threshold is exceeded.",
     )
@@ -237,7 +259,8 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
         and "MusicWorkspaceDisplayCache" in projection_models
         and "static func loadLatest(in libraryURL: URL)" in projection_models
         and "applyingAdaptiveArtistFilterLimit(to: cache.projection)" in projection_models
-        and "MusicWorkspaceProjectionBuilder.singleSongArtistFilterCollapseThreshold" in projection_models
+        and "MusicWorkspaceProjectionBuilder.shouldCollapseSingleSongArtistFilters" in projection_models
+        and "MusicWorkspaceProjectionBuilder.shouldDisplayArtistInCollapsedFilter" in projection_models
         and "MusicWorkspaceProjection: Codable" in projection_models
         and "ProjectRepository.musicWorkspaceCacheURL" in projection_models,
         "Music workspace display projection must be persisted as a cache and normalize adaptive artist filters when restored.",
@@ -785,7 +808,7 @@ def require_quick_filter_chip_stable_selection_guardrails(sources: dict[str, str
     require(
         'Text("\\(count)")' in quick_filter_chip
         and ".fixedSize(horizontal: true, vertical: false)" in quick_filter_chip
-        and ".layoutPriority(2)" in quick_filter_chip,
+        and ".layoutPriority(3)" in quick_filter_chip,
         "Quick filter chip counts must keep enough layout priority to avoid being ellipsized.",
     )
     library_compact_chip = section_between(
@@ -801,9 +824,29 @@ def require_quick_filter_chip_stable_selection_guardrails(sources: dict[str, str
     require(
         'Text("\\(count)")' in library_compact_chip
         and ".fixedSize(horizontal: true, vertical: false)" in library_compact_chip
-        and ".layoutPriority(2)" in library_compact_chip
-        and "return max(14, ceil(width) + 6)" in library_count_width,
+        and ".layoutPriority(3)" in library_compact_chip
+        and "let digitCount = max(1, String(count).count)" in library_count_width
+        and "return max(18, CGFloat(digitCount) * 7 + 8)" in library_count_width,
         "Library sidebar filter chip counts must reserve a non-compressing count slot so numbers never become ellipses.",
+    )
+    frames_workspace = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    frame_filter_chip = section_between(
+        frames_workspace,
+        "private func frameTagFilterChip(",
+        "private func editableFrameTagFilterChip",
+    )
+    frame_count_width = section_between(
+        frames_workspace,
+        "private func frameTagFilterCountWidth(for count: Int)",
+        "private func frameTagFilterForeground",
+    )
+    require(
+        'Text("\\(count)")' in frame_filter_chip
+        and ".fixedSize(horizontal: true, vertical: false)" in frame_filter_chip
+        and ".layoutPriority(3)" in frame_filter_chip
+        and "let digitCount = max(1, String(count).count)" in frame_count_width
+        and "return max(20, CGFloat(digitCount) * 8 + 10)" in frame_count_width,
+        "Frame tag filter chip counts must reserve a non-compressing count slot so numbers never become ellipses.",
     )
     require(
         "标签筛选区使用紧凑胶囊 chip" in agents
@@ -1327,7 +1370,12 @@ def require_account_login_and_saved_import_removed_guardrails(sources: dict[str,
 
 def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
     preview_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView.swift", "")
+    timeline_layout = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineLayout.swift", "")
     timeline_details = sources.get("LapianBao/Views/Preview/PreviewPanelView+TimelineDetails.swift", "")
+    annotation_store = sources.get("LapianBao/Stores/LibraryStore+Annotations.swift", "")
+    persistence = sources.get("LapianBao/Stores/LibraryStore+PersistenceAndSources.swift", "")
+    app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
+    command_check = sources.get("LapianBao/CommandLineAnnotationSaveCheck.swift", "")
     agents = read("AGENTS.md")
     annotation_editor = section_between(
         timeline_details,
@@ -1341,8 +1389,8 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
     )
     save_button = section_between(
         annotation_editor,
-        'Button("保存")',
-        ".disabled(annotationText.trimmingCharacters",
+        'title: "保存"',
+        'saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)',
     )
     require(
         "static let annotationEditorWidth: CGFloat = 336" in preview_panel
@@ -1359,8 +1407,59 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
         "Annotation editor text must use moderate sizing and explicit horizontal text inset.",
     )
     require(
-        ".keyboardShortcut(.defaultAction)" not in save_button,
-        "Annotation editor save must not bind Return; Return should stay available for multiline text input.",
+        'Button("保存")' not in annotation_editor
+        and ".keyboardShortcut(.defaultAction)" not in save_button,
+        "Annotation editor save must use the fixed hit target and must not bind Return; Return should stay available for multiline text input.",
+    )
+    require(
+        "AnnotationEditorActionButton(" in annotation_editor
+        and 'accessibilityIdentifier: "annotation_editor_save_button"' in save_button
+        and "saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)" in annotation_editor
+        and "Button(action: action)" in timeline_details
+        and ".buttonStyle(AnnotationEditorHitTargetButtonStyle())" in timeline_details
+        and ".contentShape(Rectangle())" in timeline_details
+        and ".accessibilityAction(named: Text(title), action)" in timeline_details
+        and "private struct AnnotationEditorHitTargetButtonStyle: PrimitiveButtonStyle" in timeline_details
+        and "configuration.trigger()" in timeline_details
+        and "func currentAnnotationEditorText()" in timeline_details
+        and "NSApp.keyWindow?.firstResponder as? NSTextView" in timeline_details
+        and "guard !trimmedText.isEmpty else { return }" in timeline_details,
+        "Annotation editor save control must have a fixed clickable hit target and explicitly read the live NSTextView content before saving.",
+    )
+    require(
+        ".stroke(.white.opacity(0.16), lineWidth: 0.8)" in timeline_layout
+        and ".allowsHitTesting(false)" in section_between(
+            timeline_layout,
+            ".overlay {",
+            ".shadow(color: .black.opacity(0.34)",
+        )
+        and ".allowsHitTesting(true)" in section_between(
+            timeline_layout,
+            "annotationEditorView(for: video)",
+            ".position(anchor)",
+        ),
+        "Annotation editor decorative overlays must not block the action buttons.",
+    )
+    require(
+        "func addAnnotation(video: VideoItem, time: Double, text: String, kind: AnnotationItem.Kind = .frame) -> Bool" in annotation_store
+        and "func updateAnnotation(_ annotation: AnnotationItem, text: String) -> Bool" in annotation_store
+        and "guard !trimmed.isEmpty" in annotation_store,
+        "Annotation store mutations must report success and reject empty saves.",
+    )
+    require(
+        "if projectDataLoadState == .loading" in persistence
+        and "projectDataDirty = true" in persistence
+        and "pendingProjectDataEditsSnapshot(resolvingRelativeTo:" in persistence
+        and "mergingPendingEdits" in persistence
+        and "merged.annotations = mergeProjectDataItems(merged.annotations, pending.annotations)" in persistence,
+        "Annotation saves during deferred project-data loading must be merged instead of being overwritten by the loaded file.",
+    )
+    require(
+        "--lapianbao-annotation-save-check" in command_check
+        and "pendingProjectDataEditsSnapshot(resolvingRelativeTo:" in command_check
+        and "loading save" in command_check
+        and "CommandLineAnnotationSaveCheck.runIfRequested()" in app_delegate,
+        "Formal app executable must keep a command-line smoke check for annotation saves during project-data loading.",
     )
     require(
         "批注编辑弹层要保留舒适的输入区左右内边距" in agents
@@ -1380,6 +1479,7 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
     scene_panel = sources.get("LapianBao/Views/Preview/ScenePanelView.swift", "")
     home_content = sources.get("LapianBao/Views/Preview/PreviewPanelView+HomeContent.swift", "")
     timeline_controls = sources.get("LapianBao/Views/Preview/TimelineControls.swift", "")
+    design = sources.get("LapianBao/Views/Design/Design.swift", "")
     agents = read("AGENTS.md")
 
     timeline_stack = section_between(
@@ -1402,10 +1502,81 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
     )
     require(
         "activePreviewTab == .frames" not in focus_scene_timeline
-        and "timelineViewportSpan >= 0.999" in focus_scene_timeline
-        and "timelineOffset <= 0.0005" in focus_scene_timeline
+        and "!timelineViewportWasManuallyAdjusted" in focus_scene_timeline
+        and "let cutCount = sceneTimelineOpeningCutCount(for: video)" in focus_scene_timeline
+        and "let cutProgresses = sceneTimelineOpeningCutProgresses(for: video)" in focus_scene_timeline
+        and "let targetZoom = min(Design.sceneTimelineAutoMaxZoom" in focus_scene_timeline
+        and "let targetSpan = min(1, max(timelineMinimumViewportSpan, 1 / max(targetZoom, 1)))" in focus_scene_timeline
+        and "timelineViewportSpan >= 0.999" not in focus_scene_timeline
         and "updateTimelineViewportWithoutAnimation(" in focus_scene_timeline,
-        "Scene timeline default zoom must apply whenever the frame timeline viewport is reset, not only when the frames tab is active.",
+        "Scene timeline default zoom must use the available scene cut count and retry after cuts or duration arrive until the user manually adjusts the viewport.",
+    )
+    require(
+        "static let sceneTimelineAutoMaxZoom: Double = 240" in design
+        and "@State var timelineViewportWasManuallyAdjusted = false" in preview_panel
+        and "enum SceneTimelineOpeningZoomPolicy" in helpers
+        and "nonisolated static func viewportSpan" in helpers
+        and "SceneTimelineOpeningZoomPolicy.viewportSpan(" in helpers
+        and "cutProgresses: [Double]" in helpers
+        and "normalizedCuts[visibleSceneLimit - 1]" in helpers
+        and "visibleSceneLimit: Design.sceneTimelineAutoVisibleSceneLimit" in helpers
+        and "maxZoom: Design.sceneTimelineAutoMaxZoom" in helpers
+        and "var timelineMinimumViewportSpan: Double" in helpers
+        and "func sceneTimelineOpeningCutProgresses(for video: VideoItem)" in helpers
+        and "func sceneTimelineOpeningCutCount(for video: VideoItem)" in helpers
+        and "libraryStore.sceneCutsByVideoPath[path]" in helpers
+        and "sceneCutProgressDuration(for: path)" in helpers
+        and "1 / max(Design.sceneTimelineAutoMaxZoom, 1)" in helpers
+        and ".onReceive(libraryStore.$sceneCutsByVideoPath) { _ in" in preview_panel
+        and ".onChange(of: libraryStore.sceneCutProgressesByVideoPath)" in preview_panel
+        and ".onChange(of: controller.duration)" in preview_panel
+        and "focusSceneTimelineOnOpeningIfNeeded()" in preview_panel
+        and "timelineViewportWasManuallyAdjusted = true" in helpers
+        and "sceneTimelineAutoFocusedKey = nil" in helpers
+        and "timelineViewportWasManuallyAdjusted = false" in helpers,
+        "Frame timeline default zoom must be retried when scene cuts/progresses or duration arrive, while preserving user manual viewport changes and allowing dense scene timelines to zoom past 50x.",
+    )
+    expanded_timeline_section = section_between(
+        timeline_layout,
+        "func applyExpandedTimeline",
+        "func shouldDelayFrameTimelineExpansion",
+    )
+    require(
+        "if nextExpandedTab == .frames" in expanded_timeline_section
+        and "focusSceneTimelineOnOpeningIfNeeded()" in expanded_timeline_section,
+        "Opening the expanded frame timeline must apply the scene timeline default zoom even when the active tab was already frames.",
+    )
+    home_frame_tab = section_between(
+        home_content,
+        "func previewTabContent(for video: VideoItem) -> some View",
+        "case .audio:",
+    )
+    frame_detail_panel = section_between(
+        timeline_details,
+        "func frameTimelineDetailContent(",
+        "func audioTimelineDetailContent",
+    )
+    start_scene_recognition = section_between(
+        timeline_details,
+        "func startSceneRecognitionIfNeeded(for video: VideoItem)",
+        "func startContentRecognitionIfNeeded",
+    )
+    pending_timeline_expansion = section_between(
+        timeline_layout,
+        "func completePendingTimelineExpansionIfReady()",
+        "func timelineTranscriptRecognitionIsRunning",
+    )
+    require(
+        "hasSceneRecognitionResult: libraryStore.hasSceneRecognitionResult(for: video)" in home_frame_tab
+        and "hasSceneRecognitionResult: libraryStore.hasSceneRecognitionResult(for: video)" in frame_detail_panel,
+        "Frame preview panels must treat valid scene cache entries as recognized results instead of checking only resident scene cuts.",
+    )
+    require(
+        "libraryStore.loadCachedSceneCuts(for: video)" in start_scene_recognition
+        and "if libraryStore.hasSceneRecognitionResult(for: video)" in start_scene_recognition
+        and "libraryStore.loadCachedSceneCuts(for: video)" in pending_timeline_expansion
+        and "libraryStore.hasSceneRecognitionResult(for: video)" in pending_timeline_expansion,
+        "Opening or expanding recognized frame timelines must reload valid scene caches before starting a new recognition run.",
     )
 
     scene_progress_overlay = section_between(
@@ -1429,9 +1600,24 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
         "private final class TimelineImageLayerStripView: NSView",
         "struct SceneStoryboardStrip: View",
     )
+    frame_scrubber = section_between(
+        timeline_components,
+        "struct FrameScrubberView: View",
+        "// 播放键居中",
+    )
+    playback_tick = section_between(
+        helpers,
+        "func handlePlaybackClockTick",
+        "func togglePreviewPlayback",
+    )
     require(
         "func displayedTimelineOffset(for progress: Double) -> Double" in helpers
+        and "func timelineFollowOffset(for progress: Double) -> Double" in helpers
+        and "func commitDisplayedTimelineOffsetIfNeeded(for progress: Double)" in helpers
+        and "commitDisplayedTimelineOffsetIfNeeded(for: controller.progress)" in preview_panel
         and "controller.isPlaying || keyboardShuttleDirection != 0" in helpers
+        and "if !controller.isPlaying && keyboardShuttleDirection == 0" in playback_tick
+        and "updateTimelineViewportWithoutAnimation(offset:" not in playback_tick
         and "let viewportStart = displayedTimelineOffset(for: clock.progress)" in frame_timeline
         and "viewportStart: viewportStart" in frame_timeline
         and "private var imageLayerIDs: [ObjectIdentifier?]" in timeline_image_layer
@@ -1439,6 +1625,20 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
         and "if imageLayerIDs[index] != imageID" in timeline_image_layer
         and "imageLayer.contents = cgImage(for: item.image)" in timeline_image_layer,
         "Frame timeline playback follow must use the smooth clock for display offset and avoid resetting image layer contents on every frame.",
+    )
+    require(
+        "FrameScrubberSceneTimelineResolver.canRenderSplitTimeline" in timeline_components
+        and "let storyboardImages = sceneStoryboardImages" not in frame_scrubber
+        and "if shouldRenderSceneStoryboard" in frame_scrubber
+        and "images: sceneImages ?? []" in frame_scrubber
+        and "fallbackImages: frames" in frame_scrubber
+        and "fallbackImages: [NSImage]?" in timeline_components
+        and "func sceneImage(" in timeline_image_layer
+        and "fallbackSceneImage(for: index, from: fallbackImages" in timeline_image_layer
+        and "sceneCuts.count == sceneImages.count - 1" not in frame_scrubber
+        and "画面时间线识别到分镜切点后必须立即使用分段样式" in agents
+        and "不能因为 `sceneStripImages` 数量不完整退回普通连续帧带" in agents,
+        "Frame timeline must split from recognized scene cuts even when scene representative images are incomplete.",
     )
     require(
         "activeProgressTick" not in timeline_layout
@@ -1469,6 +1669,8 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
     )
     require(
         "主页画面时间线的默认缩放由场景数量决定" in agents
+        and "分镜切点、缓存恢复或视频 duration 后到时自动补套聚焦" in agents
+        and "密集分镜素材不能被 0.02 可见跨度或 50x 最大缩放卡住" in agents
         and "不要依赖当前激活的是不是画面 tab" in agents
         and "不要再套第二层进度插值" in agents,
         "AGENTS must record the preview timeline default zoom and single-interpolator rules.",
@@ -1650,6 +1852,47 @@ def require_recognized_library_restore_guardrails(sources: dict[str, str]) -> No
     )
 
 
+def require_import_panel_link_feedback_guardrails(sources: dict[str, str]) -> None:
+    import_input = sources.get("LapianBao/Views/AppShell/ContentView+ImportInput.swift", "")
+    import_sheet = sources.get("LapianBao/Views/AppShell/ContentView+ImportSheet.swift", "")
+    import_jobs = sources.get("LapianBao/Views/AppShell/ContentView+ImportJobs.swift", "")
+    content_view = sources.get("LapianBao/ContentView.swift", "")
+    app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
+    command_check = sources.get("LapianBao/CommandLineImportPanelCheck.swift", "")
+    import_tile = section_between(import_input, "var importTile: some View", "func autoFillClipboardURL")
+    input_section = section_between(import_sheet, "var importInputSection: some View", "var downloadProgressSection")
+
+    require(
+        'Image(systemName: "plus")' in import_tile,
+        "Formal import tile icon must stay as the original plus icon.",
+    )
+    require(
+        "@State var importURLFeedbackMessage: String?" in content_view
+        and "importInputStatusText" in input_section
+        and "importInputStatusIconName" in input_section
+        and "importInputStatusColor" in input_section
+        and ".disabled(!canSubmitImportURLs)" in input_section
+        and "importURLFeedbackMessage = nil" in input_section,
+        "Import sheet must show recognized/duplicate/invalid link feedback instead of silently disabling the download button.",
+    )
+    require(
+        "var canSubmitImportURLs: Bool" in import_jobs
+        and "var duplicateManualImportVideos: [PendingImportVideo]" in import_jobs
+        and "var unavailableImportURLFeedbackText: String" in import_jobs
+        and "importURLFeedbackMessage = unavailableImportURLFeedbackText" in import_jobs,
+        "Import job logic must keep explicit feedback for duplicate or otherwise non-downloadable pasted links.",
+    )
+    require(
+        "--lapianbao-import-panel-check" in command_check
+        and "LibraryStore.remoteImportURLs(from: rawText)" in command_check
+        and "LibraryStore.platformName(for:" in command_check
+        and "enqueuePreflightAccepted" in command_check
+        and "LibraryStore()" not in command_check
+        and "CommandLineImportPanelCheck.runIfRequested()" in app_delegate,
+        "Formal app executable must keep a command-line smoke check for import panel URL recognition without blocking MainActor startup.",
+    )
+
+
 def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None:
     import_jobs = sources.get("LapianBao/Views/AppShell/ContentView+ImportJobs.swift", "")
     active_status = section_between(
@@ -1681,6 +1924,129 @@ def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None
         "importStatusProgressText(for: job)" in import_jobs
         and "progressPercentText(progress)" in import_jobs,
         "Import job status text must keep showing the numeric percentage when progress is known.",
+    )
+    import_progress_summary = section_between(
+        import_jobs,
+        "var importProgressSummary: String",
+        "var downloadTimelineSummary: String",
+    )
+    require(
+        "progressPercentText" not in import_progress_summary
+        and "activeImportOverallProgress" not in import_progress_summary
+        and 'return "\\(activeImportJobs.count) 个任务"' in import_progress_summary,
+        "Download progress section header summary must show only the active task count, not an overall percentage.",
+    )
+    history_status = section_between(
+        import_jobs,
+        "func importHistoryJobStatus",
+        "func importJobCover",
+    )
+    history_helpers = section_between(
+        import_jobs,
+        "func importHistorySourceText",
+        "func importActiveStatusText",
+    )
+    source_index = history_status.find("Text(importHistorySourceText(for: job))")
+    detail_index = history_status.find("if let detailText = importHistoryFileDetailText(for: job)")
+    tags_index = history_status.find("if let video = importedVideo(for: job)")
+    require(
+        source_index >= 0
+        and detail_index > source_index
+        and tags_index > detail_index
+        and "Text(detailText)" in history_status,
+        "Download history cards must render source/author on the middle line and move file details to the line below it.",
+    )
+    require(
+        "sourceInfoByVideoPath" in history_helpers
+        and "candidateAuthorName" in history_helpers
+        and "metadataByVideoPath" in history_helpers
+        and "resolutionText" in history_helpers
+        and "ByteCountFormatter.string" in history_helpers
+        and "formatDuration(duration)" in history_helpers,
+        "Download history helper text must come from saved source/author metadata and separate file metadata.",
+    )
+
+
+def require_preview_export_panel_scroll_guardrails(sources: dict[str, str]) -> None:
+    export_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift", "")
+    app_event_bus = sources.get("LapianBao/AppEventBus.swift", "")
+    content_view = sources.get("LapianBao/ContentView.swift", "")
+    preview_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView.swift", "")
+    scene_panel = sources.get("LapianBao/Views/Preview/ScenePanelView.swift", "")
+    frames_workspace = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    export_content = section_between(
+        export_panel,
+        "func exportPanelContent(video: VideoItem",
+        "func exportPanelItems(",
+    )
+    sync_tracking = section_between(
+        export_panel,
+        "func syncExportPanelTracking(",
+        "func exportSectionTitle",
+    )
+    require(
+        "shouldScrollToLatest: true" in export_content
+        and export_content.count("shouldScrollToLatest: true") >= 2
+        and "func scrollExportPanelToLatest" in sync_tracking
+        and "proxy.scrollTo(newestID, anchor: .bottom)" in sync_tracking,
+        "Export panel must scroll to the newest bottom item when opened or when switching filters.",
+    )
+    require(
+        "struct ExportPanelRequest: Equatable" in app_event_bus
+        and "postOpenExportPanelRequest(path: String" in app_event_bus
+        and "openExportPanelRequestPublisher" in app_event_bus
+        and "pendingExportPanelRequest" in content_view
+        and "AppEventBus.exportPanelRequest(from: notification)" in content_view
+        and "switchWorkspace(to: .home)" in content_view
+        and "@Binding var pendingExportPanelRequest" in preview_panel
+        and "func consumePendingExportPanelRequestIfNeeded()" in preview_panel
+        and "isExportPanelPresented = true" in preview_panel
+        and "AppEventBus.postOpenExportPanelRequest(path: video.url.path)" in scene_panel
+        and "AppEventBus.postOpenExportPanelRequest(path: item.video.url.path)" in frames_workspace
+        and "AppEventBus.postOpenExportPanelRequest(path: video.url.path)" in frames_workspace,
+        "Adding a tag to a storyboard scene must request the home export panel after creating or updating the exported frame, from both preview and frames storyboard grids.",
+    )
+
+
+def require_drag_export_provider_guardrails(sources: dict[str, str]) -> None:
+    drag_helpers = sources.get("LapianBao/Views/Shared/ViewDragHelpers.swift", "")
+    metadata_helpers = sources.get("LapianBao/Stores/LibraryStore+MetadataAndExportHelpers.swift", "")
+    app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
+    command_check = sources.get("LapianBao/CommandLineDragProviderCheck.swift", "")
+    frame_provider = section_between(
+        metadata_helpers,
+        "nonisolated static func frameDragItemProvider",
+        "nonisolated static func savedFrameDataItemProvider",
+    )
+    saved_frame_provider = section_between(
+        metadata_helpers,
+        "nonisolated static func savedFrameDataItemProvider",
+        "nonisolated static func writeSavedFrameDragFile",
+    )
+
+    require(
+        'legacyFilenamesPasteboardTypeIdentifier = "NSFilenamesPboardType"' in drag_helpers
+        and "registerFileImportRepresentations(on: provider, fileURL: fileURL)" in drag_helpers
+        and "UTType.fileURL.identifier" in drag_helpers
+        and "UTType.url.identifier" in drag_helpers
+        and "legacyFilenamesPasteboardData(for: fileURL)" in drag_helpers
+        and "provider.registerObject(fileURL as NSURL, visibility: .all)" in drag_helpers,
+        "Existing drag-export files must expose modern and legacy file path pasteboard representations for external apps.",
+    )
+    require(
+        "registerFileImportRepresentations(on: provider) { completion in" in frame_provider
+        and "Self.renderFrameDragFile" in frame_provider
+        and "completion(.success(fileURL))" in frame_provider
+        and "registerFileImportRepresentations(on: provider) { completion in" in saved_frame_provider
+        and "Self.writeSavedFrameDragFile" in saved_frame_provider,
+        "Generated frame drag exports must expose a real file path, not only a file promise or JPEG data.",
+    )
+    require(
+        "--lapianbao-drag-provider-check" in command_check
+        and "dragProviderCanExposeFilePath" in command_check
+        and "legacyFilenamesPasteboardTypeIdentifier" in command_check
+        and "CommandLineDragProviderCheck.runIfRequested()" in app_delegate,
+        "Formal app executable must keep a command-line smoke check for external drag-import provider types.",
     )
 
 
@@ -1842,7 +2208,10 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
     require_settings_row_description_guardrails(sources)
     require_music_preview_playback_guardrails(sources)
     require_recognized_library_restore_guardrails(sources)
+    require_import_panel_link_feedback_guardrails(sources)
     require_import_job_progress_text_guardrails(sources)
+    require_preview_export_panel_scroll_guardrails(sources)
+    require_drag_export_provider_guardrails(sources)
     require_regex_allowlist(
         sources,
         r"NotificationCenter\.default",
@@ -1883,12 +2252,16 @@ def main() -> None:
     preview_controller = app_swift
     content_view = app_swift
     launch_imports = swift_sources.get("LapianBao/Stores/LibraryStore+LaunchAndRemoteImports.swift", "")
+    video_library = swift_sources.get("LapianBao/Stores/LibraryStore+VideoLibraryAndTags.swift", "")
     remote_download = swift_sources.get("LapianBao/Stores/LibraryStore+RemoteDownload.swift", "")
     remote_download_types = swift_sources.get("LapianBao/Stores/LibraryStore+RemoteDownloadTypes.swift", "")
     ytdlp_download = swift_sources.get("LapianBao/Stores/LibraryStore+YTDLPDownload.swift", "")
     music_detection = swift_sources.get("LapianBao/Stores/LibraryStore+MusicDetection.swift", "")
+    music_runtime_check = swift_sources.get("LapianBao/CommandLineMusicRuntimeCheck.swift", "")
+    download_progress_check = swift_sources.get("LapianBao/CommandLineDownloadProgressCheck.swift", "")
     xiaohongshu_download = swift_sources.get("LapianBao/Stores/LibraryStore+XiaohongshuDownload.swift", "")
     requirements_music = read("Tools/requirements-music.txt")
+    bundled_requirements_music = read("LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/requirements-music.txt")
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
 
     require(
@@ -1907,15 +2280,61 @@ def main() -> None:
         'audioop-lts==0.2.2; python_version >= "3.13"' in requirements_music,
         "Music recognition requirements must only install audioop-lts on Python 3.13+, because bundled Python 3.11 still has audioop.",
     )
+    require(
+        bundled_requirements_music == requirements_music,
+        "Bundled formal app music requirements must stay identical to Tools/requirements-music.txt.",
+    )
+    require(
+        "--lapianbao-music-runtime-check" in music_runtime_check
+        and 'requirementsRelativePath: "Tools/requirements-music.txt"' in music_runtime_check
+        and 'probeModules: ["shazamio", "requests"]' in music_runtime_check
+        and "environment: probeEnvironment(for: pythonURL)" in music_runtime_check
+        and "LibraryStore.localFFmpegDirectoryPath()" in music_runtime_check
+        and "CommandLineMusicRuntimeCheck.runIfRequested()" in app_swift,
+        "Formal app executable must keep a command-line smoke check for music-recognition Python dependencies.",
+    )
+    require(
+        "let expectedPartCount = videoInfo?.expectedDownloadPartCount ?? 1" in ytdlp_download
+        and "let expectedPartByteCounts = videoInfo?.expectedDownloadPartByteCounts ?? []" in ytdlp_download
+        and '"--progress-template", "download:lapianbao-progress downloaded=%(progress.downloaded_bytes)s total=%(progress.total_bytes)s total_estimate=%(progress.total_bytes_estimate)s speed=%(progress.speed)s"' in ytdlp_download
+        and "parseYTDLPStructuredProgressUpdate" in ytdlp_download
+        and "downloadedBytes: downloadedBytes" in ytdlp_download
+        and "expectedPartByteCounts: expectedPartByteCounts" in ytdlp_download
+        and "downloadCompletionProgress: 0.96" in ytdlp_download
+        and "postProcessingProgress: 0.98" in ytdlp_download
+        and "allowsEstimatedMultipartProgress: false" in ytdlp_download
+        and "videoInfo?.expectedDownloadPartCount ?? 2" not in ytdlp_download
+        and "var expectedDownloadPartByteCounts" in remote_download_types
+        and "filesizeApprox = \"filesize_approx\"" in remote_download_types
+        and "byteWeightedOverallProgress" in remote_download_types
+        and "observedPartDownloadedBytes" in remote_download_types
+        and "parseYTDLPTotalBytes" in ytdlp_download
+        and "--lapianbao-download-progress-check" in download_progress_check
+        and "single part 50% must stay 50%" in download_progress_check
+        and "structured yt-dlp byte progress must use downloaded_bytes / total_bytes" in download_progress_check
+        and "live yt-dlp download completion must stop below final imported 100%" in download_progress_check
+        and "multipart downloads without known sizes must not jump to 50%" in download_progress_check
+        and "multipart downloads with known sizes must use byte-weighted progress" in download_progress_check
+        and "CommandLineDownloadProgressCheck.runIfRequested()" in app_swift,
+        "Remote video download progress must not default unknown downloads to two parts or jump to half progress.",
+    )
     launch_restore_section = section_between(
         launch_imports,
         "func loadLastLibraryForLaunch()",
-        "func scheduleInitialVideoSelectionAfterLaunch",
+        "func lastLibraryURLForLoading()",
     )
     require(
         "includeThumbnailData: false" in launch_restore_section
         and "CachedVideoLibrarySummary" in library_store,
         "Launch library restore must use a lightweight video cache and avoid decoding cached thumbnail data before the list appears.",
+    )
+    require(
+        "scheduleInitialVideoSelectionAfterLaunch" not in app_swift
+        and "selectFirstVideo: selectedPath == nil" not in launch_imports
+        and "selectFirstVideo: selectedPath == nil" not in video_library
+        and "if self.selectedVideo == nil, let firstVideo" not in video_library
+        and "selectOnCompletion || self?.selectedVideo == nil" not in launch_imports,
+        "Launch, library restore, and import completion must not auto-open a video just because no video is selected.",
     )
     bookmark_restore_section = section_between(
         launch_imports,
@@ -1979,6 +2398,10 @@ def main() -> None:
         and "reader.cancelReading()" in scene_detection_section,
         "Scene detection cancellation must stop the active TransNet process and local frame reader.",
     )
+    require(
+        "SceneDetectionResult(cuts: cuts, duration: totalSeconds)" in scene_detection_section,
+        "Scene detection must return the measured duration with cut results so timeline splits can normalize reliably.",
+    )
     make_scene_cuts_section = section_between(
         library_store,
         "nonisolated static func makeSceneCuts",
@@ -1996,9 +2419,21 @@ def main() -> None:
         "func deleteSceneRecognition",
     )
     require(
-        "setSceneCuts(cuts, for: path)" in finish_scene_detection_section
+        "setSceneCuts(cuts, for: path, knownDuration: knownDuration)" in finish_scene_detection_section
         and "guard !cuts.isEmpty" not in finish_scene_detection_section,
         "Scene detection must record completed empty results instead of restarting forever.",
+    )
+    require(
+        "minimumSceneCutBoundaryTime" in library_store
+        and "guard time > minimumSceneCutBoundaryTime else { continue }" in library_store
+        and "guard time > minimumSceneCutBoundaryTime else { return nil }" in library_store,
+        "Scene cut normalization must drop 0-second boundary cuts in both fresh and cached paths.",
+    )
+    require(
+        "refreshSceneCutProgresses(for: path, cuts: cuts, knownDuration: knownDuration)" in library_store
+        and "sceneCutProgressDuration(for: path, knownDuration: knownDuration)" in library_store
+        and "knownDuration: cachedEntry.duration" in library_store,
+        "Scene cut timeline progress must be refreshed from known detection/cache duration instead of depending on metadata timing.",
     )
     cached_scene_entry_section = section_between(
         library_store,
@@ -2008,6 +2443,32 @@ def main() -> None:
     require(
         "!entry.cutTimes.isEmpty" not in cached_scene_entry_section,
         "Scene cut cache validation must allow completed empty scene results.",
+    )
+    timeline_media = swift_sources.get("LapianBao/Stores/LibraryStore+TimelineMedia.swift", "")
+    load_cached_scene_cuts_section = section_between(
+        timeline_media,
+        "func loadCachedSceneCuts(for video: VideoItem)",
+        "func hydrateSceneThumbnailsIfNeeded",
+    )
+    hydrate_cached_scene_thumbnails_section = section_between(
+        timeline_media,
+        "func hydrateSceneThumbnailsIfNeeded(for video: VideoItem)",
+        "nonisolated static func cachedSceneCuts",
+    )
+    require(
+        "func relocatedSceneCutCacheEntry" in cached_scene_entry_section
+        and "sceneDetectorCacheCompatibleVersions" in library_store
+        and "Self.sceneDetectorCacheCompatibleVersions.contains(entry.detectorVersion)" in cached_scene_entry_section
+        and "URL(fileURLWithPath: entry.relativePath).lastPathComponent == currentFileName" in cached_scene_entry_section
+        and "entry.fileSize == signature.fileSize" in cached_scene_entry_section
+        and "abs(entry.modificationTime - signature.modificationTime) < 1.0" in cached_scene_entry_section
+        and "matches.count == 1" in cached_scene_entry_section,
+        "Scene cut cache restore must safely migrate old relative paths and compatible detector-version entries.",
+    )
+    require(
+        "sceneCutCacheEntry(for: video, migrateRelocatedEntry: true)" in load_cached_scene_cuts_section
+        and "sceneCutCacheEntry(for: video, migrateRelocatedEntry: true)" in hydrate_cached_scene_thumbnails_section,
+        "Scene cut cache loading and thumbnail hydration must persist safe relative-path migrations.",
     )
     store_scene_cache_section = section_between(
         library_store,

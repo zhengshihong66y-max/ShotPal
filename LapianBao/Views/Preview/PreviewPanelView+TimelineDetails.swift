@@ -30,7 +30,7 @@ extension PreviewPanelView {
             video: video,
             controller: controller,
             sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
-            hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
+            hasSceneRecognitionResult: libraryStore.hasSceneRecognitionResult(for: video),
             sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
             sceneDetectionError: libraryStore.sceneDetectionErrorByVideoPath[video.url.path],
             sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
@@ -113,6 +113,7 @@ extension PreviewPanelView {
                         Label(statusFailed(status) ? "重试" : "生成字幕", systemImage: "text.badge.plus")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityIdentifier("transcript_generate_button")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
@@ -215,6 +216,7 @@ extension PreviewPanelView {
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("transcript_segment_row")
                         .id(segment.id)
                     }
                 }
@@ -262,7 +264,8 @@ extension PreviewPanelView {
 
     func startSceneRecognitionIfNeeded(for video: VideoItem) {
         let path = video.url.path
-        if libraryStore.sceneCutsByVideoPath[path] != nil {
+        libraryStore.loadCachedSceneCuts(for: video)
+        if libraryStore.hasSceneRecognitionResult(for: video) {
             hydrateSceneThumbnailsForFrameTimelineIfIdle()
             return
         }
@@ -385,37 +388,95 @@ extension PreviewPanelView {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             HStack(spacing: 12) {
                 if let editingAnnotation {
-                    Button(role: .destructive) {
+                    AnnotationEditorActionButton(
+                        title: "删除",
+                        role: .destructive,
+                        accessibilityIdentifier: "annotation_editor_delete_button"
+                    ) {
                         libraryStore.deleteAnnotation(editingAnnotation)
                         editingAnnotationID = nil
                         isAnnotationPopoverPresented = false
-                    } label: {
-                        Text("删除")
                     }
                 }
 
                 Spacer()
-                Button("取消") {
+                AnnotationEditorActionButton(
+                    title: "取消",
+                    role: .secondary,
+                    accessibilityIdentifier: "annotation_editor_cancel_button"
+                ) {
                     editingAnnotationID = nil
                     isAnnotationPopoverPresented = false
                 }
-                Button("保存") {
-                    if let editingAnnotation {
-                        libraryStore.updateAnnotation(editingAnnotation, text: annotationText)
-                    } else {
-                        let annotationTime = controller.duration > 0
-                            ? annotationEditorAnchor.progress * controller.duration
-                            : controller.elapsed
-                        libraryStore.addAnnotation(video: video, time: annotationTime, text: annotationText, kind: pendingAnnotationKind)
-                    }
-                    editingAnnotationID = nil
-                    isAnnotationPopoverPresented = false
+                AnnotationEditorActionButton(
+                    title: "保存",
+                    role: .primary,
+                    accessibilityIdentifier: "annotation_editor_save_button"
+                ) {
+                    saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)
                 }
-                .disabled(annotationText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            .frame(height: AnnotationEditorActionButton.height)
+            .zIndex(2)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
+    }
+
+    func saveAnnotationEditor(for video: VideoItem, editingAnnotation: AnnotationItem?) {
+        let latestText = currentAnnotationEditorText()
+        annotationText = latestText
+        let trimmedText = latestText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return }
+
+        let didSave: Bool
+        if let editingAnnotation {
+            didSave = libraryStore.updateAnnotation(editingAnnotation, text: trimmedText)
+        } else {
+            let annotationTime = controller.duration > 0
+                ? annotationEditorAnchor.progress * controller.duration
+                : controller.elapsed
+            didSave = libraryStore.addAnnotation(video: video, time: annotationTime, text: trimmedText, kind: pendingAnnotationKind)
+        }
+
+        guard didSave else { return }
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        editingAnnotationID = nil
+        isAnnotationPopoverPresented = false
+    }
+
+    func currentAnnotationEditorText() -> String {
+        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+           isAnnotationEditorTextView(textView)
+        {
+            return textView.string
+        }
+        if let textView = annotationEditorTextView(in: NSApp.keyWindow?.contentView) {
+            return textView.string
+        }
+        for window in NSApp.windows where window != NSApp.keyWindow {
+            if let textView = annotationEditorTextView(in: window.contentView) {
+                return textView.string
+            }
+        }
+        return annotationText
+    }
+
+    func annotationEditorTextView(in rootView: NSView?) -> NSTextView? {
+        guard let rootView else { return nil }
+        if let textView = rootView as? NSTextView, isAnnotationEditorTextView(textView) {
+            return textView
+        }
+        for subview in rootView.subviews {
+            if let textView = annotationEditorTextView(in: subview) {
+                return textView
+            }
+        }
+        return nil
+    }
+
+    func isAnnotationEditorTextView(_ textView: NSTextView) -> Bool {
+        textView.accessibilityIdentifier() == AnnotationEditorAccessibility.textViewIdentifier
     }
 
     func beginAnnotation(_ kind: AnnotationItem.Kind, sourceTab: PreviewTab) {
@@ -449,6 +510,97 @@ extension PreviewPanelView {
         return libraryStore.annotations(for: video).first { $0.id == editingAnnotationID }
     }
 
+}
+
+private enum AnnotationEditorAccessibility {
+    static let textViewIdentifier = "annotation_editor_text_view"
+}
+
+private struct AnnotationEditorActionButton: View {
+    enum Role {
+        case primary
+        case secondary
+        case destructive
+    }
+
+    static let height: CGFloat = 30
+
+    let title: String
+    let role: Role
+    let accessibilityIdentifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .foregroundStyle(foreground)
+                .frame(minWidth: 56)
+                .frame(height: Self.height)
+                .padding(.horizontal, 4)
+                .background(background)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(AnnotationEditorHitTargetButtonStyle())
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityAction(named: Text(title), action)
+    }
+
+    private var foreground: Color {
+        switch role {
+        case .primary:
+            return .white.opacity(0.96)
+        case .secondary:
+            return .white.opacity(0.78)
+        case .destructive:
+            return .red.opacity(0.9)
+        }
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        switch role {
+        case .primary:
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Design.annotationAccent.opacity(0.34))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Design.annotationAccent.opacity(0.36), lineWidth: 0.8)
+                        .allowsHitTesting(false)
+                }
+        case .secondary:
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.white.opacity(0.08))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(.white.opacity(0.12), lineWidth: 0.8)
+                        .allowsHitTesting(false)
+                }
+        case .destructive:
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(.red.opacity(0.12))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(.red.opacity(0.18), lineWidth: 0.8)
+                        .allowsHitTesting(false)
+                }
+        }
+    }
+}
+
+private struct AnnotationEditorHitTargetButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                TapGesture().onEnded {
+                    configuration.trigger()
+                }
+            )
+    }
 }
 
 private struct AnnotationEditorTextView: NSViewRepresentable {
@@ -487,6 +639,8 @@ private struct AnnotationEditorTextView: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.setAccessibilityIdentifier(AnnotationEditorAccessibility.textViewIdentifier)
+        textView.setAccessibilityLabel("批注输入框")
 
         scrollView.documentView = textView
         context.coordinator.textView = textView

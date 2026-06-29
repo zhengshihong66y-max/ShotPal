@@ -54,7 +54,8 @@
 - 画面和音乐工作区的 `LibraryToolbar` 必须接收 `ContentView` 通过 `homeMediaContentWidth(containerWidth:)` 传入的主页素材内容区宽度；不能让全宽工作区或分镜自己的宽面板直接决定顶部搜索框长度。
 - 主页、画面和音乐工作区的顶部按钮必须由 `LibraryToolbarActionRow` 统一排列成 3 个固定槽位，槽位使用 `Design.libraryToolbarButtonSlotWidth`/`Design.libraryToolbarButtonSlotHeight`，按钮间距使用 `Design.libraryToolbarButtonGap`；音乐页两个可见按钮直接从第一个槽位开始排列，只有中间缺槽时才用 `LibraryToolbarActionPlaceholder` 占位，不要在单个页面里用额外 `Spacer`、局部 `.frame`、宽滑杆或自定义间距重做工具栏。
 - 播放驱动的时间线移动、帧带平移、滚轮平移、缩放和播放头更新是高频路径。不要让它们继承 SwiftUI 隐式动画。
-- 主页画面时间线的默认缩放由场景数量决定，换视频后只要视窗仍是重置状态就要自动聚焦，不要依赖当前激活的是不是画面 tab；场景进度条只吃外层平滑播放 clock，不要再套第二层进度插值。
+- 主页画面时间线的默认缩放由场景数量决定，换视频后只要用户还没有手动平移或缩放，就要在分镜切点、缓存恢复或视频 duration 后到时自动补套聚焦，不要依赖当前激活的是不是画面 tab；密集分镜素材不能被 0.02 可见跨度或 50x 最大缩放卡住；场景进度条只吃外层平滑播放 clock，不要再套第二层进度插值。
+- 画面时间线识别到分镜切点后必须立即使用分段样式；分段显示只能依赖 `sceneCuts`，不能因为 `sceneStripImages` 数量不完整退回普通连续帧带，代表帧缺失时用现有帧带或缩略图兜底。
 - 主页画面时间线播放中的横向跟随必须用平滑播放 clock 计算显示用 viewport offset，不能只靠 30fps 发布状态跳动；展开画面时间线后的场景网格不能为了进度显示整网格重绘，只有当前活动卡片的进度层可以用 60fps clock 更新。
 - 分镜网格点击场景卡片时不能直接 seek 到剪辑点边界；必须使用 `sceneGridSeekTime(for:)` 跳到剪辑点后一帧安全位置并关闭本次 `snapToFrame`，`activeSceneItemID` 也要保留剪辑点边界容差，避免落到上一个网格。
 - 素材库滚动路径不得同步解码图片、读取扩展属性、扫描文件夹、生成波形或无限制生成缩略图。

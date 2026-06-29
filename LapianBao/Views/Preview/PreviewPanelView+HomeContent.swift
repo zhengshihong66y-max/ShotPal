@@ -184,7 +184,7 @@ extension PreviewPanelView {
                 video: video,
                 controller: controller,
                 sceneCuts: libraryStore.sceneCutsByVideoPath[video.url.path] ?? [],
-                hasSceneRecognitionResult: libraryStore.sceneCutsByVideoPath[video.url.path] != nil,
+                hasSceneRecognitionResult: libraryStore.hasSceneRecognitionResult(for: video),
                 sceneDetectionProgress: libraryStore.sceneDetectionProgress[video.url.path],
                 sceneDetectionError: libraryStore.sceneDetectionErrorByVideoPath[video.url.path],
                 sceneThumbnailVersion: libraryStore.sceneThumbnailVersionsByVideoPath[video.url.path] ?? 0,
@@ -424,6 +424,7 @@ extension PreviewPanelView {
                             .accessibilityLabel("停止")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityIdentifier("music_recognition_stop_button")
                 } else {
                     Button {
                         libraryStore.detectMusic(for: video)
@@ -431,6 +432,7 @@ extension PreviewPanelView {
                         Label(songs.isEmpty ? "识别音乐" : "重新识别", systemImage: "music.note.list")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityIdentifier("music_recognition_start_button")
                 }
             }
 
@@ -503,6 +505,7 @@ extension PreviewPanelView {
                     Label("生成字幕", systemImage: "text.badge.plus")
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("transcript_generate_button")
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 10)
@@ -532,6 +535,7 @@ extension PreviewPanelView {
                                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("transcript_segment_row")
                             .id(segment.id)
                         }
                     }

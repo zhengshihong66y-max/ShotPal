@@ -13,6 +13,7 @@ final class AppWindowManager {
     private let libraryStore: LibraryStore
     private weak var windowDelegate: NSWindowDelegate?
     private var mainWindow: NSWindow?
+    private var pendingInitialCenterPasses = 0
 
     init(libraryStore: LibraryStore, windowDelegate: NSWindowDelegate?) {
         self.libraryStore = libraryStore
@@ -31,7 +32,12 @@ final class AppWindowManager {
 
     func ensureMainWindowVisible() {
         let window = mainWindow ?? createMainWindow()
-        restoreWindowToVisibleScreenIfNeeded(window)
+        if pendingInitialCenterPasses > 0 {
+            pendingInitialCenterPasses -= 1
+            centerWindowOnVisibleScreen(window, display: true)
+        } else {
+            restoreWindowToVisibleScreenIfNeeded(window)
+        }
         NSApp.unhide(nil)
         if window.isMiniaturized {
             window.deminiaturize(nil)
@@ -77,19 +83,45 @@ final class AppWindowManager {
             origin: .zero,
             size: window.contentMinSize
         )).size
-        window.center()
+        centerWindowOnVisibleScreen(window, display: false)
+        pendingInitialCenterPasses = 4
         mainWindow = window
         StartupDiagnostics.mark(.mainWindowCreated)
         return window
     }
 
+    private func centerWindowOnVisibleScreen(_ window: NSWindow, display: Bool) {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            window.center()
+            return
+        }
+
+        let visibleFrame = screen.visibleFrame
+        let windowSize = CGSize(
+            width: min(window.frame.width, visibleFrame.width),
+            height: min(window.frame.height, visibleFrame.height)
+        )
+        let centeredFrame = CGRect(
+            x: visibleFrame.midX - windowSize.width / 2,
+            y: visibleFrame.midY - windowSize.height / 2,
+            width: windowSize.width,
+            height: windowSize.height
+        )
+        window.setFrame(centeredFrame, display: display)
+    }
+
     private func restoreWindowToVisibleScreenIfNeeded(_ window: NSWindow) {
         let frame = window.frame
-        let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
-        let isCenteredOnVisibleScreen = NSScreen.screens.contains { screen in
-            screen.visibleFrame.contains(windowCenter)
+        let containingScreen = NSScreen.screens.first { screen in
+            screen.visibleFrame.contains(frame)
         }
-        guard !isCenteredOnVisibleScreen, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        guard containingScreen == nil else { return }
+
+        let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
+        guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(windowCenter) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        else { return }
 
         let visibleFrame = screen.visibleFrame
         let windowSize = CGSize(

@@ -370,11 +370,16 @@ struct WindowConfigurator: NSViewRepresentable {
 
         private func restoreWindowToVisibleScreenIfNeeded(_ window: NSWindow) {
             let frame = window.frame
-            let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
-            let isCenteredOnVisibleScreen = NSScreen.screens.contains { screen in
-                screen.visibleFrame.contains(windowCenter)
+            let containingScreen = NSScreen.screens.first { screen in
+                screen.visibleFrame.contains(frame)
             }
-            guard !isCenteredOnVisibleScreen, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+            guard containingScreen == nil else { return }
+
+            let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
+            guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(windowCenter) })
+                ?? NSScreen.main
+                ?? NSScreen.screens.first
+            else { return }
 
             let visibleFrame = screen.visibleFrame
             let windowSize = CGSize(

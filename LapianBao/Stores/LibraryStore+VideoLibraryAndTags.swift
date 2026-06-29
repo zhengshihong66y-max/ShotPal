@@ -82,10 +82,6 @@ extension LibraryStore {
 
             self.flushCurrentVideoLibrarySnapshot()
 
-            if self.selectedVideo == nil, let firstVideo = self.videos.first {
-                self.selectVideo(firstVideo, autoplay: false)
-            }
-
             self.libraryScanProgress = LibraryScanProgress(message: "素材库扫描完成", completed: 1, total: 1)
             try? await Task.sleep(nanoseconds: 450_000_000)
             if self.libraryScanGeneration == scanGeneration {
@@ -126,7 +122,6 @@ extension LibraryStore {
             scanResourceLibrary(refreshMode: .cachedOnly, loadCachedSnapshotSynchronously: true)
         }
 
-        scheduleInitialVideoSelectionAfterLaunch(in: folder, after: Self.launchInitialVideoSelectionDelay)
         libraryScanProgress = LibraryScanProgress(message: "正在检查音乐缓存", completed: 0, total: 1)
         libraryScanTask = Task { @MainActor [weak self] in
             guard let self,
@@ -193,7 +188,7 @@ extension LibraryStore {
                 urls: organized.urls,
                 deferProjectDataLoad: true,
                 projectDataLoadDelay: 0,
-                selectFirstVideo: selectedPath == nil,
+                selectFirstVideo: false,
                 metadataPrefetchLimit: Self.launchMetadataPrefetchLimit,
                 metadataWorkerCount: Self.launchMetadataWorkerCount,
                 metadataBackgroundPrefetchDelay: Self.launchBackgroundMetadataPrefetchDelay,
@@ -228,7 +223,7 @@ extension LibraryStore {
         urls: [URL],
         deferProjectDataLoad: Bool,
         projectDataLoadDelay: TimeInterval = 0,
-        selectFirstVideo: Bool = true,
+        selectFirstVideo: Bool = false,
         metadataPrefetchLimit: Int? = nil,
         metadataWorkerCount: Int = 3,
         metadataBackgroundPrefetchDelay: TimeInterval? = nil,

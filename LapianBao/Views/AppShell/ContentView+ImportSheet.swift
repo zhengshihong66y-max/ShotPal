@@ -64,6 +64,7 @@ extension ContentView {
                 if !importURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button {
                         importURLText = ""
+                        importURLFeedbackMessage = nil
                     } label: {
                         Text("清空")
                             .font(.caption2.weight(.semibold))
@@ -88,14 +89,17 @@ extension ContentView {
             }
             .accessibilityLabel("导入链接输入框")
             .accessibilityIdentifier("import_url_text_editor")
+            .onChange(of: importURLText) { _, _ in
+                importURLFeedbackMessage = nil
+            }
 
             HStack(alignment: .center, spacing: 10) {
-                if !manualImportVideos.isEmpty {
+                if let importInputStatusText {
                     HStack(spacing: 6) {
-                        Image(systemName: platformIconName)
+                        Image(systemName: importInputStatusIconName)
                             .font(.caption)
-                            .foregroundStyle(VideoSourcePlatform.color(for: detectedImportPlatform))
-                        Text("\(manualImportVideos.count) 个输入链接")
+                            .foregroundStyle(importInputStatusColor)
+                        Text(importInputStatusText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -128,7 +132,7 @@ extension ContentView {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(manualImportVideos.isEmpty)
+                .disabled(!canSubmitImportURLs)
                 .accessibilityLabel("开始下载导入链接")
                 .accessibilityIdentifier("import_start_download_button")
             }

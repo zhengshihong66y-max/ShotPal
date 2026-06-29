@@ -36,6 +36,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     )
 
     static func main() {
+        CommandLineImportPanelCheck.runIfRequested()
+        CommandLineAnnotationSaveCheck.runIfRequested()
+        CommandLineDownloadProgressCheck.runIfRequested()
+        CommandLineSceneTimelineCheck.runIfRequested()
+        CommandLineDragProviderCheck.runIfRequested()
+        CommandLineMusicRuntimeCheck.runIfRequested()
         runCommandLineMusicWaveformCachePrewarmIfRequested()
         runCommandLineSelfCheckIfRequested()
         StartupDiagnostics.mark(.mainEntered)

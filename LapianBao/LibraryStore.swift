@@ -330,6 +330,10 @@ final class LibraryStore: ObservableObject {
     var transcriptTasks: [String: Task<Void, Never>] = [:]
 
     nonisolated static let sceneDetectorVersion = "transnetv2+hardcut-rescue@2026-05-25.1"
+    nonisolated static let sceneDetectorCacheCompatibleVersions: Set<String> = [
+        sceneDetectorVersion,
+        "transnetv2+hardcut-rescue@2026-05-24.2"
+    ]
     nonisolated static let waveformSampleCount = 4096
     nonisolated static let audioClipWaveformSampleCount = 96
     nonisolated static let audioClipWaveformVersion = AudioClipItem.currentWaveformVersion

@@ -84,10 +84,6 @@ extension LibraryStore {
                         cachedPlaybackSupportByPath: cached.playbackSupportByPath,
                         decodeCachedThumbnailsImmediately: false
                     )
-                    store.scheduleInitialVideoSelectionAfterLaunch(
-                        in: url,
-                        after: Self.launchInitialVideoSelectionDelay
-                    )
                 }
                 return
             }
@@ -110,10 +106,6 @@ extension LibraryStore {
                     cachedThumbnailDataByPath: quickSnapshot.thumbnailDataByPath,
                     cachedPlaybackSupportByPath: quickSnapshot.playbackSupportByPath
                 )
-                store.scheduleInitialVideoSelectionAfterLaunch(
-                    in: url,
-                    after: Self.launchInitialVideoSelectionDelay
-                )
             }
 
             try? await Task.sleep(nanoseconds: UInt64(Self.launchVideoReconcileDelay * 1_000_000_000))
@@ -130,7 +122,7 @@ extension LibraryStore {
                     urls: organized.urls,
                     deferProjectDataLoad: true,
                     projectDataLoadDelay: 0,
-                    selectFirstVideo: selectedPath == nil,
+                    selectFirstVideo: false,
                     metadataPrefetchLimit: Self.launchMetadataPrefetchLimit,
                     metadataWorkerCount: Self.launchMetadataWorkerCount,
                     metadataBackgroundPrefetchDelay: nil,
@@ -145,17 +137,6 @@ extension LibraryStore {
             }
         }
         return true
-    }
-
-    func scheduleInitialVideoSelectionAfterLaunch(in url: URL, after delay: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay)) { [weak self] in
-            guard let self,
-                  self.libraryURL?.path == url.path,
-                  self.selectedVideo == nil,
-                  let firstVideo = self.videos.first
-            else { return }
-            self.selectVideo(firstVideo, autoplay: false)
-        }
     }
 
     func lastLibraryURLForLoading() -> URL? {
@@ -503,7 +484,7 @@ extension LibraryStore {
                         authorName: downloadedVideo.authorName,
                         sourceTitle: downloadedVideo.sourceTitle
                     )
-                    if selectOnCompletion || self?.selectedVideo == nil {
+                    if selectOnCompletion {
                         self?.selectVideo(importedVideo, autoplay: false)
                     }
                 }

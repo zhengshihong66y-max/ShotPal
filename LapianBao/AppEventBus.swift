@@ -20,6 +20,11 @@ nonisolated enum AppEventBus {
         let type: String?
     }
 
+    struct ExportPanelRequest: Equatable {
+        let path: String
+        let filter: String
+    }
+
     private enum UserInfoKey {
         static let path = "path"
         static let time = "time"
@@ -27,6 +32,7 @@ nonisolated enum AppEventBus {
         static let source = "source"
         static let type = "type"
         static let cacheKey = "cacheKey"
+        static let filter = "filter"
     }
 
     private static let seekRequestName = Notification.Name("lapianBaoSeekRequest")
@@ -34,6 +40,7 @@ nonisolated enum AppEventBus {
     private static let musicPreviewStartedName = Notification.Name("lapianBaoMusicPreviewStarted")
     private static let musicPreviewToggleRequestName = Notification.Name("lapianBaoMusicPreviewToggleRequest")
     private static let downloadedMusicWaveformRenderCacheUpdatedName = Notification.Name("lapianBaoDownloadedMusicWaveformRenderCacheUpdated")
+    private static let openExportPanelRequestName = Notification.Name("lapianBaoOpenExportPanelRequest")
 
     static var seekRequestPublisher: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: seekRequestName)
@@ -53,6 +60,10 @@ nonisolated enum AppEventBus {
 
     static var downloadedMusicWaveformRenderCacheUpdatedPublisher: NotificationCenter.Publisher {
         NotificationCenter.default.publisher(for: downloadedMusicWaveformRenderCacheUpdatedName)
+    }
+
+    static var openExportPanelRequestPublisher: NotificationCenter.Publisher {
+        NotificationCenter.default.publisher(for: openExportPanelRequestName)
     }
 
     static func postSeekRequest(path: String, time: Double) {
@@ -103,6 +114,17 @@ nonisolated enum AppEventBus {
         }
     }
 
+    static func postOpenExportPanelRequest(path: String, filter: String = "最近") {
+        NotificationCenter.default.post(
+            name: openExportPanelRequestName,
+            object: nil,
+            userInfo: [
+                UserInfoKey.path: path,
+                UserInfoKey.filter: filter
+            ]
+        )
+    }
+
     static func seekRequest(from notification: Notification) -> SeekRequest? {
         guard
             let path = notification.userInfo?[UserInfoKey.path] as? String,
@@ -125,5 +147,11 @@ nonisolated enum AppEventBus {
 
     static func downloadedMusicWaveformRenderCacheKey(from notification: Notification) -> String? {
         notification.userInfo?[UserInfoKey.cacheKey] as? String
+    }
+
+    static func exportPanelRequest(from notification: Notification) -> ExportPanelRequest? {
+        guard let path = notification.userInfo?[UserInfoKey.path] as? String else { return nil }
+        let filter = notification.userInfo?[UserInfoKey.filter] as? String ?? "最近"
+        return ExportPanelRequest(path: path, filter: filter)
     }
 }

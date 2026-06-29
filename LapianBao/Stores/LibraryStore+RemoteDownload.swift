@@ -56,6 +56,8 @@ extension LibraryStore {
         if rawURL == nil, let ytdlp,
            !Task.isCancelled {
             let attempts = ytdlpArgumentAttempts(for: sourceURL)
+            let isYouTubeSource = isYouTubeURL(sourceURL)
+            var sawYouTubeLoginVerification = false
             for attempt in attempts {
                 do {
                     let result = try await runYTDLPOnce(
@@ -76,7 +78,52 @@ extension LibraryStore {
                     if let failure = error as? YTDLPDownloaderFailure {
                         authorName = authorName ?? failure.authorName
                     }
+                    if isYouTubeSource, isYouTubeBotVerificationFailure(error.localizedDescription) {
+                        sawYouTubeLoginVerification = true
+                    }
                     ytdlpFailure = error
+                }
+            }
+
+            if rawURL == nil,
+               isYouTubeSource,
+               !Task.isCancelled {
+                let cookieFileURL = configuredYouTubeCookieFileURL()
+                let didStartCookieAccess = cookieFileURL?.startAccessingSecurityScopedResource() ?? false
+                defer {
+                    if didStartCookieAccess {
+                        cookieFileURL?.stopAccessingSecurityScopedResource()
+                    }
+                }
+                for attempt in ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL) {
+                    do {
+                        let result = try await runYTDLPOnce(
+                            executableURL: ytdlp,
+                            sourceURL: sourceURL,
+                            destinationDirectory: destinationDirectory,
+                            extraArguments: attempt.arguments,
+                            progressCallback: progressCallback,
+                            processCallback: processCallback
+                        )
+                        rawURL = result.url
+                        authorName = result.authorName
+                        sourceTitle = result.sourceTitle
+                        break
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        if let failure = error as? YTDLPDownloaderFailure {
+                            authorName = authorName ?? failure.authorName
+                        }
+                        ytdlpFailure = error
+                    }
+                }
+
+                if rawURL == nil,
+                   sawYouTubeLoginVerification,
+                   cookieFileURL == nil,
+                   let ytdlpFailure {
+                    throw ytdlpFailure
                 }
             }
             if rawURL == nil, let ytdlpFailure, isHardYouTubeYTDLPFailure(ytdlpFailure) {

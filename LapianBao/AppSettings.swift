@@ -25,6 +25,8 @@ nonisolated enum AppSettings {
         static let musicSortDirection = "musicSortDirection"
         static let instagramImportEndpoint = "instagramImportEndpoint"
         static let downloaderSelfCheckReport = "downloaderSelfCheckReport"
+        static let youtubeCookieFilePath = "youtubeCookieFilePath"
+        static let youtubeCookieFileBookmark = "youtubeCookieFileBookmark"
 
         static let autoSceneBatch = "autoStartSceneBatch"
         static let autoTranscriptBatch = "autoStartTranscriptBatch"
@@ -106,6 +108,34 @@ nonisolated enum AppSettings {
                 defaults.removeObject(forKey: Key.downloaderSelfCheckReport)
             }
         }
+    }
+
+    static var youtubeCookieFilePath: String? {
+        get { defaults.string(forKey: Key.youtubeCookieFilePath) }
+        set { setOptionalString(newValue, forKey: Key.youtubeCookieFilePath) }
+    }
+
+    static var youtubeCookieFileBookmark: Data? {
+        get { defaults.data(forKey: Key.youtubeCookieFileBookmark) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.youtubeCookieFileBookmark) }
+            else { defaults.removeObject(forKey: Key.youtubeCookieFileBookmark) }
+        }
+    }
+
+    static func resolvedYouTubeCookieFileURL() -> URL? {
+        if let bookmark = youtubeCookieFileBookmark {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ), !isStale {
+                return url
+            }
+        }
+        return youtubeCookieFilePath.map { URL(fileURLWithPath: $0) }
     }
 
     static var autoSceneBatchEnabled: Bool {

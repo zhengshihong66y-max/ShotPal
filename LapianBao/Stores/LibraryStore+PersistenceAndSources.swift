@@ -70,7 +70,12 @@ extension LibraryStore {
     }
 
     func saveProjectData() {
-        guard projectDataLoadState == .loaded else { return }
+        guard projectDataLoadState == .loaded else {
+            if projectDataLoadState == .loading {
+                projectDataDirty = true
+            }
+            return
+        }
         guard let url = projectDataURL() else { return }
         projectDataDirty = true
         projectSaveSequence += 1
@@ -111,6 +116,19 @@ extension LibraryStore {
         )
         guard let libraryURL else { return dataFile }
         return Self.projectDataFile(dataFile, storingRelativeTo: libraryURL)
+    }
+
+    func pendingProjectDataEditsSnapshot(resolvingRelativeTo libraryURL: URL) -> ProjectDataFile {
+        let dataFile = ProjectDataFile(
+            sampledFrames: sampledFrames,
+            annotations: annotations,
+            audioClips: audioClips,
+            transcripts: transcriptSegmentsByVideoPath,
+            transcriptExports: transcriptExports.isEmpty ? nil : transcriptExports,
+            musicsByVideoPath: musicsByVideoPath.isEmpty ? nil : musicsByVideoPath,
+            musicDownloadJobs: musicDownloadJobs.isEmpty ? nil : persistedMusicDownloadJobs()
+        )
+        return Self.projectDataFile(dataFile, resolvingRelativeTo: libraryURL).dataFile
     }
 
     nonisolated static func writeProjectData(_ dataFile: ProjectDataFile, to url: URL) throws {
@@ -167,21 +185,34 @@ extension LibraryStore {
             guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
                 guard let self, self.projectLoadGeneration == generation else { return }
+                let pendingEdits = self.projectDataDirty
+                    ? self.pendingProjectDataEditsSnapshot(resolvingRelativeTo: libraryURL)
+                    : nil
                 if let decoded {
                     let restored = Self.projectDataFile(decoded, resolvingRelativeTo: libraryURL)
                     let shouldPersistMigration = restored.didChange || !self.pendingVideoPathRemap.isEmpty
-                    let migrated = self.migrateProjectDataVideoPaths(restored.dataFile)
+                    var migrated = self.migrateProjectDataVideoPaths(restored.dataFile)
+                    if let pendingEdits {
+                        migrated = Self.projectDataFile(migrated, mergingPendingEdits: pendingEdits)
+                    }
                     self.projectDataLoadState = .loaded
                     self.applyProjectData(migrated)
                     self.projectDataDirty = false
-                    if shouldPersistMigration {
+                    if shouldPersistMigration || pendingEdits != nil {
                         self.saveProjectData()
                     }
                 } else {
-                    self.clearProjectData()
+                    if let pendingEdits {
+                        self.applyProjectData(pendingEdits)
+                    } else {
+                        self.clearProjectData()
+                    }
                     self.projectDataLoadState = .loaded
                     self.runStartupAutomationIfNeeded()
                     self.projectDataDirty = false
+                    if pendingEdits != nil {
+                        self.saveProjectData()
+                    }
                 }
                 self.projectLoadTask = nil
             }
@@ -291,6 +322,50 @@ extension LibraryStore {
         }
 
         return (restored, didChange)
+    }
+
+    static func projectDataFile(
+        _ dataFile: ProjectDataFile,
+        mergingPendingEdits pending: ProjectDataFile
+    ) -> ProjectDataFile {
+        var merged = dataFile
+        merged.sampledFrames = mergeProjectDataItems(merged.sampledFrames, pending.sampledFrames)
+        merged.annotations = mergeProjectDataItems(merged.annotations, pending.annotations)
+        merged.audioClips = mergeProjectDataItems(merged.audioClips, pending.audioClips)
+
+        if !pending.transcripts.isEmpty {
+            merged.transcripts.merge(pending.transcripts) { _, pending in pending }
+        }
+        if let pendingExports = pending.transcriptExports, !pendingExports.isEmpty {
+            merged.transcriptExports = mergeProjectDataItems(merged.transcriptExports ?? [], pendingExports)
+        }
+        if let pendingMusics = pending.musicsByVideoPath, !pendingMusics.isEmpty {
+            var musics = merged.musicsByVideoPath ?? [:]
+            musics.merge(pendingMusics) { _, pending in pending }
+            merged.musicsByVideoPath = musics
+        }
+        if let pendingJobs = pending.musicDownloadJobs, !pendingJobs.isEmpty {
+            merged.musicDownloadJobs = mergeProjectDataItems(merged.musicDownloadJobs ?? [], pendingJobs)
+        }
+        return merged
+    }
+
+    static func mergeProjectDataItems<Item: Identifiable>(
+        _ base: [Item],
+        _ pending: [Item]
+    ) -> [Item] where Item.ID: Hashable {
+        guard !pending.isEmpty else { return base }
+        var merged = base
+        var indexByID = Dictionary(uniqueKeysWithValues: merged.enumerated().map { ($0.element.id, $0.offset) })
+        for item in pending {
+            if let index = indexByID[item.id] {
+                merged[index] = item
+            } else {
+                indexByID[item.id] = merged.count
+                merged.append(item)
+            }
+        }
+        return merged
     }
 
     nonisolated static func projectRelativePath(_ path: String, libraryURL: URL) -> String {

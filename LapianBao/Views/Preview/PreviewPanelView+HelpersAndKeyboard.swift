@@ -14,6 +14,34 @@ import UniformTypeIdentifiers
 
 private let sceneCutActivationBoundaryTolerance: Double = 0.02
 
+enum SceneTimelineOpeningZoomPolicy {
+    nonisolated static func viewportSpan(
+        cutProgresses: [Double],
+        cutCount: Int,
+        visibleSceneLimit: Int,
+        maxZoom: Double
+    ) -> Double? {
+        let sceneCount = cutCount + 1
+        guard sceneCount > visibleSceneLimit else { return nil }
+
+        let maxZoomSpan = 1 / max(maxZoom, 1)
+        let normalizedCuts = cutProgresses
+            .map { min(1, max(0, $0)) }
+            .filter { $0 > 0.001 }
+            .sorted()
+
+        if normalizedCuts.count >= visibleSceneLimit {
+            let exactSpan = normalizedCuts[visibleSceneLimit - 1]
+            if exactSpan.isFinite, exactSpan > 0 {
+                return min(1, max(maxZoomSpan, exactSpan))
+            }
+        }
+
+        let averageSpan = Double(visibleSceneLimit) / Double(sceneCount)
+        return min(1, max(maxZoomSpan, averageSpan))
+    }
+}
+
 extension PreviewPanelView {
     // MARK: – Helper views / computed properties
 
@@ -110,6 +138,37 @@ extension PreviewPanelView {
         return Array(cuts.dropFirst())
     }
 
+    func sceneTimelineOpeningCutCount(for video: VideoItem) -> Int {
+        let path = video.url.path
+        if let cuts = libraryStore.sceneCutsByVideoPath[path], !cuts.isEmpty {
+            return cuts.filter { $0.time > 0.001 }.count
+        }
+        return sceneTimelineOpeningCutProgresses(for: video).count
+    }
+
+    func sceneTimelineOpeningCutProgresses(for video: VideoItem) -> [Double] {
+        let path = video.url.path
+        if let cached = libraryStore.sceneCutProgressesByVideoPath[path], !cached.isEmpty {
+            return cached.filter { $0 > 0.001 }
+        }
+
+        if let cuts = libraryStore.sceneCutsByVideoPath[path], !cuts.isEmpty {
+            let knownDuration: Double
+            if controller.duration > 0 {
+                knownDuration = controller.duration
+            } else {
+                knownDuration = libraryStore.sceneCutProgressDuration(for: path)
+            }
+            guard knownDuration > 0 else { return [] }
+
+            return cuts
+                .map { min(1, max(0, $0.time / knownDuration)) }
+                .filter { $0 > 0.001 }
+        }
+
+        return sceneStoryboardCuts(for: video)
+    }
+
     func normalizedSampledFrames(for video: VideoItem) -> [Double] {
         guard controller.duration > 0 else { return [] }
         return libraryStore.sampledFrames(for: video)
@@ -156,7 +215,11 @@ extension PreviewPanelView {
     }
 
     var timelineViewportSpan: Double {
-        min(1, max(0.02, 1 / max(timelineZoom, 1)))
+        min(1, max(timelineMinimumViewportSpan, 1 / max(timelineZoom, 1)))
+    }
+
+    var timelineMinimumViewportSpan: Double {
+        1 / max(Design.sceneTimelineAutoMaxZoom, 1)
     }
 
     var audioTimelineViewportSpan: Double {
@@ -191,41 +254,68 @@ extension PreviewPanelView {
     func focusSceneTimelineOnOpeningIfNeeded() {
         guard
             let video = libraryStore.selectedVideo,
-            timelineViewportSpan >= 0.999,
-            timelineOffset <= 0.0005
+            !timelineViewportWasManuallyAdjusted
         else { return }
 
-        let cuts = sceneStoryboardCuts(for: video)
-        guard !cuts.isEmpty else { return }
+        let cutCount = sceneTimelineOpeningCutCount(for: video)
+        guard cutCount > 0 else { return }
 
-        let key = sceneTimelineOpeningFocusKey(for: video, cuts: cuts)
-        guard sceneTimelineAutoFocusedKey != key else { return }
+        let cutProgresses = sceneTimelineOpeningCutProgresses(for: video)
+        guard let span = sceneTimelineOpeningSpan(cutProgresses: cutProgresses, cutCount: cutCount) else { return }
+        let key = sceneTimelineOpeningFocusKey(
+            for: video,
+            cutCount: cutCount,
+            cutProgresses: cutProgresses,
+            targetSpan: span
+        )
+        let targetZoom = min(Design.sceneTimelineAutoMaxZoom, max(1, 1 / span))
+        let targetSpan = min(1, max(timelineMinimumViewportSpan, 1 / max(targetZoom, 1)))
+        let isAlreadyFocused = sceneTimelineAutoFocusedKey == key
+            && abs(timelineViewportSpan - targetSpan) <= 0.0005
+            && timelineOffset <= 0.0005
+        guard !isAlreadyFocused else { return }
 
         sceneTimelineAutoFocusedKey = key
-        guard let span = sceneTimelineOpeningSpan(from: cuts) else { return }
-
         updateTimelineViewportWithoutAnimation(
-            zoom: min(Design.sceneTimelineAutoMaxZoom, max(1, 1 / span)),
+            zoom: targetZoom,
             offset: 0
         )
     }
 
-    func sceneTimelineOpeningFocusKey(for video: VideoItem, cuts: [Double]) -> String {
-        let first = Int(((cuts.first ?? 0) * 1_000_000).rounded())
-        let last = Int(((cuts.last ?? 0) * 1_000_000).rounded())
-        return "\(libraryStore.selectedVideoSelectionID.uuidString):\(video.url.path):\(cuts.count):\(first):\(last)"
+    func sceneTimelineOpeningFocusKey(
+        for video: VideoItem,
+        cutCount: Int,
+        cutProgresses: [Double],
+        targetSpan: Double
+    ) -> String {
+        let normalizedCuts = cutProgresses
+            .map { min(1, max(0, $0)) }
+            .filter { $0 > 0.001 }
+            .sorted()
+        let first = Int(((normalizedCuts.first ?? 0) * 1_000_000).rounded())
+        let boundaryIndex = min(
+            max(Design.sceneTimelineAutoVisibleSceneLimit - 1, 0),
+            max(normalizedCuts.count - 1, 0)
+        )
+        let visibleBoundary = normalizedCuts.indices.contains(boundaryIndex)
+            ? normalizedCuts[boundaryIndex]
+            : targetSpan
+        let boundary = Int((visibleBoundary * 1_000_000).rounded())
+        let span = Int((targetSpan * 1_000_000).rounded())
+        return "\(libraryStore.selectedVideoSelectionID.uuidString):\(video.url.path):\(cutCount):\(first):\(boundary):\(span)"
     }
 
-    func sceneTimelineOpeningSpan(from cuts: [Double]) -> Double? {
-        let sceneCount = cuts.count + 1
-        guard sceneCount > Design.sceneTimelineAutoVisibleSceneLimit else { return nil }
-
-        let targetSpan = Double(Design.sceneTimelineAutoVisibleSceneLimit) / Double(sceneCount)
-        let maxZoomSpan = 1 / Design.sceneTimelineAutoMaxZoom
-        return min(1, max(maxZoomSpan, targetSpan))
+    func sceneTimelineOpeningSpan(cutProgresses: [Double], cutCount: Int) -> Double? {
+        SceneTimelineOpeningZoomPolicy.viewportSpan(
+            cutProgresses: cutProgresses,
+            cutCount: cutCount,
+            visibleSceneLimit: Design.sceneTimelineAutoVisibleSceneLimit,
+            maxZoom: Design.sceneTimelineAutoMaxZoom
+        )
     }
 
     func panTimelineViewport(_ delta: Double) {
+        timelineViewportWasManuallyAdjusted = true
         let span = timelineViewportSpan
         let maxOffset = max(0, 1 - span)
         let nextOffset = min(maxOffset, max(0, timelineOffset + delta))
@@ -248,6 +338,13 @@ extension PreviewPanelView {
         guard controller.isPlaying || keyboardShuttleDirection != 0 else { return timelineOffset }
         guard Date() >= timelineManualScrollProtectionUntil else { return timelineOffset }
 
+        return timelineFollowOffset(for: progress)
+    }
+
+    func timelineFollowOffset(for progress: Double) -> Double {
+        let span = timelineViewportSpan
+        guard span < 0.999 else { return 0 }
+
         let clamped = min(1, max(0, progress))
         let maxOffset = max(0, 1 - span)
         let margin = min(0.08, span * 0.18)
@@ -263,6 +360,17 @@ extension PreviewPanelView {
         return timelineOffset
     }
 
+    func commitDisplayedTimelineOffsetIfNeeded(for progress: Double) {
+        guard Date() >= timelineManualScrollProtectionUntil else { return }
+        let span = timelineViewportSpan
+        let targetOffset = timelineFollowOffset(for: progress)
+        let offsetDelta = abs(targetOffset - timelineOffset)
+        guard offsetDelta > timelineLiveFollowOffsetEpsilon(for: span) else { return }
+
+        updateTimelineViewportWithoutAnimation(offset: targetOffset)
+        timelineAutoScrollLastUpdate = .distantPast
+    }
+
     func zoomAudioTimelineViewport(_ factor: Double, anchor _: Double) {
         let nextZoom = min(50, max(1, audioTimelineZoom * factor))
         guard abs(nextZoom - audioTimelineZoom) > 0.000001 else { return }
@@ -275,10 +383,11 @@ extension PreviewPanelView {
     }
 
     func zoomTimelineViewport(_ factor: Double, anchor: Double) {
+        timelineViewportWasManuallyAdjusted = true
         let oldSpan = timelineViewportSpan
         let anchorProgress = timelineOffset + min(1, max(0, anchor)) * oldSpan
-        let nextZoom = min(50, max(1, timelineZoom * factor))
-        let nextSpan = min(1, max(0.02, 1 / nextZoom))
+        let nextZoom = min(Design.sceneTimelineAutoMaxZoom, max(1, timelineZoom * factor))
+        let nextSpan = min(1, max(timelineMinimumViewportSpan, 1 / nextZoom))
         let maxOffset = max(0, 1 - nextSpan)
         guard abs(nextZoom - timelineZoom) > 0.000001 else {
             protectManualTimelineScroll()
@@ -296,6 +405,8 @@ extension PreviewPanelView {
         updateTimelineViewportWithoutAnimation(zoom: 1, offset: 0)
         timelineAutoScrollLastUpdate = .distantPast
         timelineManualScrollProtectionUntil = .distantPast
+        sceneTimelineAutoFocusedKey = nil
+        timelineViewportWasManuallyAdjusted = false
     }
 
     func resetAudioTimelineViewport() {
@@ -312,32 +423,11 @@ extension PreviewPanelView {
         let now = Date()
         guard now >= timelineManualScrollProtectionUntil else { return }
 
-        let clamped = min(1, max(0, progress))
-        let maxOffset = max(0, 1 - span)
-        let margin = min(0.08, span * 0.18)
-        let visibleStart = timelineOffset
-        let visibleEnd = timelineOffset + span
-        let targetOffset: Double?
-
-        if clamped < visibleStart + margin {
-            targetOffset = max(0, clamped - margin)
-        } else if clamped > visibleEnd - margin {
-            targetOffset = min(maxOffset, clamped + margin - span)
-        } else {
-            targetOffset = nil
-        }
-
-        guard let targetOffset else { return }
+        let targetOffset = timelineFollowOffset(for: progress)
         let offsetDelta = abs(targetOffset - timelineOffset)
         guard offsetDelta > timelineLiveFollowOffsetEpsilon(for: span) else { return }
         if controller.isPlaying || keyboardShuttleDirection != 0 {
-            let largeJumpThreshold = span * 0.18
-            guard now.timeIntervalSince(timelineAutoScrollLastUpdate) >= timelineLiveFollowFrameInterval
-                    || offsetDelta >= largeJumpThreshold else {
-                return
-            }
-            timelineAutoScrollLastUpdate = now
-            updateTimelineViewportWithoutAnimation(offset: targetOffset)
+            return
         } else {
             withAnimation(.easeOut(duration: 0.14)) {
                 timelineOffset = targetOffset
@@ -351,7 +441,9 @@ extension PreviewPanelView {
     }
 
     func handlePlaybackClockTick(_ elapsed: Double) {
-        keepTimelineProgressVisible(controller.progress)
+        if !controller.isPlaying && keyboardShuttleDirection == 0 {
+            keepTimelineProgressVisible(controller.progress)
+        }
 
         guard let video = libraryStore.selectedVideo else { return }
         let segs = libraryStore.transcriptSegmentsByVideoPath[video.url.path, default: []]
@@ -521,6 +613,9 @@ extension PreviewPanelView {
     func stopKeyboardShuttle(clearsTransportShortcutFeedback: Bool = true) {
         keyboardShuttleTask?.cancel()
         keyboardShuttleTask = nil
+        if keyboardShuttleDirection != 0 {
+            commitDisplayedTimelineOffsetIfNeeded(for: controller.progress)
+        }
         keyboardShuttleDirection = 0
         keyboardShuttleFrameStep = 2
         keyboardShuttleLastCommandAt = .distantPast

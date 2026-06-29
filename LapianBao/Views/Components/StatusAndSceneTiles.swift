@@ -386,11 +386,12 @@ struct SceneCutTile: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("scene_cut_tile_button")
 
             if canShowMoreMenu {
                 moreButton
-                    .opacity(isHovered || isMorePresented ? 1 : 0)
-                    .allowsHitTesting(isHovered || isMorePresented)
+                    .opacity(1)
+                    .allowsHitTesting(true)
                     .animation(.easeInOut(duration: 0.12), value: isHovered)
                     .padding(.top, CardTimeBadge.verticalInset)
                     .padding(.trailing, CardTimeBadge.edgeInset)
@@ -475,6 +476,7 @@ struct SceneCutTile: View {
         }
         .buttonStyle(.plain)
         .frame(width: CardOverlayMoreIcon.size, height: CardOverlayMoreIcon.size)
+        .accessibilityIdentifier("scene_cut_tile_more_button")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
             morePopover
                 .transaction { $0.animation = nil }

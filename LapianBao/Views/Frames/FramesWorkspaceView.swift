@@ -675,6 +675,8 @@ struct FramesWorkspaceView: View {
                     .font(Design.numericFont(size: 11, weight: .bold))
                     .lineLimit(1)
                     .foregroundStyle(frameTagFilterCountForeground(isSelected: isSelected))
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(3)
                     .frame(width: countWidth, height: 14, alignment: .center)
             }
             .foregroundStyle(frameTagFilterForeground(isSelected: isSelected))
@@ -771,9 +773,8 @@ struct FramesWorkspaceView: View {
     }
 
     private func frameTagFilterCountWidth(for count: Int) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: 11, weight: .bold)
-        let width = ("\(count)" as NSString).size(withAttributes: [.font: font]).width
-        return max(8, ceil(width))
+        let digitCount = max(1, String(count).count)
+        return max(20, CGFloat(digitCount) * 8 + 10)
     }
 
     private func frameTagFilterForeground(isSelected: Bool) -> Color {
@@ -1920,6 +1921,7 @@ struct FramesWorkspaceView: View {
     private func addStoryboardFrameTag(_ tag: String, to item: FrameStoryboardItem) {
         if let sample = latestStoryboardSample(for: item) {
             libraryStore.addFrameTag(tag, to: sample)
+            AppEventBus.postOpenExportPanelRequest(path: item.video.url.path)
             return
         }
 
@@ -1933,6 +1935,7 @@ struct FramesWorkspaceView: View {
                 sceneIndex: sceneIndex
             ) {
                 libraryStore.addFrameTag(tag, to: frame)
+                AppEventBus.postOpenExportPanelRequest(path: video.url.path)
             }
         }
     }

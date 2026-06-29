@@ -229,11 +229,18 @@ nonisolated struct SceneDetectionPlugin: Sendable {
 extension LibraryStore {
     nonisolated static let sceneDetectionProgressLinePrefix = "LAPIANBAO_PROGRESS\t"
     nonisolated static let sceneDetectionTimingLinePrefix = "LAPIANBAO_TIMING\t"
+    nonisolated static let minimumSceneCutBoundaryTime = 0.001
+    nonisolated static let minimumSceneCutSpacing = 0.3
+
+    nonisolated struct SceneDetectionResult {
+        let cuts: [SceneCut]
+        let duration: Double
+    }
 
     nonisolated static func performSceneDetection(
         for url: URL,
         progressCallback: @escaping (Double) -> Void
-    ) async throws -> [SceneCut] {
+    ) async throws -> SceneDetectionResult {
         await SceneDetectionGate.shared.acquire()
         defer {
             Task {
@@ -245,7 +252,7 @@ extension LibraryStore {
         let processRegistry = SceneDetectionProcessRegistry()
         let reader = SceneDetectionFrameReader()
 
-        let detectionTask = Task.detached(priority: .utility) { () throws -> [SceneCut] in
+        let detectionTask = Task.detached(priority: .utility) { () throws -> SceneDetectionResult in
             let fileManager = FileManager.default
             guard fileManager.fileExists(atPath: url.path) else {
                 throw SceneDetectionError.videoMissing(url.path)
@@ -299,7 +306,7 @@ extension LibraryStore {
                 "scene detection total \(Self.elapsedSecondsText(since: totalStartedAt))",
                 path: url.path
             )
-            return cuts
+            return SceneDetectionResult(cuts: cuts, duration: totalSeconds)
         }
 
         return try await withTaskCancellationHandler {
@@ -634,7 +641,8 @@ extension LibraryStore {
         var previous: Double?
 
         for time in cutTimes.map({ max(0, ($0 * 1000).rounded() / 1000) }).sorted() {
-            guard previous.map({ time - $0 >= 0.3 }) ?? true else { continue }
+            guard time > minimumSceneCutBoundaryTime else { continue }
+            guard previous.map({ time - $0 >= minimumSceneCutSpacing }) ?? true else { continue }
             result.append(time)
             previous = time
         }

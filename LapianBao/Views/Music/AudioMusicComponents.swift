@@ -133,6 +133,15 @@ nonisolated func musicDownloadTitle(type: MusicDownloadJob.DownloadType, job: Mu
     }
 }
 
+nonisolated func musicDownloadTypeAccessibilityKey(_ type: MusicDownloadJob.DownloadType) -> String {
+    switch type {
+    case .original:
+        return "original"
+    case .instrumental:
+        return "instrumental"
+    }
+}
+
 func musicDownloadHelp(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
     guard let job else { return "下载\(type.label)" }
     switch job.status {
@@ -408,6 +417,8 @@ struct ExportMusicRecognitionActionColumn: View {
                 } label: {
                     Label(isDownloaded ? "已下载\(type.label)" : "下载\(type.label)", systemImage: "arrow.down.circle")
                 }
+                .accessibilityLabel(isDownloaded ? "已下载\(type.label)" : "下载\(type.label)")
+                .accessibilityIdentifier("export_music_download_\(musicDownloadTypeAccessibilityKey(type))_menu_item")
                 .disabled(isDownloaded)
             }
         } label: {
@@ -425,6 +436,8 @@ struct ExportMusicRecognitionActionColumn: View {
             height: MusicRecognitionLayout.actionButtonSize
         )
         .offset(x: MusicRecognitionLayout.circledDownloadIconOpticalOffsetX)
+        .accessibilityLabel(allDownloadsCompleted ? "音乐下载已完成" : "选择下载音乐")
+        .accessibilityIdentifier("export_music_download_menu_button")
         .disabled(allDownloadsCompleted)
     }
 
@@ -849,6 +862,8 @@ struct MusicDownloadControlsAndWaveform: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(isPreviewing ? "暂停已下载\(type.label)" : musicDownloadHelp(type: type, job: job))
+        .accessibilityIdentifier("music_download_\(musicDownloadTypeAccessibilityKey(type))_button")
         .contextMenu {
             if let url = completedMusicFileURL(for: job) {
                 Button {

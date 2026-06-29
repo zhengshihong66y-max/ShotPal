@@ -27,7 +27,8 @@ nonisolated struct MusicWorkspaceProjectionInput: Sendable {
 }
 
 nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
-    static let singleSongArtistFilterCollapseThreshold = 24
+    static let singleSongArtistFilterCollapseThreshold = 48
+    static let collapsedArtistFilterMinimumSongCount = 2
 
     var input: MusicWorkspaceProjectionInput
     private let videoNameByPath: [String: String]
@@ -1318,14 +1319,23 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             return MusicArtistFilterValue(displayName: displayName, songCount: songCount)
         }
         let singleSongArtistCount = artistValues.values.filter { $0.songCount == 1 }.count
-        guard singleSongArtistCount > Self.singleSongArtistFilterCollapseThreshold else {
+        guard Self.shouldCollapseSingleSongArtistFilters(singleSongArtistCount: singleSongArtistCount) else {
             return artistValues
         }
 
         let selectedArtistValues = Set(input.selectedMusicFilters.filter { $0.kind == .artist }.map(\.value))
         return artistValues.filter { entry in
-            entry.value.songCount > 1 || selectedArtistValues.contains(entry.value.displayName)
+            Self.shouldDisplayArtistInCollapsedFilter(songCount: entry.value.songCount)
+                || selectedArtistValues.contains(entry.value.displayName)
         }
+    }
+
+    static func shouldCollapseSingleSongArtistFilters(singleSongArtistCount: Int) -> Bool {
+        singleSongArtistCount > singleSongArtistFilterCollapseThreshold
+    }
+
+    static func shouldDisplayArtistInCollapsedFilter(songCount: Int) -> Bool {
+        songCount >= collapsedArtistFilterMinimumSongCount
     }
 
     func collectMusicArtistSong(

@@ -12,6 +12,15 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+private func previewStableHexKey(for string: String) -> String {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in string.utf8 {
+        hash ^= UInt64(byte)
+        hash = hash &* 1_099_511_628_211
+    }
+    return String(hash, radix: 16)
+}
+
 private enum ExportFrameTagPreviewItem {
     case tag(String)
     case overflow(Int)
@@ -32,6 +41,7 @@ extension PreviewPanelView {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, minHeight: Design.previewHeaderTitleLineHeight, maxHeight: Design.previewHeaderTitleLineHeight, alignment: .leading)
                 .layoutPriority(1)
+                .accessibilityIdentifier("preview_video_title_\(previewStableHexKey(for: video.url.path))")
 
             videoTagStrip(for: video)
         }
@@ -282,13 +292,23 @@ extension PreviewPanelView {
             }
             .fadingVerticalScrollIndicators()
             .onAppear {
-                syncExportPanelTracking(ids: visibleItemIDs, proxy: proxy, shouldTrackNewItems: false)
+                syncExportPanelTracking(
+                    ids: visibleItemIDs,
+                    proxy: proxy,
+                    shouldTrackNewItems: false,
+                    shouldScrollToLatest: true
+                )
             }
             .onChange(of: visibleItemIDs) { _, ids in
                 syncExportPanelTracking(ids: ids, proxy: proxy, shouldTrackNewItems: true)
             }
             .onChange(of: exportPanelFilter) { _, _ in
-                syncExportPanelTracking(ids: visibleItemIDs, proxy: proxy, shouldTrackNewItems: false)
+                syncExportPanelTracking(
+                    ids: visibleItemIDs,
+                    proxy: proxy,
+                    shouldTrackNewItems: false,
+                    shouldScrollToLatest: true
+                )
             }
         }
     }
@@ -326,9 +346,18 @@ extension PreviewPanelView {
         )
     }
 
-    func syncExportPanelTracking(ids: [String], proxy: ScrollViewProxy, shouldTrackNewItems: Bool) {
+    func syncExportPanelTracking(
+        ids: [String],
+        proxy: ScrollViewProxy,
+        shouldTrackNewItems: Bool,
+        shouldScrollToLatest: Bool = false
+    ) {
         let currentIDs = Set(ids)
         defer { exportPanelKnownItemIDs = currentIDs }
+
+        if shouldScrollToLatest {
+            scrollExportPanelToLatest(ids: ids, proxy: proxy, animated: false)
+        }
 
         guard shouldTrackNewItems, let newestID = ids.last(where: { !exportPanelKnownItemIDs.contains($0) }) else {
             return
@@ -351,6 +380,20 @@ extension PreviewPanelView {
             guard !Task.isCancelled else { return }
             if exportPanelHighlightIntensity <= 0.001 {
                 exportPanelHighlightedItemID = nil
+            }
+        }
+    }
+
+    func scrollExportPanelToLatest(ids: [String], proxy: ScrollViewProxy, animated: Bool) {
+        guard let newestID = ids.last else { return }
+        Task { @MainActor in
+            await Task.yield()
+            if animated {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy.scrollTo(newestID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(newestID, anchor: .bottom)
             }
         }
     }

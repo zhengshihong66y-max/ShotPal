@@ -344,7 +344,7 @@ extension ContentView {
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .white.opacity(0.86) : .secondary.opacity(isDimmed ? 0.34 : 0.82))
                     .fixedSize(horizontal: true, vertical: false)
-                    .layoutPriority(2)
+                    .layoutPriority(3)
                     .frame(width: countWidth, height: 12, alignment: .center)
             }
             .foregroundStyle(isSelected ? .white.opacity(0.94) : .secondary.opacity(isDimmed ? 0.42 : 1))
@@ -443,9 +443,8 @@ extension ContentView {
     }
 
     func libraryFilterChipCountWidth(for count: Int) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: 9, weight: .bold)
-        let width = ("\(count)" as NSString).size(withAttributes: [.font: font]).width
-        return max(14, ceil(width) + 6)
+        let digitCount = max(1, String(count).count)
+        return max(18, CGFloat(digitCount) * 7 + 8)
     }
 
     func libraryFilterChipForeground(isSelected: Bool) -> Color {

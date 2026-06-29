@@ -119,7 +119,7 @@ struct QuickFilterChoiceChip: View {
                         .lineLimit(1)
                         .foregroundStyle(isSelected ? .white.opacity(0.86) : .secondary.opacity(0.82))
                         .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(2)
+                        .layoutPriority(3)
                 }
 
             }
@@ -234,6 +234,19 @@ enum TagEditorDomain {
     case frame
     case audio
     case music
+
+    var accessibilityKey: String {
+        switch self {
+        case .video:
+            return "video"
+        case .frame:
+            return "frame"
+        case .audio:
+            return "audio"
+        case .music:
+            return "music"
+        }
+    }
 
     var layout: TagEditorLayoutConfiguration {
         switch self {
@@ -608,6 +621,8 @@ struct TagEditorSection: View {
                     TextField("添加标签", text: $draftTag)
                         .textFieldStyle(.roundedBorder)
                         .focused($isTagFieldFocused)
+                        .accessibilityLabel("\(domain.accessibilityKey) 标签输入框")
+                        .accessibilityIdentifier("tag_editor_\(domain.accessibilityKey)_input_field")
                         .onSubmit(addDraftTag)
                         .onAppear {
                             DispatchQueue.main.async {
@@ -636,6 +651,7 @@ struct TagEditorSection: View {
             }
         }
         .frame(width: tagPanelWidth, alignment: .leading)
+        .accessibilityIdentifier("tag_editor_\(domain.accessibilityKey)_section")
     }
 
     @ViewBuilder
@@ -667,6 +683,7 @@ struct TagEditorSection: View {
         }
         .padding(.vertical, gridVerticalPadding ?? layout.verticalPadding)
         .frame(width: tagPanelWidth, alignment: .topLeading)
+        .accessibilityIdentifier("tag_editor_\(domain.accessibilityKey)_choice_panel")
     }
 
     private func tagChoiceButton(for tag: String) -> some View {
@@ -688,6 +705,8 @@ struct TagEditorSection: View {
         ) {
             toggleTag(tag, isSelected: isSelected)
         }
+        .accessibilityLabel("\(isSelected ? "移除" : "添加")标签：\(tag)")
+        .accessibilityIdentifier("tag_editor_\(domain.accessibilityKey)_choice_\(Self.accessibilityTagKey(tag))")
     }
 
     private func addDraftTag() {
@@ -756,6 +775,16 @@ struct TagEditorSection: View {
         tag.trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
+    }
+
+    nonisolated private static func accessibilityTagKey(_ tag: String) -> String {
+        let normalized = tagKey(tag)
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in normalized.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
     }
 }
 

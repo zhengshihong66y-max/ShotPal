@@ -982,7 +982,7 @@ nonisolated struct MusicWorkspaceProjectionSignature: Hashable, Sendable {
 }
 
 nonisolated struct MusicWorkspaceDisplayCacheFile: Codable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var version: Int
     var signature: String
@@ -1031,13 +1031,15 @@ nonisolated enum MusicWorkspaceDisplayCache {
         let artistValues = projection.filterValues[.artist, default: []]
         let artistCounts = projection.musicFilterCounts[.artist, default: [:]]
         let singleSongArtistCount = artistValues.filter { artistCounts[$0] == 1 }.count
-        guard singleSongArtistCount > MusicWorkspaceProjectionBuilder.singleSongArtistFilterCollapseThreshold else {
+        guard MusicWorkspaceProjectionBuilder.shouldCollapseSingleSongArtistFilters(singleSongArtistCount: singleSongArtistCount) else {
             return projection
         }
 
         var adjustedProjection = projection
         adjustedProjection.filterValues[.artist] = artistValues.filter {
-            artistCounts[$0, default: 0] > 1
+            MusicWorkspaceProjectionBuilder.shouldDisplayArtistInCollapsedFilter(
+                songCount: artistCounts[$0, default: 0]
+            )
         }
         return adjustedProjection
     }

@@ -21,8 +21,12 @@ extension ContentView {
 
     func startRemoteImport() {
         let videos = manualImportVideos
-        guard !videos.isEmpty else { return }
+        guard !videos.isEmpty else {
+            importURLFeedbackMessage = unavailableImportURLFeedbackText
+            return
+        }
 
+        importURLFeedbackMessage = nil
         libraryStore.saveInstagramImportEndpoint(importEndpointText)
         libraryStore.importRemoteVideos(from: videos.map(\.urlString).joined(separator: "\n"))
 
@@ -45,6 +49,72 @@ extension ContentView {
         VideoSourcePlatform.iconName(for: detectedImportPlatform)
     }
 
+    var canSubmitImportURLs: Bool {
+        !importURLTokens.isEmpty
+    }
+
+    var importInputStatusText: String? {
+        if let importURLFeedbackMessage {
+            return importURLFeedbackMessage
+        }
+
+        guard !importURLText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+        if !manualImportVideos.isEmpty {
+            let duplicateCount = duplicateManualImportVideos.count
+            if duplicateCount > 0 {
+                return "\(manualImportVideos.count) 个可下载 · \(duplicateCount) 个已存在"
+            }
+            return "\(manualImportVideos.count) 个输入链接"
+        }
+
+        if !duplicateManualImportVideos.isEmpty {
+            return unavailableImportURLFeedbackText
+        }
+
+        if !importURLTokens.isEmpty {
+            return "\(importURLTokens.count) 个链接待检查"
+        }
+
+        return "没有识别到有效链接"
+    }
+
+    var importInputStatusIconName: String {
+        if importURLFeedbackMessage != nil {
+            return "exclamationmark.circle.fill"
+        }
+        if !manualImportVideos.isEmpty {
+            return VideoSourcePlatform.iconName(for: manualImportVideos[0].platform)
+        }
+        if !duplicateManualImportVideos.isEmpty {
+            return "checkmark.circle.fill"
+        }
+        return "exclamationmark.triangle.fill"
+    }
+
+    var importInputStatusColor: Color {
+        if importURLFeedbackMessage != nil {
+            return Color.orange.opacity(0.9)
+        }
+        if !manualImportVideos.isEmpty {
+            return VideoSourcePlatform.color(for: manualImportVideos[0].platform)
+        }
+        if !duplicateManualImportVideos.isEmpty {
+            return Color(red: 0.42, green: 0.78, blue: 0.48)
+        }
+        return Color.orange.opacity(0.9)
+    }
+
+    var unavailableImportURLFeedbackText: String {
+        if !duplicateManualImportVideos.isEmpty {
+            return "\(duplicateManualImportVideos.count) 个链接已在素材库或下载队列中"
+        }
+        if !importURLTokens.isEmpty {
+            return "链接已识别，但没有可加入的新任务"
+        }
+        return "没有识别到有效链接"
+    }
+
     var detectedImportPlatformSummary: String {
         let platforms = importURLTokens
             .compactMap { URL(string: $0) }
@@ -63,6 +133,12 @@ extension ContentView {
         let alreadyAddedIDs = queuedOrImportedImportCandidateIDs
         return importVideos(from: importURLTokens)
             .filter { !alreadyAddedIDs.contains($0.id) }
+    }
+
+    var duplicateManualImportVideos: [PendingImportVideo] {
+        let alreadyAddedIDs = queuedOrImportedImportCandidateIDs
+        return importVideos(from: importURLTokens)
+            .filter { alreadyAddedIDs.contains($0.id) }
     }
 
     func importVideos(from links: [String]) -> [PendingImportVideo] {
@@ -260,9 +336,7 @@ extension ContentView {
             return libraryStore.remoteImportJobs.isEmpty ? "" : "下载任务已完成"
         }
 
-        let progress = activeImportOverallProgress
-        guard let progress else { return "\(activeImportJobs.count) 个任务 · 等待准确进度" }
-        return "\(activeImportJobs.count) 个任务 · \(progressPercentText(progress))"
+        return "\(activeImportJobs.count) 个任务"
     }
 
     var downloadTimelineSummary: String {
@@ -575,15 +649,6 @@ extension ContentView {
         return detailText.isEmpty ? job.sourceURL.absoluteString : detailText
     }
 
-    func importHistorySubtitleText(for job: RemoteImportJob) -> String {
-        guard let title = job.candidateTitle, !title.isEmpty else {
-            return job.sourceURL.absoluteString
-        }
-
-        let detailText = importJobMetadataDetailText(for: job, leadingText: nil)
-        return detailText.isEmpty ? title : "\(title) · \(detailText)"
-    }
-
     func importJobMetadataDetailText(for job: RemoteImportJob, leadingText: String?) -> String {
         var parts: [String] = []
         if let leadingText, !leadingText.isEmpty {
@@ -593,6 +658,71 @@ extension ContentView {
             parts.append(authorName)
         }
         return parts.joined(separator: " · ")
+    }
+
+    func importHistorySourceText(for job: RemoteImportJob) -> String {
+        var parts = [importHistorySourceName(for: job)]
+        if let authorName = importHistoryAuthorName(for: job) {
+            parts.append(authorName)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    func importHistorySourceName(for job: RemoteImportJob) -> String {
+        if let outputPath = job.outputPath,
+           let platform = libraryStore.sourceInfoByVideoPath[outputPath]?.platform.trimmingCharacters(in: .whitespacesAndNewlines),
+           !platform.isEmpty {
+            return platform
+        }
+        return job.platform
+    }
+
+    func importHistoryAuthorName(for job: RemoteImportJob) -> String? {
+        if let outputPath = job.outputPath,
+           let authorName = libraryStore.sourceInfoByVideoPath[outputPath]?.authorName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !authorName.isEmpty {
+            return authorName
+        }
+        if let authorName = job.candidateAuthorName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !authorName.isEmpty {
+            return authorName
+        }
+        return nil
+    }
+
+    func importHistoryFileDetailText(for job: RemoteImportJob) -> String? {
+        guard let outputPath = job.outputPath else { return nil }
+
+        let metadata = libraryStore.metadataByVideoPath[outputPath]
+        var parts: [String] = []
+
+        if let resolutionText = metadata?.resolutionText {
+            parts.append(resolutionText)
+        }
+
+        if let fileSize = metadata?.fileSize ?? importHistoryFileSize(for: outputPath),
+           let fileSizeText = importHistoryFileSizeText(fileSize) {
+            parts.append(fileSizeText)
+        }
+
+        let duration = libraryStore.durationByVideoPath[outputPath] ?? metadata?.duration
+        if let duration, duration.isFinite, duration > 0 {
+            parts.append(formatDuration(duration))
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    func importHistoryFileSize(for outputPath: String) -> Int64? {
+        let url = URL(fileURLWithPath: outputPath)
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        guard let fileSize = values?.fileSize, fileSize > 0 else { return nil }
+        return Int64(fileSize)
+    }
+
+    func importHistoryFileSizeText(_ fileSize: Int64) -> String? {
+        guard fileSize > 0 else { return nil }
+        return ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
     }
 
     func importActiveStatusText(for job: RemoteImportJob) -> String {
@@ -630,19 +760,28 @@ extension ContentView {
         HStack(alignment: .top, spacing: 12) {
             importJobCover(for: job, width: 100, height: 56)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(importStatusTitle(for: job))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.86))
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                Text(importHistorySubtitleText(for: job))
+                Text(importHistorySourceText(for: job))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
+
+                if let detailText = importHistoryFileDetailText(for: job) {
+                    Text(detailText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .textSelection(.enabled)
+                }
 
                 if let video = importedVideo(for: job) {
                     importJobTagStrip(for: video)
@@ -711,8 +850,14 @@ extension ContentView {
         return libraryStore.selectedVideo(for: outputPath)
     }
 
+    func importJobAccessibilityKey(for job: RemoteImportJob) -> String {
+        Self.accessibilityStableKey(job.sourceURL.absoluteString)
+    }
+
     @ViewBuilder
     func importJobActions(for job: RemoteImportJob) -> some View {
+        let jobAccessibilityKey = importJobAccessibilityKey(for: job)
+
         VStack(spacing: 4) {
             if case .paused = job.status {
                 importJobActionButton(icon: "play.fill", help: "继续下载", identifier: "import_job_resume_\(job.id.uuidString)") {
@@ -723,7 +868,7 @@ extension ContentView {
                     libraryStore.pauseRemoteImportJob(id: job.id)
                 }
             } else if job.outputPath != nil {
-                importJobActionButton(icon: "arrow.turn.up.right", help: "跳转到视频", identifier: "import_job_jump_\(job.id.uuidString)") {
+                importJobActionButton(icon: "arrow.turn.up.right", help: "跳转到视频", identifier: "import_job_jump_\(jobAccessibilityKey)_\(job.id.uuidString)") {
                     libraryStore.jumpToRemoteImportJob(id: job.id)
                     closeImportPanel()
                 }
@@ -734,6 +879,19 @@ extension ContentView {
             }
         }
         .frame(width: 30)
+    }
+
+    nonisolated static func accessibilityStableKey(_ rawValue: String) -> String {
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in normalized.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
     }
 
     @ViewBuilder
@@ -816,7 +974,7 @@ extension ContentView {
         case .idle:
             return .secondary
         case .importing:
-            return Color(red: 0.36, green: 0.70, blue: 1.00)
+            return Design.neutralAccent
         case .transcoding:
             return Design.captureFrameAccent
         case .finalizing:

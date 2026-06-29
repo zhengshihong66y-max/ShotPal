@@ -644,13 +644,8 @@ extension LibraryStore {
         }
 
         if let duration = videoMetadata.duration {
-            durationByVideoPath[path] = duration
-            if let cuts = sceneCutsByVideoPath[path] {
-                sceneCutProgressesByVideoPath[path] = Self.normalizedSceneCutProgresses(
-                    from: cuts.map(\.time),
-                    duration: duration
-                )
-            }
+            rememberVideoDuration(duration, for: path)
+            refreshSceneCutProgresses(for: path, knownDuration: duration)
         }
 
         metadataByVideoPath[path] = videoMetadata.metadata
@@ -1135,6 +1130,26 @@ extension LibraryStore {
             return progress
         }
 
+        registerFileImportRepresentations(on: provider) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let fileURL = try await Self.renderFrameDragFile(
+                        videoURL: videoURL,
+                        videoName: videoName,
+                        time: time,
+                        kind: kind,
+                        fallbackData: fallbackData
+                    )
+                    progress.completedUnitCount = 1
+                    completion(.success(fileURL))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+            return progress
+        }
+
         return provider
     }
 
@@ -1164,6 +1179,18 @@ extension LibraryStore {
         ) { completion in
             completion(data, nil)
             return nil
+        }
+
+        registerFileImportRepresentations(on: provider) { completion in
+            let progress = Progress(totalUnitCount: 1)
+            do {
+                let fileURL = try Self.writeSavedFrameDragFile(data: data, suggestedName: suggestedName)
+                progress.completedUnitCount = 1
+                completion(.success(fileURL))
+            } catch {
+                completion(.failure(error))
+            }
+            return progress
         }
 
         return provider

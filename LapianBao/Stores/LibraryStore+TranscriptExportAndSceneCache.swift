@@ -701,19 +701,80 @@ extension LibraryStore {
     }
 
     func validCachedSceneCutEntry(for video: VideoItem) -> SceneCutCacheEntry? {
+        sceneCutCacheEntry(for: video, migrateRelocatedEntry: false)
+    }
+
+    func sceneCutCacheEntry(for video: VideoItem, migrateRelocatedEntry: Bool) -> SceneCutCacheEntry? {
         let key = relativeVideoPath(for: video.url)
+        guard let signature = videoFileSignature(for: video.url) else { return nil }
+
+        if let entry = sceneCutCache[key],
+           sceneCutCacheEntry(entry, matches: signature, expectedRelativePath: key) {
+            if migrateRelocatedEntry,
+               entry.detectorVersion != Self.sceneDetectorVersion {
+                var currentEntry = entry
+                currentEntry.detectorVersion = Self.sceneDetectorVersion
+                sceneCutCache[key] = currentEntry
+                saveSceneCutCache()
+                return currentEntry
+            }
+            return entry
+        }
+
+        guard let relocatedEntry = relocatedSceneCutCacheEntry(
+            for: video,
+            currentRelativePath: key,
+            signature: signature
+        ) else { return nil }
+
+        if migrateRelocatedEntry {
+            sceneCutCache[key] = relocatedEntry
+            saveSceneCutCache()
+            PerformanceDiagnostics.mark(
+                "scene cache relocated from previous library path",
+                path: video.url.path
+            )
+        }
+
+        return relocatedEntry
+    }
+
+    func sceneCutCacheEntry(
+        _ entry: SceneCutCacheEntry,
+        matches signature: (fileSize: Int64, modificationTime: Double),
+        expectedRelativePath: String? = nil
+    ) -> Bool {
         guard
-            let entry = sceneCutCache[key],
-            entry.detectorVersion == Self.sceneDetectorVersion,
-            entry.relativePath == key,
-            let signature = videoFileSignature(for: video.url)
-        else { return nil }
+            Self.sceneDetectorCacheCompatibleVersions.contains(entry.detectorVersion),
+            expectedRelativePath.map({ entry.relativePath == $0 }) ?? true
+        else { return false }
 
         guard
             entry.fileSize == signature.fileSize,
             abs(entry.modificationTime - signature.modificationTime) < 1.0
-        else { return nil }
+        else { return false }
 
+        return true
+    }
+
+    func relocatedSceneCutCacheEntry(
+        for video: VideoItem,
+        currentRelativePath: String,
+        signature: (fileSize: Int64, modificationTime: Double)
+    ) -> SceneCutCacheEntry? {
+        let currentFileName = video.url.lastPathComponent
+        let matches = sceneCutCache.compactMap { sourceKey, entry -> SceneCutCacheEntry? in
+            guard sourceKey != currentRelativePath else { return nil }
+            guard URL(fileURLWithPath: entry.relativePath).lastPathComponent == currentFileName else { return nil }
+            guard sceneCutCacheEntry(entry, matches: signature) else { return nil }
+            return entry
+        }
+        guard matches.count == 1, var entry = matches.first else { return nil }
+
+        entry.relativePath = currentRelativePath
+        entry.detectorVersion = Self.sceneDetectorVersion
+        entry.videoID = stableVideoID(for: currentRelativePath)
+        entry.sceneIDs = entry.cutTimes.indices.map { sceneID(for: currentRelativePath, index: $0) }
         return entry
     }
 

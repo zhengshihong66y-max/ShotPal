@@ -31,6 +31,7 @@ struct PreviewPanelView: View {
     @ObservedObject var controller: PreviewController
     let openStoryboardBoard: (VideoItem) -> Void
     @Binding var pendingSeekRequest: AppEventBus.SeekRequest?
+    @Binding var pendingExportPanelRequest: AppEventBus.ExportPanelRequest?
     @Namespace var tabNamespace
     static let contentTimelineDetailBlockGap: CGFloat = 8
     static let contentTimelineDetailBlockPadding: CGFloat = 8
@@ -63,6 +64,7 @@ struct PreviewPanelView: View {
     @State var timelineAutoScrollLastUpdate = Date.distantPast
     @State var timelineManualScrollProtectionUntil = Date.distantPast
     @State var sceneTimelineAutoFocusedKey: String?
+    @State var timelineViewportWasManuallyAdjusted = false
     @State var isVideoTagPopoverPresented = false
     @State var isExportPanelPresented = false
     @State var exportPanelFilter: ExportPanelFilter = .recent
@@ -106,6 +108,7 @@ struct PreviewPanelView: View {
             controller.libraryStore = libraryStore
             controller.loadVideo(libraryStore.selectedVideo, autoplay: false, preserveIfAlreadyLoaded: true)
             consumePendingSeekRequestIfNeeded()
+            consumePendingExportPanelRequestIfNeeded()
             focusSceneTimelineOnOpeningIfNeeded()
             hydrateSceneThumbnailsForFrameTimelineIfIdle()
             PreviewKeyboardCommandDispatcher.setHandler { command in
@@ -145,6 +148,7 @@ struct PreviewPanelView: View {
             resetTimelineViewport()
             resetAudioTimelineViewport()
             consumePendingSeekRequestIfNeeded()
+            consumePendingExportPanelRequestIfNeeded()
             stopKeyboardShuttle()
             stopExportAudioClipPlayback()
             focusSceneTimelineOnOpeningIfNeeded()
@@ -154,7 +158,10 @@ struct PreviewPanelView: View {
         .onChange(of: libraryStore.playbackSupportByVideoPath) { _, _ in
             controller.applyPlaybackSupportIfNeeded()
         }
-        .onChange(of: controller.isPlaying) { _, isPlaying in
+        .onChange(of: controller.isPlaying) { wasPlaying, isPlaying in
+            if wasPlaying && !isPlaying {
+                commitDisplayedTimelineOffsetIfNeeded(for: controller.progress)
+            }
             guard let video = libraryStore.selectedVideo else { return }
             if isPlaying {
                 libraryStore.cancelSceneThumbnailHydration(for: video)
@@ -175,6 +182,7 @@ struct PreviewPanelView: View {
         .onReceive(libraryStore.$sceneCutsByVideoPath) { _ in
             completePendingTimelineExpansionIfReady()
             completePendingStoryboardExportIfReady()
+            focusSceneTimelineOnOpeningIfNeeded()
         }
         .onReceive(libraryStore.$transcriptSegmentsByVideoPath) { _ in
             completePendingTimelineExpansionIfReady()
@@ -210,6 +218,9 @@ struct PreviewPanelView: View {
         .onChange(of: libraryStore.sceneCutProgressesByVideoPath) { _, _ in
             focusSceneTimelineOnOpeningIfNeeded()
         }
+        .onChange(of: controller.duration) { _, _ in
+            focusSceneTimelineOnOpeningIfNeeded()
+        }
         .onReceive(AppEventBus.seekRequestPublisher) { notification in
             guard
                 let request = AppEventBus.seekRequest(from: notification),
@@ -219,6 +230,9 @@ struct PreviewPanelView: View {
         }
         .onChange(of: pendingSeekRequest) { _, _ in
             consumePendingSeekRequestIfNeeded()
+        }
+        .onChange(of: pendingExportPanelRequest) { _, _ in
+            consumePendingExportPanelRequestIfNeeded()
         }
         .onReceive(AppEventBus.pausePreviewRequestPublisher) { _ in
             controller.pause()
@@ -232,6 +246,17 @@ struct PreviewPanelView: View {
             request.path == libraryStore.selectedVideo?.url.path
         else { return }
         performSeekWhenReady(request, clearsPendingRequest: true)
+    }
+
+    func consumePendingExportPanelRequestIfNeeded() {
+        guard
+            let request = pendingExportPanelRequest,
+            request.path == libraryStore.selectedVideo?.url.path
+        else { return }
+
+        exportPanelFilter = ExportPanelFilter(rawValue: request.filter) ?? .recent
+        isExportPanelPresented = true
+        pendingExportPanelRequest = nil
     }
 
     func performSeekWhenReady(_ request: AppEventBus.SeekRequest, clearsPendingRequest: Bool) {

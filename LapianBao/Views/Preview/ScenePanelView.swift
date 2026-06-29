@@ -413,6 +413,7 @@ struct ScenePanelView: View, Equatable {
         if let sample = item.sample {
             return { tag in
                 libraryStore.addFrameTag(tag, to: sample)
+                AppEventBus.postOpenExportPanelRequest(path: video.url.path)
             }
         }
 
@@ -425,6 +426,7 @@ struct ScenePanelView: View, Equatable {
                     sceneIndex: item.sceneIndex
                 ) {
                     libraryStore.addFrameTag(tag, to: frame)
+                    AppEventBus.postOpenExportPanelRequest(path: video.url.path)
                 }
             }
         }

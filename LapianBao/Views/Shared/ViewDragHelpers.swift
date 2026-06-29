@@ -12,6 +12,8 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+nonisolated let legacyFilenamesPasteboardTypeIdentifier = "NSFilenamesPboardType"
+
 extension View {
     @ViewBuilder
     func itemProviderDrag(_ itemProvider: (() -> NSItemProvider)?) -> some View {
@@ -42,7 +44,7 @@ extension View {
     }
 }
 
-func externalAudioDragFileURL(for fileURL: URL, suggestedName: String) -> URL {
+nonisolated func externalAudioDragFileURL(for fileURL: URL, suggestedName: String) -> URL {
     guard FileManager.default.fileExists(atPath: fileURL.path) else { return fileURL }
 
     let exportDirectory = fileURL
@@ -77,7 +79,7 @@ func externalAudioDragFileURL(for fileURL: URL, suggestedName: String) -> URL {
     }
 }
 
-func existingFileItemProvider(
+nonisolated func existingFileItemProvider(
     for fileURL: URL,
     suggestedName: String,
     fallbackTypeIdentifier: String,
@@ -108,24 +110,68 @@ func existingFileItemProvider(
         return progress
     }
 
-    registerFileURLRepresentations(on: provider, fileURL: fileURL)
+    registerFileImportRepresentations(on: provider, fileURL: fileURL)
     return provider
 }
 
-private func registerFileURLRepresentations(on provider: NSItemProvider, fileURL: URL) {
-    let fileURLData = fileURL.absoluteString.data(using: .utf8)
-    provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in
-        completion(fileURLData, nil)
-        return nil
-    }
-    provider.registerDataRepresentation(forTypeIdentifier: UTType.url.identifier, visibility: .all) { completion in
-        completion(fileURLData, nil)
+nonisolated func registerFileImportRepresentations(on provider: NSItemProvider, fileURL: URL) {
+    registerFileImportRepresentations(on: provider) { completion in
+        completion(.success(fileURL))
         return nil
     }
     provider.registerObject(fileURL as NSURL, visibility: .all)
 }
 
-private func externalDragFilename(suggestedName: String, fallbackName: String, sourcePath: String) -> String {
+nonisolated func registerFileImportRepresentations(
+    on provider: NSItemProvider,
+    resolveFileURL: @escaping (@escaping (Result<URL, Error>) -> Void) -> Progress?
+) {
+    registerResolvedFileDataRepresentation(on: provider, forTypeIdentifier: UTType.fileURL.identifier, resolveFileURL: resolveFileURL) { fileURL in
+        fileURL.absoluteString.data(using: .utf8)
+    }
+    registerResolvedFileDataRepresentation(on: provider, forTypeIdentifier: UTType.url.identifier, resolveFileURL: resolveFileURL) { fileURL in
+        fileURL.absoluteString.data(using: .utf8)
+    }
+    registerResolvedFileDataRepresentation(on: provider, forTypeIdentifier: legacyFilenamesPasteboardTypeIdentifier, resolveFileURL: resolveFileURL) { fileURL in
+        legacyFilenamesPasteboardData(for: fileURL)
+    }
+}
+
+nonisolated private func registerResolvedFileDataRepresentation(
+    on provider: NSItemProvider,
+    forTypeIdentifier typeIdentifier: String,
+    resolveFileURL: @escaping (@escaping (Result<URL, Error>) -> Void) -> Progress?,
+    data: @escaping (URL) -> Data?
+) {
+    provider.registerDataRepresentation(forTypeIdentifier: typeIdentifier, visibility: .all) { completion in
+        return resolveFileURL { result in
+            switch result {
+            case .success(let fileURL):
+                if let payload = data(fileURL) {
+                    completion(payload, nil)
+                } else {
+                    completion(nil, NSError(
+                        domain: "LapianBao.DragFileRepresentation",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "无法生成拖拽文件路径数据"]
+                    ))
+                }
+            case .failure(let error):
+                completion(nil, error)
+            }
+        }
+    }
+}
+
+nonisolated private func legacyFilenamesPasteboardData(for fileURL: URL) -> Data? {
+    try? PropertyListSerialization.data(
+        fromPropertyList: [fileURL.path],
+        format: .xml,
+        options: 0
+    )
+}
+
+nonisolated private func externalDragFilename(suggestedName: String, fallbackName: String, sourcePath: String) -> String {
     let suggestedURL = URL(fileURLWithPath: suggestedName)
     let fallbackURL = URL(fileURLWithPath: fallbackName)
     let fileExtension = (suggestedURL.pathExtension.isEmpty ? fallbackURL.pathExtension : suggestedURL.pathExtension)
@@ -138,7 +184,7 @@ private func externalDragFilename(suggestedName: String, fallbackName: String, s
     return fileExtension.isEmpty ? baseName : "\(baseName).\(fileExtension)"
 }
 
-private func externalDragSafeStem(_ name: String) -> String {
+nonisolated private func externalDragSafeStem(_ name: String) -> String {
     let folded = name.folding(options: [.diacriticInsensitive, .widthInsensitive], locale: .current)
     var scalars: [UnicodeScalar] = []
     var lastWasSeparator = false
@@ -173,7 +219,7 @@ private func externalDragSafeStem(_ name: String) -> String {
     return String(fallback.prefix(96))
 }
 
-private func externalDragPathHash(_ path: String) -> String {
+nonisolated private func externalDragPathHash(_ path: String) -> String {
     var hash: UInt64 = 14_695_981_039_346_656_037
     for byte in path.utf8 {
         hash ^= UInt64(byte)
@@ -182,7 +228,7 @@ private func externalDragPathHash(_ path: String) -> String {
     return String(format: "%08llx", hash & 0xffff_ffff)
 }
 
-private func externalDragFileMatchesSource(_ exportURL: URL, sourceURL: URL) -> Bool {
+nonisolated private func externalDragFileMatchesSource(_ exportURL: URL, sourceURL: URL) -> Bool {
     guard
         let exportValues = try? exportURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
         let sourceValues = try? sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
@@ -197,7 +243,7 @@ private func externalDragFileMatchesSource(_ exportURL: URL, sourceURL: URL) -> 
     return abs(exportModifiedAt.timeIntervalSince(sourceModifiedAt)) < 1
 }
 
-func videoDragItemProvider(for video: VideoItem) -> NSItemProvider {
+nonisolated func videoDragItemProvider(for video: VideoItem) -> NSItemProvider {
     existingFileItemProvider(
         for: video.url,
         suggestedName: video.url.lastPathComponent,

@@ -157,6 +157,8 @@ actor VideoMetadataQueue {
 nonisolated struct DownloadProgressUpdate: Sendable {
     var progress: Double?
     var speed: String?
+    var downloadedBytes: Double? = nil
+    var totalBytes: Double? = nil
 }
 
 nonisolated struct ProjectDataFile: Codable, Sendable {

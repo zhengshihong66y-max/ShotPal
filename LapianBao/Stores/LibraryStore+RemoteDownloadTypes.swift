@@ -67,6 +67,18 @@ extension LibraryStore {
             return min(max(count, 1), 3)
         }
 
+        var expectedDownloadPartByteCounts: [Double] {
+            guard let requestedFormats,
+                  let expectedDownloadPartCount,
+                  expectedDownloadPartCount > 1
+            else { return [] }
+
+            let byteCounts = requestedFormats
+                .prefix(expectedDownloadPartCount)
+                .compactMap(\.expectedByteCount)
+            return byteCounts.count == expectedDownloadPartCount ? byteCounts : []
+        }
+
         var bestThumbnailURL: URL? {
             var candidates: [String] = []
             if let thumbnail {
@@ -107,9 +119,22 @@ extension LibraryStore {
 
     nonisolated struct YTDLPRequestedFormat: Decodable {
         var formatID: String?
+        var filesize: Double?
+        var filesizeApprox: Double?
 
         enum CodingKeys: String, CodingKey {
             case formatID = "format_id"
+            case filesize
+            case filesizeApprox = "filesize_approx"
+        }
+
+        var expectedByteCount: Double? {
+            for value in [filesize, filesizeApprox] {
+                if let value, value.isFinite, value > 0 {
+                    return value
+                }
+            }
+            return nil
         }
     }
 
@@ -189,8 +214,12 @@ extension LibraryStore {
         let postProcessingProgress: Double
         let allowsEstimatedMultipartProgress: Bool
         let reportsPostProcessingProgress: Bool
+        let expectedPartByteCounts: [Double]
+        var observedPartByteCounts: [Int: Double] = [:]
+        var observedPartDownloadedBytes: [Int: Double] = [:]
         var partIndex = 0
         var lastRawProgress = 0.0
+        var lastDownloadedBytes = 0.0
         var lastOverallProgress = 0.0
         var hasSeenProgress = false
 
@@ -198,12 +227,16 @@ extension LibraryStore {
             expectedPartCount: Int,
             downloadCompletionProgress: Double = 1,
             postProcessingProgress: Double = 1,
+            expectedPartByteCounts: [Double] = [],
             allowsEstimatedMultipartProgress: Bool = true,
             reportsPostProcessingProgress: Bool = true
         ) {
-            self.expectedPartCount = max(1, expectedPartCount)
+            let resolvedExpectedPartCount = max(1, expectedPartCount)
+            self.expectedPartCount = resolvedExpectedPartCount
             self.downloadCompletionProgress = LibraryStore.normalizedProgress(downloadCompletionProgress)
             self.postProcessingProgress = LibraryStore.normalizedProgress(postProcessingProgress)
+            self.expectedPartByteCounts = Array(expectedPartByteCounts.prefix(resolvedExpectedPartCount))
+                .map { max(0, $0) }
             self.allowsEstimatedMultipartProgress = allowsEstimatedMultipartProgress
             self.reportsPostProcessingProgress = reportsPostProcessingProgress
         }
@@ -221,27 +254,178 @@ extension LibraryStore {
             }
 
             guard let update = LibraryStore.parseYTDLPProgressUpdate(line) else { return nil }
-            guard let updateProgress = update.progress else {
+            guard update.progress != nil || update.downloadedBytes != nil else {
                 return DownloadProgressUpdate(progress: nil, speed: update.speed)
             }
-            let rawProgress = LibraryStore.normalizedProgress(updateProgress)
+
+            let initialTotalBytes = resolvedTotalBytes(for: partIndex, updateTotalBytes: update.totalBytes)
+            let initialDownloadedBytes = resolvedDownloadedBytes(
+                updateDownloadedBytes: update.downloadedBytes,
+                updateProgress: update.progress,
+                totalBytes: initialTotalBytes
+            )
+            let rawProgress = resolvedRawProgress(
+                updateProgress: update.progress,
+                downloadedBytes: initialDownloadedBytes,
+                totalBytes: initialTotalBytes
+            )
+
+            var advancedPart = false
             if hasSeenProgress,
-               rawProgress + 0.12 < lastRawProgress,
-               lastRawProgress > 0.65 {
+               shouldAdvancePart(rawProgress: rawProgress, downloadedBytes: initialDownloadedBytes) {
                 partIndex += 1
+                advancedPart = true
+            }
+
+            let activeTotalBytes = resolvedTotalBytes(for: partIndex, updateTotalBytes: update.totalBytes)
+            let activeDownloadedBytes = resolvedDownloadedBytes(
+                updateDownloadedBytes: update.downloadedBytes,
+                updateProgress: update.progress,
+                totalBytes: activeTotalBytes
+            )
+            let activeRawProgress = resolvedRawProgress(
+                updateProgress: update.progress,
+                downloadedBytes: activeDownloadedBytes,
+                totalBytes: activeTotalBytes
+            )
+
+            if let totalBytes = activeTotalBytes, totalBytes.isFinite, totalBytes > 0 {
+                observedPartByteCounts[partIndex] = totalBytes
+            }
+            if let downloadedBytes = activeDownloadedBytes, downloadedBytes.isFinite, downloadedBytes >= 0 {
+                observedPartDownloadedBytes[partIndex] = downloadedBytes
             }
 
             hasSeenProgress = true
-            lastRawProgress = rawProgress
+            lastRawProgress = activeRawProgress ?? 0
+            lastDownloadedBytes = activeDownloadedBytes ?? 0
 
-            guard allowsEstimatedMultipartProgress || (expectedPartCount == 1 && partIndex == 0) else {
+            let byteWeightedProgress = byteWeightedOverallProgress(
+                rawProgress: activeRawProgress,
+                downloadedBytes: activeDownloadedBytes,
+                totalBytes: activeTotalBytes
+            )
+            guard byteWeightedProgress != nil
+                    || allowsEstimatedMultipartProgress
+                    || (expectedPartCount == 1 && partIndex == 0 && activeRawProgress != nil) else {
                 return DownloadProgressUpdate(progress: nil, speed: update.speed)
             }
 
             let partCount = max(expectedPartCount, partIndex + 1)
-            let estimatedProgress = (Double(partIndex) + rawProgress) / Double(partCount) * downloadCompletionProgress
-            lastOverallProgress = max(lastOverallProgress, min(downloadCompletionProgress, estimatedProgress))
+            let estimatedProgress = (
+                byteWeightedProgress
+                    ?? (Double(partIndex) + LibraryStore.normalizedProgress(activeRawProgress ?? 0)) / Double(partCount)
+            ) * downloadCompletionProgress
+            let clampedProgress = min(downloadCompletionProgress, estimatedProgress)
+            if advancedPart && expectedPartByteCounts.count < partIndex + 1 {
+                lastOverallProgress = max(0, min(downloadCompletionProgress, clampedProgress))
+            } else {
+                lastOverallProgress = max(lastOverallProgress, max(0, min(downloadCompletionProgress, clampedProgress)))
+            }
             return DownloadProgressUpdate(progress: lastOverallProgress, speed: update.speed)
+        }
+
+        private func shouldAdvancePart(rawProgress: Double?, downloadedBytes: Double?) -> Bool {
+            if let rawProgress,
+               rawProgress + 0.12 < lastRawProgress,
+               lastRawProgress > 0.65 {
+                return true
+            }
+            if let downloadedBytes,
+               downloadedBytes + max(1, lastDownloadedBytes * 0.12) < lastDownloadedBytes,
+               lastRawProgress > 0.65 {
+                return true
+            }
+            return false
+        }
+
+        private func resolvedTotalBytes(for index: Int, updateTotalBytes: Double?) -> Double? {
+            if let updateTotalBytes, updateTotalBytes.isFinite, updateTotalBytes > 0 {
+                return updateTotalBytes
+            }
+            if expectedPartByteCounts.indices.contains(index),
+               expectedPartByteCounts[index].isFinite,
+               expectedPartByteCounts[index] > 0 {
+                return expectedPartByteCounts[index]
+            }
+            if let observed = observedPartByteCounts[index],
+               observed.isFinite,
+               observed > 0 {
+                return observed
+            }
+            return nil
+        }
+
+        private func resolvedDownloadedBytes(
+            updateDownloadedBytes: Double?,
+            updateProgress: Double?,
+            totalBytes: Double?
+        ) -> Double? {
+            if let updateDownloadedBytes, updateDownloadedBytes.isFinite, updateDownloadedBytes >= 0 {
+                return updateDownloadedBytes
+            }
+            guard let updateProgress,
+                  let totalBytes,
+                  totalBytes.isFinite,
+                  totalBytes > 0
+            else { return nil }
+            return LibraryStore.normalizedProgress(updateProgress) * totalBytes
+        }
+
+        private func resolvedRawProgress(
+            updateProgress: Double?,
+            downloadedBytes: Double?,
+            totalBytes: Double?
+        ) -> Double? {
+            if let updateProgress {
+                return LibraryStore.normalizedProgress(updateProgress)
+            }
+            guard let downloadedBytes,
+                  let totalBytes,
+                  totalBytes.isFinite,
+                  totalBytes > 0
+            else { return nil }
+            return LibraryStore.normalizedProgress(downloadedBytes / totalBytes)
+        }
+
+        private func byteWeightedOverallProgress(
+            rawProgress: Double?,
+            downloadedBytes: Double?,
+            totalBytes: Double?
+        ) -> Double? {
+            guard partIndex >= 0 else { return nil }
+
+            let partCount = max(expectedPartCount, partIndex + 1)
+            var byteCounts = Array(repeating: 0.0, count: partCount)
+            for index in 0..<min(expectedPartByteCounts.count, partCount) {
+                byteCounts[index] = expectedPartByteCounts[index]
+            }
+            for (index, byteCount) in observedPartByteCounts where index >= 0 && index < partCount {
+                byteCounts[index] = byteCount
+            }
+            if let totalBytes, totalBytes.isFinite, totalBytes > 0, partIndex < partCount {
+                byteCounts[partIndex] = totalBytes
+            }
+
+            guard byteCounts.allSatisfy({ $0.isFinite && $0 > 0 }) else {
+                return nil
+            }
+
+            let overallTotalBytes = byteCounts.reduce(0, +)
+            guard overallTotalBytes > 0 else { return nil }
+
+            let completedBytes = partIndex == 0 ? 0 : byteCounts.prefix(partIndex).reduce(0, +)
+            let currentBytes: Double
+            if let downloadedBytes, downloadedBytes.isFinite, downloadedBytes >= 0 {
+                currentBytes = min(byteCounts[partIndex], downloadedBytes)
+            } else if let rawProgress {
+                currentBytes = byteCounts[partIndex] * LibraryStore.normalizedProgress(rawProgress)
+            } else if let observedDownloaded = observedPartDownloadedBytes[partIndex] {
+                currentBytes = min(byteCounts[partIndex], observedDownloaded)
+            } else {
+                return nil
+            }
+            return LibraryStore.normalizedProgress((completedBytes + currentBytes) / overallTotalBytes)
         }
     }
 

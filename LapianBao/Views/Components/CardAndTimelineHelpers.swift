@@ -170,6 +170,27 @@ private enum TimelineStripMetrics {
     static let segmentRadius: CGFloat = 5
 }
 
+enum FrameScrubberSceneTimelineResolver {
+    nonisolated static func canRenderSplitTimeline(
+        sceneCutCount: Int,
+        sceneImageCount: Int?,
+        frameImageCount: Int?
+    ) -> Bool {
+        guard sceneCutCount > 0 else { return false }
+        let expectedSceneImageCount = sceneCutCount + 1
+        if sceneImageCount == expectedSceneImageCount {
+            return true
+        }
+        if let frameImageCount, frameImageCount > 0 {
+            return true
+        }
+        if let sceneImageCount, sceneImageCount > 0 {
+            return true
+        }
+        return false
+    }
+}
+
 private func sameNSImageIdentities(_ lhs: [NSImage], _ rhs: [NSImage]) -> Bool {
     guard lhs.count == rhs.count else { return false }
     return zip(lhs, rhs).allSatisfy { pair in
@@ -177,8 +198,20 @@ private func sameNSImageIdentities(_ lhs: [NSImage], _ rhs: [NSImage]) -> Bool {
     }
 }
 
+private func sameOptionalNSImageIdentities(_ lhs: [NSImage]?, _ rhs: [NSImage]?) -> Bool {
+    switch (lhs, rhs) {
+    case let (left?, right?):
+        return sameNSImageIdentities(left, right)
+    case (nil, nil):
+        return true
+    default:
+        return (lhs?.isEmpty ?? true) && (rhs?.isEmpty ?? true)
+    }
+}
+
 private struct TimelineImageLayerStrip: NSViewRepresentable {
     let images: [NSImage]
+    var fallbackImages: [NSImage]? = nil
     let sceneCuts: [Double]?
     let viewportStart: Double
     let viewportSpan: Double
@@ -190,6 +223,7 @@ private struct TimelineImageLayerStrip: NSViewRepresentable {
     func updateNSView(_ nsView: TimelineImageLayerStripView, context: Context) {
         nsView.configure(
             images: images,
+            fallbackImages: fallbackImages,
             sceneCuts: sceneCuts,
             viewportStart: viewportStart,
             viewportSpan: viewportSpan
@@ -200,9 +234,18 @@ private struct TimelineImageLayerStrip: NSViewRepresentable {
 private final class TimelineImageLayerStripView: NSView {
     private struct Configuration {
         var images: [NSImage]
+        var fallbackImages: [NSImage]?
         var sceneCuts: [Double]?
         var viewportStart: Double
         var viewportSpan: Double
+
+        var allImages: [NSImage] {
+            images + (fallbackImages ?? [])
+        }
+
+        var hasAnyImage: Bool {
+            !images.isEmpty || !(fallbackImages?.isEmpty ?? true)
+        }
     }
 
     private struct VisibleImage {
@@ -235,20 +278,23 @@ private final class TimelineImageLayerStripView: NSView {
 
     func configure(
         images: [NSImage],
+        fallbackImages: [NSImage]? = nil,
         sceneCuts: [Double]?,
         viewportStart: Double,
         viewportSpan: Double
     ) {
-        let imageIDs = images.map(ObjectIdentifier.init)
+        let allImages = images + (fallbackImages ?? [])
+        let imageIDs = allImages.map(ObjectIdentifier.init)
         configuration = Configuration(
             images: images,
+            fallbackImages: fallbackImages,
             sceneCuts: sceneCuts,
             viewportStart: viewportStart,
             viewportSpan: viewportSpan
         )
         if imageIDs != cachedImageIDs {
             cachedImageIDs = imageIDs
-            trimImageCache(to: images)
+            trimImageCache(to: allImages)
         }
         render()
     }
@@ -263,7 +309,7 @@ private final class TimelineImageLayerStripView: NSView {
             let configuration,
             bounds.width > 0,
             bounds.height > 0,
-            !configuration.images.isEmpty
+            configuration.hasAnyImage
         else {
             hideAllImageLayers()
             return
@@ -323,6 +369,7 @@ private final class TimelineImageLayerStripView: NSView {
         if let sceneCuts = configuration.sceneCuts {
             return visibleSceneImages(
                 images: configuration.images,
+                fallbackImages: configuration.fallbackImages ?? [],
                 sceneCuts: sceneCuts,
                 viewportStart: configuration.viewportStart,
                 viewportSpan: configuration.viewportSpan,
@@ -368,13 +415,14 @@ private final class TimelineImageLayerStripView: NSView {
 
     private func visibleSceneImages(
         images: [NSImage],
+        fallbackImages: [NSImage],
         sceneCuts: [Double],
         viewportStart: Double,
         viewportSpan: Double,
         width: CGFloat
     ) -> [VisibleImage] {
         let sceneCount = sceneCuts.count + 1
-        guard images.count == sceneCount, sceneCount > 0, viewportSpan > 0 else { return [] }
+        guard sceneCount > 0, viewportSpan > 0, (!images.isEmpty || !fallbackImages.isEmpty) else { return [] }
 
         let start = min(1, max(0, viewportStart))
         let end = min(1, max(start, start + viewportSpan))
@@ -385,17 +433,58 @@ private final class TimelineImageLayerStripView: NSView {
         guard first <= last else { return [] }
 
         return (first...last).compactMap { index in
+            guard let image = sceneImage(
+                for: index,
+                sceneCuts: sceneCuts,
+                images: images,
+                fallbackImages: fallbackImages
+            ) else { return nil }
             guard let frame = visibleSceneFrame(
                 for: index,
                 sceneCuts: sceneCuts,
                 viewportStart: start,
                 viewportSpan: viewportSpan,
-                imageCount: images.count,
+                sceneCount: sceneCount,
                 width: width
             ) else { return nil }
 
-            return VisibleImage(image: images[index], x: frame.x, width: frame.width)
+            return VisibleImage(image: image, x: frame.x, width: frame.width)
         }
+    }
+
+    private func sceneImage(
+        for index: Int,
+        sceneCuts: [Double],
+        images: [NSImage],
+        fallbackImages: [NSImage]
+    ) -> NSImage? {
+        if images.indices.contains(index) {
+            return images[index]
+        }
+        if let fallback = fallbackSceneImage(for: index, from: fallbackImages, sceneCuts: sceneCuts) {
+            return fallback
+        }
+        return fallbackSceneImage(for: index, from: images, sceneCuts: sceneCuts)
+    }
+
+    private func fallbackSceneImage(
+        for sceneIndex: Int,
+        from images: [NSImage],
+        sceneCuts: [Double]
+    ) -> NSImage? {
+        guard !images.isEmpty else { return nil }
+        guard images.count > 1 else { return images[0] }
+
+        let progress = sceneRepresentativeProgress(for: sceneIndex, sceneCuts: sceneCuts)
+        let imageIndex = min(images.count - 1, max(0, Int((progress * Double(images.count - 1)).rounded())))
+        return images[imageIndex]
+    }
+
+    private func sceneRepresentativeProgress(for sceneIndex: Int, sceneCuts: [Double]) -> Double {
+        let start = sceneIndex <= 0 ? 0 : min(1, max(0, sceneCuts[sceneIndex - 1]))
+        let end = sceneIndex < sceneCuts.count ? min(1, max(0, sceneCuts[sceneIndex])) : 1
+        guard end > start else { return start }
+        return start + (end - start) * 0.5
     }
 
     private func visibleSceneFrame(
@@ -403,10 +492,10 @@ private final class TimelineImageLayerStripView: NSView {
         sceneCuts: [Double],
         viewportStart: Double,
         viewportSpan: Double,
-        imageCount: Int,
+        sceneCount: Int,
         width: CGFloat
     ) -> (x: CGFloat, width: CGFloat)? {
-        guard viewportSpan > 0, index >= 0, index < imageCount else { return nil }
+        guard viewportSpan > 0, index >= 0, index < sceneCount else { return nil }
 
         let span = max(0.0001, min(1, viewportSpan))
         let viewportEnd = min(1, max(viewportStart, viewportStart + span))
@@ -421,7 +510,7 @@ private final class TimelineImageLayerStripView: NSView {
         let rawWidth = max(0, x1 - x0)
 
         var leadingInset: CGFloat = index > 0 ? TimelineStripMetrics.segmentGap / 2 : 0
-        var trailingInset: CGFloat = index < imageCount - 1 ? TimelineStripMetrics.segmentGap / 2 : 0
+        var trailingInset: CGFloat = index < sceneCount - 1 ? TimelineStripMetrics.segmentGap / 2 : 0
         let totalInset = leadingInset + trailingInset
         if totalInset > 0 {
             let scale = min(1, max(0, (rawWidth - 2) / totalInset))
@@ -524,12 +613,14 @@ private final class TimelineImageLayerStripView: NSView {
 
 struct SceneStoryboardStrip: View, Equatable {
     let images: [NSImage]
+    let fallbackImages: [NSImage]?
     let sceneCuts: [Double]
     let viewportStart: Double
     let viewportSpan: Double
 
     static func == (lhs: SceneStoryboardStrip, rhs: SceneStoryboardStrip) -> Bool {
         sameNSImageIdentities(lhs.images, rhs.images)
+            && sameOptionalNSImageIdentities(lhs.fallbackImages, rhs.fallbackImages)
             && lhs.sceneCuts == rhs.sceneCuts
             && lhs.viewportStart == rhs.viewportStart
             && lhs.viewportSpan == rhs.viewportSpan
@@ -538,6 +629,7 @@ struct SceneStoryboardStrip: View, Equatable {
     var body: some View {
         TimelineImageLayerStrip(
             images: images,
+            fallbackImages: fallbackImages,
             sceneCuts: sceneCuts,
             viewportStart: viewportStart,
             viewportSpan: viewportSpan
@@ -780,6 +872,7 @@ struct FrameScrubberView: View {
 
     var body: some View {
         let dp = localProgress(draftProgress ?? progress)
+        let shouldRenderSceneStoryboard = canRenderSceneStoryboard
 
         VStack(spacing: 4) {
             // 行一：帧缩略图时间线
@@ -788,12 +881,12 @@ struct FrameScrubberView: View {
                 let height = geo.size.height
 
                 ZStack(alignment: .leading) {
-                    // 优先使用场景识别缩略图（每场景宽度 ∝ 时长）
-                    if let sceneImages, !sceneImages.isEmpty,
-                       sceneCuts.count == sceneImages.count - 1 {
+                    // 优先使用场景识别切点；代表帧缺失时用普通帧带兜底，避免识别完成后仍显示连续帧带。
+                    if shouldRenderSceneStoryboard {
                         ZStack(alignment: .leading) {
                             SceneStoryboardStrip(
-                                images: sceneImages,
+                                images: sceneImages ?? [],
+                                fallbackImages: frames,
                                 sceneCuts: sceneCuts,
                                 viewportStart: viewportStart,
                                 viewportSpan: viewportSpan
@@ -936,6 +1029,14 @@ struct FrameScrubberView: View {
                 .padding(12)
             }
         }
+    }
+
+    private var canRenderSceneStoryboard: Bool {
+        FrameScrubberSceneTimelineResolver.canRenderSplitTimeline(
+            sceneCutCount: sceneCuts.count,
+            sceneImageCount: sceneImages?.count,
+            frameImageCount: frames?.count
+        )
     }
 
     // 播放键居中，快退/快进紧贴两侧，工具区图标靠右，去掉缩放按钮

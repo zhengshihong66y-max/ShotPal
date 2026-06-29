@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 
 struct SettingsWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @State private var youtubeCookieFilePath = AppSettings.youtubeCookieFilePath ?? ""
     @State private var shortcutRevision = 0
 
     private static let rowHeight: CGFloat = MusicRowMetrics.rowHeight
@@ -30,6 +31,7 @@ struct SettingsWorkspaceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 downloaderSelfCheckCard()
+                youtubeCookieFileCard()
                 shortcutSettingsCard()
             }
             .padding(.horizontal, Design.libraryContentInset)
@@ -57,6 +59,77 @@ struct SettingsWorkspaceView: View {
             isDisabled: report.isRunning,
             action: { libraryStore.startExternalServiceSelfCheck() }
         )
+    }
+
+    private func youtubeCookieFileCard() -> some View {
+        let isConfigured = !youtubeCookieFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return HStack(alignment: .center, spacing: Self.rowColumnSpacing) {
+            settingsRowIcon(
+                isConfigured ? "doc.badge.gearshape.fill" : "doc.badge.plus",
+                tint: isConfigured ? Design.annotationAccent : .white.opacity(0.38)
+            )
+
+            settingsInfoColumn(
+                title: "YouTube cookies",
+                description: "仅在 YouTube 要求登录验证时使用 cookies.txt。",
+                detail: youtubeCookieFileDetailText,
+                detailColor: isConfigured ? .white.opacity(0.82) : .white.opacity(0.45)
+            )
+
+            if isConfigured {
+                settingsActionButton(
+                    systemImage: "xmark",
+                    tint: .white.opacity(0.52),
+                    help: "清除 YouTube cookies 文件",
+                    action: clearYouTubeCookieFile
+                )
+            }
+
+            settingsActionButton(
+                systemImage: "folder",
+                help: "选择 YouTube cookies.txt",
+                action: chooseYouTubeCookieFile
+            )
+        }
+        .padding(.horizontal, Self.rowHorizontalPadding)
+        .padding(.vertical, Self.rowVerticalPadding)
+        .frame(height: Self.rowHeight, alignment: .center)
+        .settingsRowBackground()
+    }
+
+    private var youtubeCookieFileDetailText: String {
+        let trimmed = youtubeCookieFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "未配置" }
+        return URL(fileURLWithPath: trimmed).lastPathComponent
+    }
+
+    private func chooseYouTubeCookieFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "选择 YouTube cookies.txt"
+        panel.prompt = "选择"
+        panel.allowedContentTypes = [.text, .plainText, .data]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AppSettings.youtubeCookieFilePath = url.path
+        if let bookmark = try? url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        ) {
+            AppSettings.youtubeCookieFileBookmark = bookmark
+        } else {
+            AppSettings.youtubeCookieFileBookmark = nil
+        }
+        youtubeCookieFilePath = url.path
+    }
+
+    private func clearYouTubeCookieFile() {
+        AppSettings.youtubeCookieFilePath = nil
+        AppSettings.youtubeCookieFileBookmark = nil
+        youtubeCookieFilePath = ""
     }
 
     private func shortcutSettingsCard() -> some View {

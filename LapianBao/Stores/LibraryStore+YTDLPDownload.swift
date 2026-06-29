@@ -46,11 +46,15 @@ extension LibraryStore {
                 description: videoInfo?.description,
                 sourceURL: sourceURL
             )
-            let expectedPartCount = videoInfo?.expectedDownloadPartCount ?? 2
+            let expectedPartCount = videoInfo?.expectedDownloadPartCount ?? 1
+            let expectedPartByteCounts = videoInfo?.expectedDownloadPartByteCounts ?? []
             let progressTracker = YTDLPProgressTracker(
                 expectedPartCount: expectedPartCount,
-                allowsEstimatedMultipartProgress: true,
-                reportsPostProcessingProgress: false
+                downloadCompletionProgress: 0.96,
+                postProcessingProgress: 0.98,
+                expectedPartByteCounts: expectedPartByteCounts,
+                allowsEstimatedMultipartProgress: false,
+                reportsPostProcessingProgress: true
             )
             let baseOutputURL = cleanedImportVideoURL(
                 in: destinationDirectory,
@@ -73,6 +77,7 @@ extension LibraryStore {
                 "--progress",   // 非 TTY 环境也强制输出进度
                 "--newline",    // 每次进度更新输出新行，便于实时解析
                 "--no-colors",  // 去掉 ANSI 转义码，方便文本解析
+                "--progress-template", "download:lapianbao-progress downloaded=%(progress.downloaded_bytes)s total=%(progress.total_bytes)s total_estimate=%(progress.total_bytes_estimate)s speed=%(progress.speed)s",
                 "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             ]
             arguments += ytdlpDownloadNetworkArguments(isYouTube: isYouTubeURL(downloaderSourceURL))
@@ -425,6 +430,35 @@ extension LibraryStore {
         return uniqueYTDLPArgumentAttempts(attempts)
     }
 
+    nonisolated static func ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: URL?) -> [YTDLPArgumentAttempt] {
+        guard let cookieFileURL,
+              FileManager.default.fileExists(atPath: cookieFileURL.path)
+        else { return [] }
+
+        let clientArguments = ytdlpYouTubeClientArguments()
+        let cookieArguments = ["--cookies", cookieFileURL.path]
+        var attempts: [YTDLPArgumentAttempt] = []
+
+        attempts.append(YTDLPArgumentAttempt(label: "cookies.txt", arguments: cookieArguments))
+        attempts.append(YTDLPArgumentAttempt(label: "cookies.txt备用客户端", arguments: cookieArguments + clientArguments))
+
+        for proxyURL in currentYTDLPProxyURLs() {
+            let proxyArguments = ["--proxy", proxyURL]
+            let proxyLabel = ytdlpProxyAttemptLabel(for: proxyURL)
+            attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel) cookies.txt", arguments: proxyArguments + cookieArguments))
+            attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel) cookies.txt备用客户端", arguments: proxyArguments + cookieArguments + clientArguments))
+        }
+
+        return uniqueYTDLPArgumentAttempts(attempts)
+    }
+
+    nonisolated static func configuredYouTubeCookieFileURL() -> URL? {
+        guard let url = AppSettings.resolvedYouTubeCookieFileURL(),
+              FileManager.default.fileExists(atPath: url.path)
+        else { return nil }
+        return url
+    }
+
     nonisolated static func ytdlpYouTubeSelfCheckArgumentAttempts() -> [YTDLPArgumentAttempt] {
         let proxyURLs = currentYTDLPProxyURLs()
         let clientArguments = ytdlpYouTubeClientArguments()
@@ -666,13 +700,18 @@ extension LibraryStore {
               isYouTubeBotVerificationFailure(concise)
         else { return concise }
 
-        return "YouTube 要求登录验证：当前版本不读取浏览器账号登录态，请换公开链接、配置可用代理或稍后重试。"
+        if configuredYouTubeCookieFileURL() == nil {
+            return "YouTube 要求登录验证：请在设置里选择从浏览器导出的 cookies.txt，或换公开链接、配置可用代理后重试。"
+        }
+        return "YouTube 要求登录验证：已配置 cookies.txt，拉片宝会用它重试；仍失败时，请重新导出 cookies.txt 或换公开链接。"
     }
 
     nonisolated static func isYouTubeBotVerificationFailure(_ message: String) -> Bool {
         let lowercased = message.lowercased()
-        return lowercased.contains("sign in to confirm")
-            && lowercased.contains("not a bot")
+        return (lowercased.contains("sign in to confirm")
+            && lowercased.contains("not a bot"))
+            || lowercased.contains("youtube 要求登录验证")
+            || (lowercased.contains("youtube") && lowercased.contains("登录验证"))
     }
 
     nonisolated static func isBilibiliPreconditionFailure(_ message: String) -> Bool {
@@ -1023,6 +1062,10 @@ extension LibraryStore {
     }
 
     nonisolated static func parseYTDLPProgressUpdate(_ line: String) -> DownloadProgressUpdate? {
+        if let structuredUpdate = parseYTDLPStructuredProgressUpdate(line) {
+            return structuredUpdate
+        }
+
         guard line.contains("[download]"), line.contains("%") else { return nil }
         // 忽略 "Destination:" 等非进度行
         guard !line.contains("Destination:"),
@@ -1031,13 +1074,70 @@ extension LibraryStore {
         let tokens = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         for token in tokens where token.hasSuffix("%") {
             if let value = Double(token.dropLast()), value >= 0 {
+                let progress = min(1.0, value / 100.0)
+                let totalBytes = parseYTDLPTotalBytes(from: line)
                 return DownloadProgressUpdate(
-                    progress: min(1.0, value / 100.0),
-                    speed: parseYTDLPSpeed(from: line)
+                    progress: progress,
+                    speed: parseYTDLPSpeed(from: line),
+                    downloadedBytes: totalBytes.map { $0 * progress },
+                    totalBytes: totalBytes
                 )
             }
         }
         return nil
+    }
+
+    nonisolated static func parseYTDLPStructuredProgressUpdate(_ line: String) -> DownloadProgressUpdate? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "lapianbao-progress "
+        guard trimmed.hasPrefix(prefix) else { return nil }
+
+        let fields = ytdlpStructuredProgressFields(from: String(trimmed.dropFirst(prefix.count)))
+        let downloadedBytes = ytdlpStructuredProgressNumber(fields["downloaded"])
+        let totalBytes = ytdlpStructuredProgressNumber(fields["total"])
+            ?? ytdlpStructuredProgressNumber(fields["total_estimate"])
+        let speed = ytdlpStructuredProgressSpeed(fields["speed"])
+
+        let progress: Double?
+        if let downloadedBytes,
+           let totalBytes,
+           totalBytes > 0 {
+            progress = LibraryStore.normalizedProgress(downloadedBytes / totalBytes)
+        } else {
+            progress = nil
+        }
+
+        return DownloadProgressUpdate(
+            progress: progress,
+            speed: speed,
+            downloadedBytes: downloadedBytes,
+            totalBytes: totalBytes
+        )
+    }
+
+    nonisolated static func ytdlpStructuredProgressFields(from text: String) -> [String: String] {
+        var fields: [String: String] = [:]
+        for token in text.split(separator: " ") {
+            guard let separatorIndex = token.firstIndex(of: "=") else { continue }
+            let key = String(token[..<separatorIndex])
+            let value = String(token[token.index(after: separatorIndex)...])
+            fields[key] = value
+        }
+        return fields
+    }
+
+    nonisolated static func ytdlpStructuredProgressNumber(_ value: String?) -> Double? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              normalized != "NA",
+              normalized != "None",
+              normalized != "null",
+              let number = Double(normalized),
+              number.isFinite,
+              number >= 0
+        else { return nil }
+        return number
     }
 
     nonisolated static func isYTDLPPostProcessingLine(_ line: String) -> Bool {
@@ -1060,6 +1160,57 @@ extension LibraryStore {
         else { return nil }
         let speed = String(line[range]).trimmingCharacters(in: .whitespacesAndNewlines)
         return speed.isEmpty || speed == "Unknown/s" ? nil : speed
+    }
+
+    nonisolated static func ytdlpStructuredProgressSpeed(_ value: String?) -> String? {
+        guard let bytesPerSecond = ytdlpStructuredProgressNumber(value),
+              bytesPerSecond > 0
+        else { return nil }
+        return ByteCountFormatter.string(
+            fromByteCount: Int64(bytesPerSecond.rounded()),
+            countStyle: .file
+        ) + "/s"
+    }
+
+    nonisolated static func parseYTDLPTotalBytes(from line: String) -> Double? {
+        let pattern = #"\bof\s+~?\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?i?B)\b"#
+        guard
+            let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+            let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+            let valueRange = Range(match.range(at: 1), in: line),
+            let unitRange = Range(match.range(at: 2), in: line),
+            let value = Double(String(line[valueRange]))
+        else { return nil }
+
+        let unit = String(line[unitRange]).lowercased()
+        let multiplier: Double
+        switch unit {
+        case "b":
+            multiplier = 1
+        case "kb":
+            multiplier = 1_000
+        case "mb":
+            multiplier = 1_000_000
+        case "gb":
+            multiplier = 1_000_000_000
+        case "tb":
+            multiplier = 1_000_000_000_000
+        case "pb":
+            multiplier = 1_000_000_000_000_000
+        case "kib":
+            multiplier = 1_024
+        case "mib":
+            multiplier = 1_048_576
+        case "gib":
+            multiplier = 1_073_741_824
+        case "tib":
+            multiplier = 1_099_511_627_776
+        case "pib":
+            multiplier = 1_125_899_906_842_624
+        default:
+            return nil
+        }
+        return value * multiplier
     }
 
     nonisolated static func importViaConfiguredAPI(
