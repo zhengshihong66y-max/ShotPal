@@ -668,7 +668,9 @@ extension LibraryStore {
             "--fragment-retries", "8",
             "--extractor-retries", "2",
             "--retry-sleep", "http:linear=1::1",
-            "--retry-sleep", "fragment:exp=1:8"
+            "--retry-sleep", "fragment:exp=1:8",
+            // DASH/HLS 分片并发下载;单连接走代理时串行分片是吞吐瓶颈
+            "--concurrent-fragments", "8"
         ]
         if isYouTube {
             arguments += ["--sleep-requests", "0.75"]
