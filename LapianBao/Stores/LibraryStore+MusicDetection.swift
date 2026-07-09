@@ -121,6 +121,15 @@ extension LibraryStore {
         }
 
         var sources: [MusicDownloadSource] = []
+
+        // 配置了 cookie 时让下载进程用 ytsearch1: 一步完成搜索+下载,
+        // 省掉独立搜索探测的一整个进程(慢代理下约 6-10 秒);
+        // 失败时仍有多客户端/代理尝试和 cookie 自动愈合兜底。
+        if configuredYouTubeCookieFileURL() != nil {
+            sources.append(contentsOf: expandedSources(name: "YouTube 搜索直下", target: "ytsearch1:\(trimmedQuery)"))
+            return sources
+        }
+
         if let firstResultURL = await firstYouTubeSearchResultURL(for: trimmedQuery) {
             sources.append(contentsOf: expandedSources(name: "YouTube 播放页", target: firstResultURL.absoluteString))
         }
