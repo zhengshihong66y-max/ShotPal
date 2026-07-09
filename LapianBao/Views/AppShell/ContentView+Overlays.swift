@@ -22,6 +22,9 @@ extension ContentView {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
+                    // 打开面板的那次点击会被手势系统对更新后的视图树重新命中,
+                    // 落在遮罩上当场关闭面板;打开后的短窗口内忽略遮罩点击。
+                    guard Date().timeIntervalSince(importPanelPresentedAt) > 0.35 else { return }
                     closeImportPanel()
                 }
                 .accessibilityHidden(true)

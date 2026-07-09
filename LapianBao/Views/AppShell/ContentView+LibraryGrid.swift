@@ -545,9 +545,7 @@ extension ContentView {
         Button {
             importEndpointText = libraryStore.instagramImportEndpoint
             autoFillClipboardURL()
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                isImportSheetPresented = true
-            }
+            presentImportPanel()
         } label: {
             libraryToolbarIcon(systemName: "arrow.down.circle", size: 13)
         }

@@ -29,6 +29,9 @@ struct ContentView: View {
     @State var libraryTagRenameInput = ""
     @FocusState var focusedLibraryTagRenameTarget: String?
     @State var isImportSheetPresented = false
+    // 面板打开时刻:遮罩点击需忽略打开后的短窗口,防止打开面板的那次
+    // 点击被手势系统在视图更新后重新命中遮罩、当场关闭面板
+    @State var importPanelPresentedAt = Date.distantPast
     @State var importURLText = ""
     @State var importURLFeedbackMessage: String?
     @State var importEndpointText = ""

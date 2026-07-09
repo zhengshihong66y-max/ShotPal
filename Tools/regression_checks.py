@@ -2395,15 +2395,19 @@ def require_interaction_hit_testing_guardrails(sources: dict[str, str], guidance
         "Button(action: closeImportPanel)" not in overlays,
         "Import overlay backdrop must not be a full-window Button; use Color + onTapGesture instead.",
     )
+    # 2026-07-09:遮罩 onTapGesture 内允许打开后短窗口的同点击守卫
+    # (importPanelPresentedAt),防止打开面板的那次点击被手势系统
+    # 重新命中遮罩当场关闭面板;守卫必须存在。
     require(
         re.search(
             r"Color\.black\.opacity\([^)]+\)[\s\S]{0,280}"
-            r"\.onTapGesture\s*\{\s*closeImportPanel\(\)\s*\}[\s\S]{0,160}"
+            r"\.onTapGesture\s*\{[\s\S]{0,420}closeImportPanel\(\)\s*\}[\s\S]{0,160}"
             r"\.accessibilityHidden\(true\)",
             overlays,
         )
-        is not None,
-        "Import overlay backdrop must stay as non-control Color + onTapGesture and be accessibilityHidden(true).",
+        is not None
+        and "importPanelPresentedAt" in overlays,
+        "Import overlay backdrop must stay Color + guarded onTapGesture (same-click grace) and accessibilityHidden(true).",
     )
 
     timeline_controls = sources.get("LapianBao/Views/Preview/TimelineControls.swift", "")

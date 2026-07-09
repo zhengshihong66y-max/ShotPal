@@ -48,6 +48,7 @@
 - `LapianBaoApp.swift` 的 App 级预览键盘监听只能监听 `.keyDown` 和 `.keyUp`。不要添加 `.leftMouseDown`、`.rightMouseDown` 或其它 App 级鼠标监听。
 - 不要在 App 级鼠标按下路径里调用 `window.makeFirstResponder(nil)`。鼠标焦点恢复只能留在局部桥接视图，例如 `PreviewKeyboardHandler`。
 - 局部预览键盘焦点恢复不能在鼠标命中 `NSControl` 时抢 first responder；批注保存、取消、删除等控件必须先收到自己的 mouseDown/mouseUp。
+- 点击按钮打开全屏遮罩面板时,打开面板的那次鼠标点击会被 macOS 手势系统对更新后的视图树重新命中、落到遮罩上当场把面板关掉(AXPress 无鼠标事件所以复现不了)。遮罩的"点空白关闭"手势必须忽略面板打开后的短窗口(参照导入面板的 `importPanelPresentedAt` + 0.35 秒守卫)。
 - 如果整个 App 变得无法点击，先用 `pgrep -fl LapianBao` 确认没有多个实例或旧调试窗口叠在一起，再查 SwiftUI 遮罩层和 AppKit 事件监听。
 
 ## 设计和 UI

@@ -17,9 +17,7 @@ extension ContentView {
         Button {
             importEndpointText = libraryStore.instagramImportEndpoint
             autoFillClipboardURL()
-            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                isImportSheetPresented = true
-            }
+            presentImportPanel()
         } label: {
             ZStack {
                 Image(systemName: "plus")
@@ -86,10 +84,15 @@ extension ContentView {
 
         pasteImportURLs(urls)
         importEndpointText = libraryStore.instagramImportEndpoint
+        presentImportPanel()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func presentImportPanel() {
+        importPanelPresentedAt = Date()
         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             isImportSheetPresented = true
         }
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func pasteImportURLs(_ urls: [String]) {
