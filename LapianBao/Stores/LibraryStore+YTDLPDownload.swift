@@ -608,12 +608,14 @@ extension LibraryStore {
         let cookieArguments = ["--cookies", workingCookieURL.path]
         var attempts: [YTDLPArgumentAttempt] = []
 
-        // 第一发用单一 web_safari 客户端并跳过 HLS/DASH 清单:请求数最少,
-        // 慢代理下解析从约 15 秒缩到 6 秒;不适用的视频(直播等)由后续
-        // 多客户端、不带 skip 的尝试兜底。
+        // 第一发用单一 tv 客户端并跳过 HLS/DASH 清单:请求数最少(慢代理下
+        // 解析约 5 秒),且播放器响应里带完整 DASH 分辨率階梯,画质与默认
+        // 客户端一致。⚠️ 不要换成 web_safari/mweb:它们的清晰度走 HLS,
+        // 叠加 skip=hls 后只剩 360p 以下兜底格式,曾导致画质暴跌。
+        // 直播等特例由后续多客户端、不带 skip 的尝试兜底。
         attempts.append(YTDLPArgumentAttempt(
             label: "cookies.txt",
-            arguments: cookieArguments + ["--extractor-args", "youtube:player_client=web_safari;skip=hls,dash"]
+            arguments: cookieArguments + ["--extractor-args", "youtube:player_client=tv;skip=hls,dash"]
         ))
         attempts.append(YTDLPArgumentAttempt(label: "cookies.txt备用客户端", arguments: cookieArguments + clientArguments))
 
