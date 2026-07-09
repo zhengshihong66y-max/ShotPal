@@ -772,7 +772,12 @@ extension LibraryStore {
         }
 
         let environment = downloaderProcessEnvironment()
-        let info = ytdlpArgumentAttempts(for: sourceURL)
+        // 与正式下载一致:配置了 cookies.txt 时探测也 cookie 优先,
+        // 否则在被风控的出口上标题和封面要等匿名尝试全部失败才出现。
+        let cookieFileURL = isYouTubeURL(sourceURL) ? configuredYouTubeCookieFileURL() : nil
+        let probeAttempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
+            + ytdlpArgumentAttempts(for: sourceURL)
+        let info = probeAttempts
             .lazy
             .compactMap { attempt in
                 fetchYTDLPVideoInfo(

@@ -594,9 +594,12 @@ extension ContentView {
                     .textSelection(.enabled)
                     .frame(height: 16)
 
+                Spacer(minLength: 0)
+
                 importActiveProgressBar(for: job)
             }
-            .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(height: 56)
 
             importJobActions(for: job)
                 .frame(height: 56, alignment: .top)
@@ -761,27 +764,33 @@ extension ContentView {
             importJobCover(for: job, width: 100, height: 56)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(importStatusTitle(for: job))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.86))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Text(importHistorySourceText(for: job))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-
-                if let detailText = importHistoryFileDetailText(for: job) {
-                    Text(detailText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                // 标题贴封面顶边、信息行贴封面底边,文字块与封面等高对齐
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(importStatusTitle(for: job))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.86))
                         .lineLimit(1)
                         .truncationMode(.tail)
+
+                    Text(importHistorySourceText(for: job))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                         .textSelection(.enabled)
+
+                    Spacer(minLength: 0)
+
+                    if let detailText = importHistoryFileDetailText(for: job) {
+                        Text(detailText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .textSelection(.enabled)
+                    }
                 }
+                .frame(height: 56, alignment: .topLeading)
 
                 if let video = importedVideo(for: job) {
                     importJobTagStrip(for: video)
