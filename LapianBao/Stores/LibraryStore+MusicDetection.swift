@@ -71,10 +71,10 @@ extension LibraryStore {
         let sources = await musicDownloadSources(for: query)
         var failures: [String] = []
 
-        for (index, source) in sources.enumerated() {
-            let sourceStart = Double(index) / Double(max(sources.count, 1))
-            let sourceSpan = 1.0 / Double(max(sources.count, 1))
-            progressCallback?(min(0.98, max(0.02, sourceStart + 0.02 * sourceSpan)))
+        // 与导入页一致:进度条直接反映当前尝试的真实下载进度,
+        // 不按尝试源数量切段;换源重试时进度回到起点重新走。
+        for source in sources {
+            progressCallback?(0.02)
 
             do {
                 return try await runMusicYTDLPDownloadWithTimeout(
@@ -82,14 +82,13 @@ extension LibraryStore {
                     into: destinationDirectory,
                     processRegistry: processRegistry,
                     progressCallback: { progress in
-                        progressCallback?(min(0.98, sourceStart + progress * sourceSpan))
+                        progressCallback?(min(0.98, progress))
                     }
                 )
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 failures.append("\(source.name)：\(error.localizedDescription)")
-                progressCallback?(min(0.98, sourceStart + sourceSpan))
             }
         }
 
@@ -369,6 +368,7 @@ extension LibraryStore {
                 "--progress",
                 "--newline",
                 "--no-colors",
+                "--progress-template", "download:lapianbao-progress downloaded=%(progress.downloaded_bytes)s total=%(progress.total_bytes)s total_estimate=%(progress.total_bytes_estimate)s speed=%(progress.speed)s",
                 "--default-search", "ytsearch",
                 "--paths", destinationDirectory.path,
                 "-o", "%(title).160B-%(id)s.%(ext)s",
