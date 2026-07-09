@@ -2078,8 +2078,47 @@ struct DownloadedMusicWaveformView: View {
                 }
             }
         } else {
-            musicWaveformCachePlaceholder()
+            // 缓存图未就绪时直接实时绘制样本,杜绝空白框;
+            // 高保真缓存图渲染完成后由 revision 触发无缝替换。
+            directWaveformFallback(samples: displaySamples, size: displaySize)
         }
+    }
+
+    private func directWaveformFallback(samples rawSamples: [Double], size: CGSize) -> some View {
+        // 降采样到 ≤120 段:兜底层是静态内容且只在行实例化时栅格化一次,
+        // 不依赖播放进度,滚动性能与占位条相当。
+        let bucketCount = min(120, rawSamples.count)
+        let samples: [Double]
+        if rawSamples.count > bucketCount, bucketCount > 0 {
+            let stride = Double(rawSamples.count) / Double(bucketCount)
+            samples = (0..<bucketCount).map { bucket in
+                let start = Int(Double(bucket) * stride)
+                let end = min(rawSamples.count, Int(Double(bucket + 1) * stride))
+                return rawSamples[start..<max(start + 1, end)].max() ?? 0
+            }
+        } else {
+            samples = rawSamples
+        }
+        return Canvas { context, canvasSize in
+            guard !samples.isEmpty, canvasSize.width > 0, canvasSize.height > 0 else { return }
+            let midY = canvasSize.height / 2
+            let stepX = canvasSize.width / CGFloat(samples.count)
+            var shape = Path()
+            shape.move(to: CGPoint(x: 0, y: midY))
+            for (index, sample) in samples.enumerated() {
+                let magnitude = CGFloat(max(0.03, min(1, sample)))
+                shape.addLine(to: CGPoint(x: (CGFloat(index) + 0.5) * stepX, y: midY - midY * magnitude * 0.92))
+            }
+            shape.addLine(to: CGPoint(x: canvasSize.width, y: midY))
+            for (index, sample) in samples.enumerated().reversed() {
+                let magnitude = CGFloat(max(0.03, min(1, sample)))
+                shape.addLine(to: CGPoint(x: (CGFloat(index) + 0.5) * stepX, y: midY + midY * magnitude * 0.92))
+            }
+            shape.closeSubpath()
+            context.fill(shape, with: .color(.white.opacity(0.20)))
+            context.stroke(shape, with: .color(.white.opacity(0.50)), lineWidth: isCompact ? 0.8 : 1)
+        }
+        .frame(width: size.width, height: size.height)
     }
 
     private func ensureWaveformImagesCached(

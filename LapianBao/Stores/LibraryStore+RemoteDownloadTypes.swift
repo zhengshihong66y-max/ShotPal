@@ -321,9 +321,11 @@ extension LibraryStore {
                 downloadedBytes: activeDownloadedBytes,
                 totalBytes: activeTotalBytes
             )
+            // 字节权重缺失时退回按部件数的估算进度:宁可显示保守的真实爬升,
+            // 也不能整个部件静默(曾表现为卡 0 然后跳 96);单调保护防止回退。
             guard byteWeightedProgress != nil
-                    || allowsEstimatedMultipartProgress
-                    || (expectedPartCount == 1 && partIndex == 0 && activeRawProgress != nil) else {
+                    || activeRawProgress != nil
+                    || allowsEstimatedMultipartProgress else {
                 return DownloadProgressUpdate(progress: nil, speed: update.speed)
             }
 

@@ -636,10 +636,13 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
         and "cache.image(" not in cached_waveform,
         "DownloadedMusicWaveformView body must only read already-warm memory images and must not synchronously load or render cache images.",
     )
+    # 2026-07-09 调整:缓存未命中时允许一层轻量降采样(≤120 段)的静态兜底绘制,
+    # 杜绝空白波形框;仍禁止依赖播放进度的逐帧 Canvas 重绘。
     require(
-        "musicWaveformCachePlaceholder()" in cached_waveform
+        "directWaveformFallback(samples: displaySamples" in cached_waveform
+        and "min(120, rawSamples.count)" in audio_components
         and "musicWaveformCanvas(" not in audio_components,
-        "DownloadedMusicWaveformView must show a stable placeholder on cache miss instead of drawing Canvas waveforms during scroll.",
+        "Waveform cache miss must draw the lightweight static fallback (<=120 buckets); per-frame progress-driven Canvas remains banned.",
     )
 
     render_cache = sources.get("LapianBao/Views/Music/DownloadedMusicWaveformRenderCache.swift", "")
@@ -2632,10 +2635,12 @@ def main() -> None:
         and "single part 50% must stay 50%" in download_progress_check
         and "structured yt-dlp byte progress must use downloaded_bytes / total_bytes" in download_progress_check
         and "live yt-dlp download completion must stop below final imported 100%" in download_progress_check
-        and "multipart downloads without known sizes must not jump to 50%" in download_progress_check
+        and "multipart without sizes must publish estimated progress instead of staying silent" in download_progress_check
+        and "multipart progress must stay monotonic once estimated progress was published" in download_progress_check
+        and "multipart progress must resume byte-weighted values once they exceed the earlier estimate" in download_progress_check
         and "multipart downloads with known sizes must use byte-weighted progress" in download_progress_check
         and "CommandLineDownloadProgressCheck.runIfRequested()" in app_swift,
-        "Remote video download progress must not default unknown downloads to two parts or jump to half progress.",
+        "Remote video download progress must publish estimated multipart progress, stay monotonic, and hand over to byte weights.",
     )
     launch_restore_section = section_between(
         launch_imports,

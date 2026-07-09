@@ -119,7 +119,7 @@ extension LibraryStore {
             ]
             if usesDeferredNaming {
                 arguments += [
-                    "--print", "before_dl:\(Self.ytdlpPartsMarkerPrefix)%(requested_formats)j",
+                    "--print", "before_dl:\(Self.ytdlpPartsMarkerPrefix)%(duration)s|%(requested_formats)j",
                     "--print", "after_move:\(Self.ytdlpTitleMarkerPrefix)%(title)s",
                     "--print", "after_move:\(Self.ytdlpUploaderMarkerPrefix)%(uploader)s"
                 ]
@@ -321,15 +321,23 @@ extension LibraryStore {
     /// 解析 before_dl 打印的 %(requested_formats)j:返回部件数,以及在
     /// 每个部件都有已知大小时的字节权重(缺任一大小则不提供权重)。
     nonisolated static func parseYTDLPRequestedFormatsPartInfo(
-        _ json: String
+        _ payload: String
     ) -> (count: Int, byteCounts: [Double])? {
-        let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
+        // marker 格式:<视频时长秒数>|<requested_formats 的 JSON>,时长用于码率兜底
+        var trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        var durationSeconds: Double?
+        if let separatorIndex = trimmed.firstIndex(of: "|") {
+            durationSeconds = Double(trimmed[..<separatorIndex].trimmingCharacters(in: .whitespaces))
+            trimmed = String(trimmed[trimmed.index(after: separatorIndex)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !trimmed.isEmpty, trimmed != "NA", trimmed != "null", trimmed != "None" else { return nil }
         guard let data = trimmed.data(using: .utf8),
               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
               !array.isEmpty
         else { return nil }
 
+        // 权重逐级兜底:精确大小 → 估算大小 → 码率×时长
         var byteCounts = array.map { item -> Double in
             if let size = (item["filesize"] as? NSNumber)?.doubleValue, size > 0 {
                 return size
@@ -337,9 +345,13 @@ extension LibraryStore {
             if let size = (item["filesize_approx"] as? NSNumber)?.doubleValue, size > 0 {
                 return size
             }
+            if let durationSeconds, durationSeconds > 0,
+               let bitrate = (item["tbr"] as? NSNumber)?.doubleValue, bitrate > 0 {
+                return bitrate * durationSeconds * 125
+            }
             return 0
         }
-        // 个别部件缺大小(常见是音频轨)时用已知最大部件的 10% 兜底,
+        // 个别部件仍缺大小时用已知最大部件的 10% 兜底,
         // 保住字节加权进度;全部未知才放弃权重。
         if let known = byteCounts.filter({ $0 > 0 }).max() {
             byteCounts = byteCounts.map { $0 > 0 ? $0 : known * 0.1 }

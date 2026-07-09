@@ -95,8 +95,10 @@ enum CommandLineDownloadProgressCheck {
             from: "[download] 100.0% of 8.00MiB at 2.00MiB/s ETA 00:00"
         )?.progress
 
-        if multipartWithoutSizesFirstPartProgress != nil {
-            failures.append("multipart downloads without known sizes must not jump to 50%")
+        // 新契约:权重未知时发布按部件数的估算进度(此处 (0+1.0)/2 = 0.5),
+        // 不再整段静默(旧行为表现为进度卡 0 后跳 96)。
+        if !approximatelyEqual(multipartWithoutSizesFirstPartProgress, 0.5) {
+            failures.append("multipart without sizes must publish estimated progress instead of staying silent")
         }
 
         let multipartKnownSizesTracker = LibraryStore.YTDLPProgressTracker(
@@ -125,8 +127,17 @@ enum CommandLineDownloadProgressCheck {
             from: "[download]  20.0% of 90.00MiB at 1.00MiB/s ETA 00:02"
         )?.progress
 
-        if !approximatelyEqual(multipartObservedSizesSecondPartProgress, 0.28) {
-            failures.append("multipart downloads must use observed yt-dlp part sizes once they are available")
+        // 新契约:进度严格单调——第一部件发布过估算 0.5,字节权重 0.28 不得回退
+        if !approximatelyEqual(multipartObservedSizesSecondPartProgress, 0.5) {
+            failures.append("multipart progress must stay monotonic once estimated progress was published")
+        }
+
+        let multipartObservedSizesCatchUpProgress = multipartObservedSizesTracker.update(
+            from: "[download]  80.0% of 90.00MiB at 1.00MiB/s ETA 00:01"
+        )?.progress
+        // 字节权重((10+72)/100 = 0.82)超过早期估算后必须接管
+        if !approximatelyEqual(multipartObservedSizesCatchUpProgress, 0.82) {
+            failures.append("multipart progress must resume byte-weighted values once they exceed the earlier estimate")
         }
 
         return Report(
