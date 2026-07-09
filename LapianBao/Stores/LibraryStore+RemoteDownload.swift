@@ -55,8 +55,18 @@ extension LibraryStore {
         // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
         if rawURL == nil, let ytdlp,
            !Task.isCancelled {
-            let attempts = ytdlpArgumentAttempts(for: sourceURL)
             let isYouTubeSource = isYouTubeURL(sourceURL)
+            // 配置了 cookies.txt 时优先带 cookie 请求;被风控的出口 IP 上匿名尝试必然失败,
+            // 先跑完匿名再退 cookie 会让每次下载都白等一轮重试。
+            let cookieFileURL = isYouTubeSource ? configuredYouTubeCookieFileURL() : nil
+            let didStartCookieAccess = cookieFileURL?.startAccessingSecurityScopedResource() ?? false
+            defer {
+                if didStartCookieAccess {
+                    cookieFileURL?.stopAccessingSecurityScopedResource()
+                }
+            }
+            let attempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
+                + ytdlpArgumentAttempts(for: sourceURL)
             var sawYouTubeLoginVerification = false
             for attempt in attempts {
                 do {
@@ -86,45 +96,10 @@ extension LibraryStore {
             }
 
             if rawURL == nil,
-               isYouTubeSource,
-               !Task.isCancelled {
-                let cookieFileURL = configuredYouTubeCookieFileURL()
-                let didStartCookieAccess = cookieFileURL?.startAccessingSecurityScopedResource() ?? false
-                defer {
-                    if didStartCookieAccess {
-                        cookieFileURL?.stopAccessingSecurityScopedResource()
-                    }
-                }
-                for attempt in ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL) {
-                    do {
-                        let result = try await runYTDLPOnce(
-                            executableURL: ytdlp,
-                            sourceURL: sourceURL,
-                            destinationDirectory: destinationDirectory,
-                            extraArguments: attempt.arguments,
-                            progressCallback: progressCallback,
-                            processCallback: processCallback
-                        )
-                        rawURL = result.url
-                        authorName = result.authorName
-                        sourceTitle = result.sourceTitle
-                        break
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch {
-                        if let failure = error as? YTDLPDownloaderFailure {
-                            authorName = authorName ?? failure.authorName
-                        }
-                        ytdlpFailure = error
-                    }
-                }
-
-                if rawURL == nil,
-                   sawYouTubeLoginVerification,
-                   cookieFileURL == nil,
-                   let ytdlpFailure {
-                    throw ytdlpFailure
-                }
+               sawYouTubeLoginVerification,
+               cookieFileURL == nil,
+               let ytdlpFailure {
+                throw ytdlpFailure
             }
             if rawURL == nil, let ytdlpFailure, isHardYouTubeYTDLPFailure(ytdlpFailure) {
                 throw ytdlpFailure
