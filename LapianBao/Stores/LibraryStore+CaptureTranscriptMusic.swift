@@ -955,13 +955,21 @@ extension LibraryStore {
         }
 
         let songKey = musicSongKey(song)
-        if let existing = latestMusicDownloadJob(songKey: songKey, type: type, recognitionID: recognitionID) {
+        // 全局唯一:一首歌 × 一种类型只有一条记录;重试就地更新,永不追加副本
+        if let index = musicDownloadJobs.firstIndex(where: { $0.songKey == songKey && $0.type == type }) {
+            let existing = musicDownloadJobs[index]
             if Self.isActiveDownloadStatus(existing.status) {
                 return nil
             }
             if isSatisfiedMusicDownload(existing) {
                 return nil
             }
+            musicDownloadJobs[index].status = .importing
+            musicDownloadJobs[index].downloadProgress = nil
+            if let recognitionID {
+                musicDownloadJobs[index].recognitionID = recognitionID
+            }
+            return existing.id
         }
 
         let job = MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: .importing)
@@ -1211,7 +1219,8 @@ extension LibraryStore {
     }
 
     func latestMusicDownloadJob(songKey: String, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) -> MusicDownloadJob? {
-        musicDownloadJobs.last { $0.songKey == songKey && $0.type == type && $0.recognitionID == recognitionID }
+        // 记录按(歌曲 × 类型)全局唯一,识别 ID 仅作发起来源参考,不参与查询
+        musicDownloadJobs.last { $0.songKey == songKey && $0.type == type }
     }
 
     /// 波形样本按文件共享:同一首歌被不同视频识别会产生不同 recognitionID 的

@@ -646,7 +646,7 @@ nonisolated func latestMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDo
 
 nonisolated func musicDownloadJobs(for song: MusicRecognitionItem, in jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
     let songKey = "\(song.title)|\(song.artist)"
-    return latestMusicDownloadJobs(jobs.filter { $0.songKey == songKey && $0.recognitionID == nil })
+    return latestMusicDownloadJobs(jobs.filter { $0.songKey == songKey })
 }
 
 nonisolated func musicDownloadJobs(
@@ -654,7 +654,8 @@ nonisolated func musicDownloadJobs(
     in jobs: [MusicDownloadJob],
     recognitionID: UUID
 ) -> [MusicDownloadJob] {
-    latestMusicDownloadJobs(jobs.filter { $0.recognitionID == recognitionID })
+    // 记录全局唯一后,识别 ID 不再参与查询,统一按歌名索引
+    musicDownloadJobs(for: song, in: jobs)
 }
 
 struct MusicDownloadExtensionStack: View {

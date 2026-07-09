@@ -600,7 +600,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     }
 
     func musicDownloadJobs(for asset: RecognizedMusicAsset) -> [MusicDownloadJob] {
-        input.musicDownloadLookupCaches.jobsByRecognitionID[asset.song.id] ?? []
+        musicDownloadJobs(for: asset.song)
     }
 
     func completedMusicFileURL(for job: MusicDownloadJob?) -> URL? {

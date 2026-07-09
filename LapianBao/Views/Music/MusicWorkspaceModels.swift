@@ -61,7 +61,7 @@ nonisolated struct MusicDownloadLookupCaches: Sendable {
         jobs: [MusicDownloadJob],
         completionSnapshot: MusicDownloadCompletionSnapshot
     ) {
-        jobsBySongKey = Dictionary(grouping: jobs.filter { $0.recognitionID == nil }, by: \.songKey)
+        jobsBySongKey = Dictionary(grouping: jobs, by: \.songKey)
             .mapValues(latestMusicDownloadJobs)
         jobsByRecognitionID = Dictionary(grouping: jobs.compactMap { job -> (UUID, MusicDownloadJob)? in
             guard let recognitionID = job.recognitionID else { return nil }

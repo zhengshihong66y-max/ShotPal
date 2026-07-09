@@ -2204,20 +2204,31 @@ def require_music_recognition_download_scope_guardrails(sources: dict[str, str])
         and "try container.encodeIfPresent(recognitionID, forKey: .recognitionID)" in models,
         "Music download jobs must persist an optional recognitionID so each recognized row can own its own download state.",
     )
+    # 2026-07-09 设计变更:下载记录按(歌曲 × 类型)全局唯一,重试就地更新;
+    # recognitionID 仅记录发起来源,不再参与任何查询或去重。
     require(
-        "musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)" in audio_components
-        and "libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)" in audio_components
-        and "jobs.filter { $0.songKey == songKey && $0.recognitionID == nil }" in audio_components
-        and "jobs.filter { $0.recognitionID == recognitionID }" in audio_components,
-        "Recognized music rows must not reuse old title/artist download jobs; only global/search rows may use unscoped jobs.",
+        "jobs.filter { $0.songKey == songKey }" in audio_components
+        and "musicDownloadJobs(for: song, in: jobs)" in audio_components
+        and "libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)" in audio_components,
+        "Music rows must resolve download jobs by song key only; records are globally unique per song and type.",
     )
     require(
         "func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil)" in capture_music
         and "MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: .importing)" in capture_music
-        and "var seen = Set<UUID>()" in capture_music
-        and "isMusicDownloadSatisfied(song: song, type: type, recognitionID: song.id)" in capture_music
-        and "$0.recognitionID == recognitionID" in capture_music,
-        "Music download creation and batch checks must be scoped by recognitionID for recognized items.",
+        and "musicDownloadJobs.firstIndex(where: { $0.songKey == songKey && $0.type == type })" in capture_music
+        and "musicDownloadJobs[index].status = .importing" in capture_music
+        and "musicDownloadJobs.last { $0.songKey == songKey && $0.type == type }" in capture_music
+        and "var seen = Set<UUID>()" in capture_music,
+        "Music download records must stay globally unique per (song, type): retries update in place and lookups ignore recognitionID.",
+    )
+    require(
+        "func dedupedMusicDownloadJobs" in persistence
+        and 'let key = "\\(job.songKey)|\\(job.type.rawValue)"' in persistence,
+        "Project load must collapse duplicate music download records to one per (song, type).",
+    )
+    require(
+        "func musicDownloadWaveformSamples(for job: MusicDownloadJob)" in capture_music,
+        "Waveform samples must be shared across records pointing at the same downloaded file.",
     )
     require(
         "Self.musicItems(songs, preservingStateFrom: currentSongs)" in capture_music
@@ -2233,12 +2244,10 @@ def require_music_recognition_download_scope_guardrails(sources: dict[str, str])
         "Old unscoped downloads should only migrate to a recognition row when they uniquely match one existing recognition item.",
     )
     require(
-        "var jobsByRecognitionID: [UUID: [MusicDownloadJob]]" in projection_models
-        and "jobs.filter { $0.recognitionID == nil }" in projection_models
-        and "jobsByRecognitionID" in projection_models
+        "Dictionary(grouping: jobs, by: \\.songKey)" in projection_models
         and "let downloadJobs = musicDownloadJobs(for: asset)" in projection_builder
-        and "input.musicDownloadLookupCaches.jobsByRecognitionID[asset.song.id] ?? []" in projection_builder,
-        "Music workspace recognized rows must read recognition-scoped downloads instead of title/artist global downloads.",
+        and "musicDownloadJobs(for: asset.song)" in projection_builder,
+        "Music workspace rows must read song-key scoped downloads; records are globally unique per song and type.",
     )
 
 

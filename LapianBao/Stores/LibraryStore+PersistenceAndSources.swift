@@ -585,7 +585,7 @@ extension LibraryStore {
         var kept: [MusicDownloadJob] = []
         var indexByKey: [String: Int] = [:]
         for job in jobs {
-            let key = "\(job.songKey)|\(job.type.rawValue)|\(job.recognitionID?.uuidString ?? "-")"
+            let key = "\(job.songKey)|\(job.type.rawValue)"
             if let existingIndex = indexByKey[key] {
                 var newer = job
                 if newer.waveformSamples?.isEmpty ?? true,
