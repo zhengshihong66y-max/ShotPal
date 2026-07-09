@@ -12,6 +12,26 @@ import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
+/// 歌曲下载进度的发布节流门:变化不足 1% 且距上次发布不足 150ms 时丢弃。
+nonisolated final class MusicProgressThrottleGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lastPublishedProgress = -1.0
+    private var lastPublishedAt = Date.distantPast
+
+    func shouldPublish(_ progress: Double) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = Date()
+        if progress >= 1 || progress <= 0 || abs(progress - lastPublishedProgress) >= 0.01
+            || now.timeIntervalSince(lastPublishedAt) >= 0.15 {
+            lastPublishedProgress = progress
+            lastPublishedAt = now
+            return true
+        }
+        return false
+    }
+}
+
 extension LibraryStore {
     @discardableResult
     func ensureSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) async -> SampledFrame? {
@@ -1001,10 +1021,15 @@ extension LibraryStore {
 
         let query = musicDownloadQuery(song: song, type: type)
         let preResolvedURL = musicSearchURLBySongKey[musicSearchURLCacheKey(song: song, type: type)]
+        // 进度回调节流:并发分片下载的进度行非常密,逐行更新 @Published
+        // 任务数组会拖垮主线程;小于 1% 且间隔不足 150ms 的更新直接丢弃。
+        let progressGate = MusicProgressThrottleGate()
         let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
+            let normalized = Self.normalizedProgress(progress)
+            guard progressGate.shouldPublish(normalized) else { return }
             Task { @MainActor [weak self] in
                 self?.updateMusicDownloadJob(id: jobID) { j in
-                    j.downloadProgress = Self.normalizedProgress(progress)
+                    j.downloadProgress = normalized
                 }
             }
         }

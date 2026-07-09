@@ -80,26 +80,36 @@ extension LibraryStore {
         projectDataDirty = true
         projectSaveSequence += 1
         let sequence = projectSaveSequence
-        let dataFile = makeProjectDataFile()
 
+        // 快照构建(makeProjectDataFile)是重活,必须和写盘一起去抖:
+        // 高频调用(如下载进度逐行触发的 didSet)只推迟计时,静默 180ms 后
+        // 才在主线程构建一次快照,再交给后台写盘。曾因每次调用都同步
+        // 全量构建把主线程卡死(cpu_resource 诊断 2026-07-09)。
         projectSaveTask?.cancel()
-        projectSaveTask = Task.detached(priority: .utility) { [url, dataFile] in
+        projectSaveTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 180_000_000)
                 try Task.checkCancellation()
-                try Self.writeProjectData(dataFile, to: url)
             } catch {
+                return
+            }
+            guard let self, self.projectSaveSequence == sequence else { return }
+            let dataFile = self.makeProjectDataFile()
+            self.projectSaveTask = Task.detached(priority: .utility) { [url, dataFile] in
+                do {
+                    try Self.writeProjectData(dataFile, to: url)
+                } catch {
+                    await MainActor.run { [weak self] in
+                        guard self?.projectSaveSequence == sequence else { return }
+                        self?.projectSaveTask = nil
+                    }
+                    return
+                }
                 await MainActor.run { [weak self] in
                     guard self?.projectSaveSequence == sequence else { return }
                     self?.projectSaveTask = nil
+                    self?.projectDataDirty = false
                 }
-                return
-            }
-
-            await MainActor.run { [weak self] in
-                guard self?.projectSaveSequence == sequence else { return }
-                self?.projectSaveTask = nil
-                self?.projectDataDirty = false
             }
         }
     }
