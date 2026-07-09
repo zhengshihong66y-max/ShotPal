@@ -37,7 +37,9 @@ final class YouTubeCookieStore: ObservableObject {
     nonisolated static let validationVideoURL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
     // 首次运行会弹钥匙串授权("访问 Chrome Safe Storage"),给用户留足确认时间。
     nonisolated static let refreshTimeout: TimeInterval = 240
-    nonisolated static let autoRefreshCooldown: TimeInterval = 15 * 60
+    // 只防快速死循环,不能挡正常自愈:Chrome 活跃浏览 YouTube 时
+    // 会话可能几分钟就被轮换一次,冷却过长会让冷却期内的下载全部失败。
+    nonisolated static let autoRefreshCooldown: TimeInterval = 60
 
     var isRefreshing: Bool {
         refreshPhase == .running
