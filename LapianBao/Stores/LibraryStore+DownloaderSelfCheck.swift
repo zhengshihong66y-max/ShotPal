@@ -12,11 +12,33 @@ import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
+/// yt-dlp 可用性解析结果的短时缓存:每次解析要跑 --version 和 --help
+/// 两个进程(约 1.6 秒),下载/歌曲路径一次任务会调用多次,不缓存纯属浪费。
+nonisolated private enum YTDLPResolutionCache {
+    static let lock = NSLock()
+    nonisolated(unsafe) static var entry: (url: URL, resolvedAt: Date)?
+    static let ttl: TimeInterval = 300
+}
+
 extension LibraryStore {
     nonisolated static let downloaderYTDLPQuickCheckTimeout: TimeInterval = 1.5
 
     nonisolated static func localYTDLPURL() -> URL? {
-        localYTDLPInfo()?.url
+        YTDLPResolutionCache.lock.lock()
+        if let entry = YTDLPResolutionCache.entry,
+           Date().timeIntervalSince(entry.resolvedAt) < YTDLPResolutionCache.ttl,
+           FileManager.default.isExecutableFile(atPath: entry.url.path) {
+            let url = entry.url
+            YTDLPResolutionCache.lock.unlock()
+            return url
+        }
+        YTDLPResolutionCache.lock.unlock()
+
+        guard let info = localYTDLPInfo() else { return nil }
+        YTDLPResolutionCache.lock.lock()
+        YTDLPResolutionCache.entry = (info.url, Date())
+        YTDLPResolutionCache.lock.unlock()
+        return info.url
     }
 
     nonisolated static func localYTDLPInfo(
