@@ -102,8 +102,7 @@ extension LibraryStore {
             knownLocalResourcePaths.remove(oldPath)
             let normalizedOldPath = Self.normalizedLocalFilePath(oldPath)
             musicFileDurationsByPath.removeValue(forKey: normalizedOldPath)
-            musicFileDurationTasks[normalizedOldPath]?.cancel()
-            musicFileDurationTasks[normalizedOldPath] = nil
+            musicFileDurationTasks.cancel(normalizedOldPath)
         }
         saveProjectData()
     }
@@ -247,8 +246,7 @@ extension LibraryStore {
             if let duration = musicFileDurationsByPath.removeValue(forKey: oldKey) {
                 musicFileDurationsByPath[newKey] = duration
             }
-            musicFileDurationTasks[oldKey]?.cancel()
-            musicFileDurationTasks[oldKey] = nil
+            musicFileDurationTasks.cancel(oldKey)
         }
     }
 

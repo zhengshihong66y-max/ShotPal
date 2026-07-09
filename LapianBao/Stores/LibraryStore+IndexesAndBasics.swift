@@ -857,13 +857,11 @@ extension LibraryStore {
             localMusicWaveformProgressByPath.removeValue(forKey: path)
             let normalizedPath = Self.normalizedLocalFilePath(path)
             musicFileDurationsByPath.removeValue(forKey: normalizedPath)
-            musicFileDurationTasks[normalizedPath]?.cancel()
-            musicFileDurationTasks[normalizedPath] = nil
+            musicFileDurationTasks.cancel(normalizedPath)
 
             let enrichmentKeys = musicTagEnrichmentTasks.keys.filter { $0.hasPrefix("\(path)|") }
             for key in enrichmentKeys {
-                musicTagEnrichmentTasks[key]?.cancel()
-                musicTagEnrichmentTasks[key] = nil
+                musicTagEnrichmentTasks.cancel(key)
             }
         }
 

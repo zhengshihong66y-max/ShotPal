@@ -301,13 +301,11 @@ extension LibraryStore {
         transientMediaCacheTrimTask?.cancel()
         transientMediaCacheTrimTask = nil
         transientMediaCacheAccessTickByPath.removeAll()
-        transcriptTasks.values.forEach { $0.cancel() }
-        transcriptTasks.removeAll()
+        transcriptTasks.cancelAll()
         transcriptBatchTask?.cancel()
         transcriptBatchTask = nil
         isTranscriptBatchPaused = false
-        frameStripTasks.values.forEach { $0.cancel() }
-        frameStripTasks.removeAll()
+        frameStripTasks.cancelAll()
         musicDownloadBatchTask?.cancel()
         musicDownloadBatchTask = nil
         musicDownloadTasks.values.forEach { $0.cancel() }
@@ -1770,8 +1768,7 @@ extension LibraryStore {
         playbackSupportByVideoPath.removeValue(forKey: path)
         waveformTasks.cancel(path)
         waveformSamplesByVideoPath.removeValue(forKey: path)
-        frameStripTasks[path]?.cancel()
-        frameStripTasks[path] = nil
+        frameStripTasks.cancel(path)
         frameStripByVideoPath.removeValue(forKey: path)
         frameStripImagesByVideoPath.removeValue(forKey: path)
         tagsByVideoPath.removeValue(forKey: path)
@@ -1781,8 +1778,7 @@ extension LibraryStore {
         pendingVideoPathRemap = pendingVideoPathRemap.filter { $0.value != path }
         transcriptSegmentsByVideoPath.removeValue(forKey: path)
         transcriptStatusByVideoPath.removeValue(forKey: path)
-        transcriptTasks[path]?.cancel()
-        transcriptTasks[path] = nil
+        transcriptTasks.cancel(path)
         transcriptExportJobs.removeValue(forKey: path)
         transcriptExports.removeAll { $0.videoPath == path }
         let removedAudioClipIDs = Set(audioClips.filter { $0.videoPath == path }.map(\.id))
@@ -1796,8 +1792,7 @@ extension LibraryStore {
         annotations.removeAll { $0.videoPath == path }
         audioClips.removeAll { $0.videoPath == path }
         let removedSongs = musicsByVideoPath[path, default: []]
-        musicDetectionTasks[path]?.cancel()
-        musicDetectionTasks[path] = nil
+        musicDetectionTasks.cancel(path)
         purgeMusicRecognitionCaches(forVideoPath: path, removedSongs: removedSongs)
         musicsByVideoPath.removeValue(forKey: path)
         musicDetectionStatusByVideoPath.removeValue(forKey: path)
@@ -1807,10 +1802,8 @@ extension LibraryStore {
         sceneThumbnailVersionsByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress.removeValue(forKey: path)
         sceneDetectionErrorByVideoPath.removeValue(forKey: path)
-        sceneDetectionTasks[path]?.cancel()
-        sceneDetectionTasks[path] = nil
-        sceneThumbnailHydrationTasks[path]?.cancel()
-        sceneThumbnailHydrationTasks[path] = nil
+        sceneDetectionTasks.cancel(path)
+        sceneThumbnailHydrationTasks.cancel(path)
         sceneThumbnailHydrationNeeded.remove(path)
         transientMediaCacheAccessTickByPath.removeValue(forKey: path)
         sceneCutCache.removeValue(forKey: relativeVideoPath(for: video.url))

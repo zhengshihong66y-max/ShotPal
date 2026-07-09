@@ -303,12 +303,9 @@ extension LibraryStore {
         waveformTasks.cancelAll()
         audioClipWaveformTasks.values.forEach { $0.cancel() }
         audioClipWaveformTasks.removeAll()
-        frameStripTasks.values.forEach { $0.cancel() }
-        frameStripTasks.removeAll()
-        sceneDetectionTasks.values.forEach { $0.cancel() }
-        sceneDetectionTasks.removeAll()
-        sceneThumbnailHydrationTasks.values.forEach { $0.cancel() }
-        sceneThumbnailHydrationTasks.removeAll()
+        frameStripTasks.cancelAll()
+        sceneDetectionTasks.cancelAll()
+        sceneThumbnailHydrationTasks.cancelAll()
         sceneThumbnailHydrationNeeded.removeAll()
 
         objectWillChange.send()

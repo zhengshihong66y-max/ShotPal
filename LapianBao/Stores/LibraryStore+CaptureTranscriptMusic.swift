@@ -153,7 +153,7 @@ extension LibraryStore {
 
     func transcribe(video: VideoItem) {
         let path = video.url.path
-        guard transcriptTasks[path] == nil else { return }
+        guard !transcriptTasks.isRunning(path) else { return }
         if case .running = transcriptStatusByVideoPath[path] { return }
         noteTransientMediaAccess(for: path)
         PerformanceDiagnostics.mark("transcript start", path: path)
@@ -166,12 +166,7 @@ extension LibraryStore {
             }
         }
 
-        let task = Task { [weak self] in
-            defer {
-                Task { @MainActor [weak self] in
-                    self?.transcriptTasks[path] = nil
-                }
-            }
+        transcriptTasks.start(path) { [weak self] in
             do {
                 let segments = try await Self.runWhisperTranscription(
                     video: video,
@@ -198,13 +193,11 @@ extension LibraryStore {
                 PerformanceDiagnostics.mark("transcript failed", path: path)
             }
         }
-        transcriptTasks[path] = task
     }
 
     func deleteTranscript(for video: VideoItem) {
         let path = video.url.path
-        transcriptTasks[path]?.cancel()
-        transcriptTasks[path] = nil
+        transcriptTasks.cancel(path)
         transcriptSegmentsByVideoPath[path] = nil
         transcriptStatusByVideoPath[path] = .idle
         saveProjectData()
@@ -340,14 +333,8 @@ extension LibraryStore {
         let existingSongs = musicsByVideoPath[path, default: []]
         musicDetectionStatusByVideoPath[path] = .running("准备中…")
 
-        musicDetectionTasks[path]?.cancel()
         weak let weakSelf = self
-        musicDetectionTasks[path] = Task {
-            defer {
-                Task { @MainActor in
-                    weakSelf?.musicDetectionTasks[path] = nil
-                }
-            }
+        musicDetectionTasks.replace(path) {
             do {
                 let songs = try await Self.runMusicDetection(
                     videoPath: path,
@@ -383,16 +370,14 @@ extension LibraryStore {
 
     func cancelMusicDetection(for video: VideoItem) {
         let path = video.url.path
-        musicDetectionTasks[path]?.cancel()
-        musicDetectionTasks[path] = nil
+        musicDetectionTasks.cancel(path)
         musicDetectionStatusByVideoPath[path] = .idle
     }
 
     func deleteMusicRecognition(for video: VideoItem) {
         let path = video.url.path
         let removedSongs = musicsByVideoPath[path, default: []]
-        musicDetectionTasks[path]?.cancel()
-        musicDetectionTasks[path] = nil
+        musicDetectionTasks.cancel(path)
         purgeMusicRecognitionCaches(forVideoPath: path, removedSongs: removedSongs)
         musicsByVideoPath.removeValue(forKey: path)
         musicDetectionStatusByVideoPath[path] = .idle
@@ -404,8 +389,7 @@ extension LibraryStore {
 
         for song in removedSongs {
             let enrichmentKey = musicTagEnrichmentKey(for: song, in: path)
-            musicTagEnrichmentTasks[enrichmentKey]?.cancel()
-            musicTagEnrichmentTasks[enrichmentKey] = nil
+            musicTagEnrichmentTasks.cancel(enrichmentKey)
         }
 
         let removedSongKeys = Set(removedSongs.map(musicSongKey))
@@ -624,7 +608,7 @@ extension LibraryStore {
     ) -> Bool {
         let path = asset.filePath
         guard FileManager.default.fileExists(atPath: path) else { return true }
-        if musicDetectionTasks[path] != nil { return true }
+        if musicDetectionTasks.isRunning(path) { return true }
         if hasDisplayableLocalMusicRecognition(for: path) { return true }
 
         switch musicDetectionStatusByVideoPath[path] ?? .idle {
@@ -777,8 +761,7 @@ extension LibraryStore {
 
             let enrichmentKeys = musicTagEnrichmentTasks.keys.filter { $0.hasPrefix("\(path)|") }
             for key in enrichmentKeys {
-                musicTagEnrichmentTasks[key]?.cancel()
-                musicTagEnrichmentTasks[key] = nil
+                musicTagEnrichmentTasks.cancel(key)
             }
         }
 

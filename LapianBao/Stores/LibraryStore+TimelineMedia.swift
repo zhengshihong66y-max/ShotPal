@@ -74,19 +74,18 @@ extension LibraryStore {
         if let duration = musicFileDurationsByPath[key], duration.isFinite, duration > 0 {
             return
         }
-        guard musicFileDurationTasks[key] == nil,
+        guard !musicFileDurationTasks.isRunning(key),
               FileManager.default.fileExists(atPath: filePath)
         else { return }
 
         let fileURL = URL(fileURLWithPath: filePath)
-        musicFileDurationTasks[key] = Task.detached(priority: .utility) { [weak self, key, fileURL] in
+        musicFileDurationTasks.startDetached(key, priority: .utility) { [weak self, key, fileURL] in
             let asset = AVURLAsset(url: fileURL)
             let duration = await Self.durationSeconds(for: asset) ?? 0
             guard !Task.isCancelled else { return }
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.musicFileDurationTasks[key] = nil
                 guard duration.isFinite, duration > 0,
                       FileManager.default.fileExists(atPath: fileURL.path)
                 else { return }
@@ -867,15 +866,14 @@ extension LibraryStore {
            let images = frameStripImagesByVideoPath[path], !images.isEmpty {
             return
         }
-        guard frameStripTasks[path] == nil else { return }
+        guard !frameStripTasks.isRunning(path) else { return }
 
-        frameStripTasks[path] = Task { [weak self] in
+        frameStripTasks.start(path) { [weak self] in
             let frames = await Self.makeFrameStrip(for: video.url)
             guard !Task.isCancelled else { return }
 
             guard let self else { return }
             self.noteTransientMediaAccess(for: path)
-            self.frameStripTasks[path] = nil
 
             guard !frames.isEmpty else {
                 self.finishEmptyFrameStripLoad(for: video, path: path, reason: "empty")
@@ -961,21 +959,20 @@ extension LibraryStore {
             loadCachedSceneCuts(for: video)
         }
         guard
-            sceneDetectionTasks[path] == nil,
+            !sceneDetectionTasks.isRunning(path),
             sceneDetectionProgress[path] == nil
         else { return }
         guard force || sceneCutsByVideoPath[path] == nil else { return }
 
         if force {
-            sceneThumbnailHydrationTasks[path]?.cancel()
-            sceneThumbnailHydrationTasks[path] = nil
+            sceneThumbnailHydrationTasks.cancel(path)
             sceneThumbnailHydrationNeeded.remove(path)
         }
 
         sceneDetectionErrorByVideoPath.removeValue(forKey: path)
         sceneDetectionProgress[path] = 0.0
 
-        sceneDetectionTasks[path] = Task { [weak self] in
+        sceneDetectionTasks.start(path) { [weak self] in
             do {
                 let result = try await Self.performSceneDetection(for: video.url) { progress in
                     Task { @MainActor in
@@ -985,20 +982,16 @@ extension LibraryStore {
 
                 guard !Task.isCancelled else {
                     self?.sceneDetectionProgress[path] = nil
-                    self?.sceneDetectionTasks[path] = nil
                     return
                 }
 
                 self?.finishSceneDetection(for: video, result: result)
                 self?.sceneDetectionProgress[path] = nil
-                self?.sceneDetectionTasks[path] = nil
             } catch is CancellationError {
                 self?.sceneDetectionProgress[path] = nil
-                self?.sceneDetectionTasks[path] = nil
             } catch {
                 self?.sceneDetectionErrorByVideoPath[path] = Self.sceneDetectionErrorMessage(error)
                 self?.sceneDetectionProgress[path] = nil
-                self?.sceneDetectionTasks[path] = nil
                 return
             }
         }
@@ -1025,10 +1018,8 @@ extension LibraryStore {
 
     func deleteSceneRecognition(for video: VideoItem) {
         let path = video.url.path
-        sceneDetectionTasks[path]?.cancel()
-        sceneDetectionTasks[path] = nil
-        sceneThumbnailHydrationTasks[path]?.cancel()
-        sceneThumbnailHydrationTasks[path] = nil
+        sceneDetectionTasks.cancel(path)
+        sceneThumbnailHydrationTasks.cancel(path)
         sceneThumbnailHydrationNeeded.remove(path)
         sceneCutsByVideoPath.removeValue(forKey: path)
         sceneStripImagesByVideoPath.removeValue(forKey: path)
@@ -1133,7 +1124,7 @@ extension LibraryStore {
         noteTransientMediaAccess(for: path)
         guard
             sceneCutsByVideoPath[path] == nil,
-            sceneDetectionTasks[path] == nil,
+            !sceneDetectionTasks.isRunning(path),
             let cachedEntry = sceneCutCacheEntry(for: video, migrateRelocatedEntry: true)
         else { return }
 
@@ -1156,16 +1147,15 @@ extension LibraryStore {
         noteTransientMediaAccess(for: path)
         guard
             sceneThumbnailHydrationNeeded.contains(path),
-            sceneThumbnailHydrationTasks[path] == nil,
+            !sceneThumbnailHydrationTasks.isRunning(path),
             let cachedEntry = sceneCutCacheEntry(for: video, migrateRelocatedEntry: true),
             !cachedEntry.cutTimes.isEmpty
         else { return }
 
         bumpSceneThumbnailVersion(for: path)
-        sceneThumbnailHydrationTasks[path] = Task { [weak self] in
+        sceneThumbnailHydrationTasks.start(path) { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else {
-                self?.sceneThumbnailHydrationTasks[path] = nil
                 self?.bumpSceneThumbnailVersion(for: path)
                 return
             }
@@ -1187,34 +1177,29 @@ extension LibraryStore {
                 PerformanceDiagnostics.mark("scene thumbnails hydrated from video", path: path)
             }
             guard !Task.isCancelled else {
-                self?.sceneThumbnailHydrationTasks[path] = nil
                 self?.bumpSceneThumbnailVersion(for: path)
                 return
             }
             guard !cuts.isEmpty else {
                 self?.sceneThumbnailHydrationNeeded.remove(path)
-                self?.sceneThumbnailHydrationTasks[path] = nil
                 self?.bumpSceneThumbnailVersion(for: path)
                 return
             }
 
             self?.setSceneCuts(cuts, for: path, knownDuration: cachedEntry.duration)
             self?.storeSceneCutCache(for: video, cuts: cuts)
-            self?.sceneThumbnailHydrationTasks[path] = nil
             self?.bumpSceneThumbnailVersion(for: path)
         }
     }
 
     func cancelSceneThumbnailHydration(for video: VideoItem) {
         let path = video.url.path
-        sceneThumbnailHydrationTasks[path]?.cancel()
-        sceneThumbnailHydrationTasks[path] = nil
+        sceneThumbnailHydrationTasks.cancel(path)
         bumpSceneThumbnailVersion(for: path)
     }
 
     func cancelAllSceneThumbnailHydration() {
-        sceneThumbnailHydrationTasks.values.forEach { $0.cancel() }
-        sceneThumbnailHydrationTasks.removeAll()
+        sceneThumbnailHydrationTasks.cancelAll()
         for path in sceneThumbnailHydrationNeeded {
             bumpSceneThumbnailVersion(for: path)
         }
@@ -1403,7 +1388,7 @@ extension LibraryStore {
     }
 
     func isHydratingSceneThumbnails(for video: VideoItem) -> Bool {
-        sceneThumbnailHydrationTasks[video.url.path] != nil
+        sceneThumbnailHydrationTasks.isRunning(video.url.path)
     }
 
     func displaySceneCutImage(for video: VideoItem, cut: SceneCut) -> NSImage? {
@@ -1662,12 +1647,11 @@ extension LibraryStore {
 
         for candidate in candidates where shouldEnrichMusicTags(candidate.song) {
             let key = musicTagEnrichmentKey(for: candidate.song, in: candidate.path)
-            guard musicTagEnrichmentTasks[key] == nil else { continue }
+            guard !musicTagEnrichmentTasks.isRunning(key) else { continue }
 
-            musicTagEnrichmentTasks[key] = Task { [weak self] in
+            musicTagEnrichmentTasks.start(key) { [weak self] in
                 let metadata = await Self.lookupMusicMetadata(title: candidate.song.title, artist: candidate.song.artist)
                 await MainActor.run {
-                    defer { self?.musicTagEnrichmentTasks[key] = nil }
                     guard !metadata.tags.isEmpty || metadata.duration > 0 else { return }
                     self?.mergeMusicMetadata(metadata, into: candidate.song, in: candidate.path)
                 }
@@ -1682,12 +1666,11 @@ extension LibraryStore {
             else { continue }
 
             let key = localMusicTagEnrichmentKey(for: asset, title: seed.title, artist: seed.artist)
-            guard musicTagEnrichmentTasks[key] == nil else { continue }
+            guard !musicTagEnrichmentTasks.isRunning(key) else { continue }
 
-            musicTagEnrichmentTasks[key] = Task { [weak self] in
+            musicTagEnrichmentTasks.start(key) { [weak self] in
                 let metadata = await Self.lookupMusicMetadata(title: seed.title, artist: seed.artist)
                 await MainActor.run {
-                    defer { self?.musicTagEnrichmentTasks[key] = nil }
                     guard !metadata.tags.isEmpty || metadata.duration > 0 else { return }
                     self?.mergeLocalMusicMetadata(
                         metadata,

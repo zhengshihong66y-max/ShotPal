@@ -252,21 +252,21 @@ final class LibraryStore: ObservableObject {
     var localWaveformCacheNeedsSave = false
     var localMusicWaveformTasks: [String: Task<Void, Never>] = [:]
     var queuedLocalMusicWaveformAssets: [LocalMusicAsset] = []
-    var musicFileDurationTasks: [String: Task<Void, Never>] = [:]
-    var frameStripTasks: [String: Task<Void, Never>] = [:]
+    let musicFileDurationTasks = KeyedTaskRunner<String>()
+    let frameStripTasks = KeyedTaskRunner<String>()
     var frameStripEmptyRetryCountsByPath: [String: Int] = [:]
-    var sceneDetectionTasks: [String: Task<Void, Never>] = [:]
-    var sceneThumbnailHydrationTasks: [String: Task<Void, Never>] = [:]
+    let sceneDetectionTasks = KeyedTaskRunner<String>()
+    let sceneThumbnailHydrationTasks = KeyedTaskRunner<String>()
     var sceneThumbnailHydrationNeeded = Set<String>()
     var transcriptBatchTask: Task<Void, Never>?
     var isTranscriptBatchPaused = false
     var sceneBatchTask: Task<Void, Never>?
     var isSceneBatchPaused = false
-    var musicDetectionTasks: [String: Task<Void, Never>] = [:]
+    let musicDetectionTasks = KeyedTaskRunner<String>()
     var localMusicRecognitionTask: Task<Void, Never>?
     var musicDownloadBatchTask: Task<Void, Never>?
     var musicDownloadTasks: [UUID: Task<Void, Never>] = [:]
-    var musicTagEnrichmentTasks: [String: Task<Void, Never>] = [:]
+    let musicTagEnrichmentTasks = KeyedTaskRunner<String>()
     var downloaderSelfCheckTask: Task<Void, Never>?
     var lastExternalSelfCheckPreflightAt: Date?
     var resourceLibraryScanTask: Task<Void, Never>?
@@ -312,7 +312,7 @@ final class LibraryStore: ObservableObject {
     var transientMediaCacheAccessTickByPath: [String: Int] = [:]
     var transientMediaCacheAccessTick = 0
     var transientMediaCacheTrimTask: Task<Void, Never>?
-    var transcriptTasks: [String: Task<Void, Never>] = [:]
+    let transcriptTasks = KeyedTaskRunner<String>()
 
     nonisolated static let sceneDetectorVersion = "transnetv2+hardcut-rescue@2026-05-25.1"
     nonisolated static let sceneDetectorCacheCompatibleVersions: Set<String> = [
