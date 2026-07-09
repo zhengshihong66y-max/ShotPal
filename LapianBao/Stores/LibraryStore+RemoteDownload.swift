@@ -68,13 +68,29 @@ extension LibraryStore {
             let attempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
                 + ytdlpArgumentAttempts(for: sourceURL)
             var sawYouTubeLoginVerification = false
+            // 探测结果跨尝试复用:一次探测成功后,后续换参数重试不再重跑元数据探测
+            var probedVideoInfo: YTDLPVideoInfo?
             for attempt in attempts {
+                if probedVideoInfo == nil {
+                    let environment = downloaderProcessEnvironment()
+                    let attemptArguments = attempt.arguments
+                    probedVideoInfo = await Task.detached(priority: .utility) {
+                        fetchYTDLPVideoInfo(
+                            executableURL: ytdlp,
+                            sourceURL: sourceURL,
+                            environment: environment,
+                            extraArguments: attemptArguments
+                        )
+                    }.value
+                }
                 do {
                     let result = try await runYTDLPOnce(
                         executableURL: ytdlp,
                         sourceURL: sourceURL,
                         destinationDirectory: destinationDirectory,
                         extraArguments: attempt.arguments,
+                        prefetchedVideoInfo: probedVideoInfo,
+                        skipVideoInfoProbe: true,
                         progressCallback: progressCallback,
                         processCallback: processCallback
                     )

@@ -2,9 +2,11 @@
 //  YouTubeCookieStore.swift
 //  LapianBao
 //
-//  设置页 "YouTube cookies" 的一键配置/更新:用户点击后从 Chrome 读取
-//  cookie、用公开视频验证能通过 YouTube 登录验证,成功才写入配置。
-//  仅由设置页按钮手动触发;这是全仓库唯一允许使用 --cookies-from-browser 的地方,
+//  设置页 "YouTube cookies" 的一键配置/更新:从 Chrome 读取 cookie、
+//  用公开视频验证能通过 YouTube 登录验证,成功才写入配置。
+//  触发方式仅两种:设置页按钮手动点击;或用户已启用 cookie 方案后,
+//  下载遇到 YouTube 登录验证失败时按冷却自动更新一次并重试。
+//  这是全仓库唯一允许使用 --cookies-from-browser 的地方,
 //  不做任何自动的账号状态识别或收藏列表读取。
 //
 
@@ -29,11 +31,13 @@ final class YouTubeCookieStore: ObservableObject {
     @Published var configuredFilePath: String? = AppSettings.youtubeCookieFilePath
 
     private var refreshTask: Task<Void, Never>?
+    private var lastAutoRefreshAttemptAt: Date?
 
     nonisolated static let browserSourceName = "chrome"
     nonisolated static let validationVideoURL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
     // 首次运行会弹钥匙串授权("访问 Chrome Safe Storage"),给用户留足确认时间。
     nonisolated static let refreshTimeout: TimeInterval = 240
+    nonisolated static let autoRefreshCooldown: TimeInterval = 15 * 60
 
     var isRefreshing: Bool {
         refreshPhase == .running
@@ -41,6 +45,33 @@ final class YouTubeCookieStore: ObservableObject {
 
     func refreshFromBrowser() {
         guard refreshTask == nil else { return }
+        refreshTask = Task { [weak self] in
+            await self?.performRefresh()
+            self?.refreshTask = nil
+        }
+    }
+
+    /// 下载遇到 YouTube 登录验证失败时的自动更新:仅当用户已启用 cookie 方案时
+    /// 生效,带冷却避免反复读取浏览器。返回是否拿到了新的可用 cookie。
+    func refreshAfterBotCheckIfNeeded() async -> Bool {
+        guard configuredFilePath != nil else { return false }
+        if refreshTask == nil {
+            if let lastAutoRefreshAttemptAt,
+               Date().timeIntervalSince(lastAutoRefreshAttemptAt) < Self.autoRefreshCooldown {
+                return false
+            }
+            lastAutoRefreshAttemptAt = Date()
+            refreshTask = Task { [weak self] in
+                await self?.performRefresh()
+                self?.refreshTask = nil
+            }
+        }
+        await refreshTask?.value
+        if case .succeeded = refreshPhase { return true }
+        return false
+    }
+
+    private func performRefresh() async {
         guard let ytdlp = LibraryStore.usableYTDLPURL() else {
             refreshPhase = .failed("未找到可用的 yt-dlp,请先完成上方的下载器自检")
             return
@@ -51,21 +82,17 @@ final class YouTubeCookieStore: ObservableObject {
         }
 
         refreshPhase = .running
-        refreshTask = Task { [weak self] in
-            let outcome = await Task.detached(priority: .userInitiated) {
-                Self.runRefresh(ytdlp: ytdlp, exportURL: exportURL)
-            }.value
-            guard let self else { return }
-            switch outcome {
-            case .success:
-                AppSettings.youtubeCookieFilePath = exportURL.path
-                AppSettings.youtubeCookieFileBookmark = nil
-                self.configuredFilePath = exportURL.path
-                self.refreshPhase = .succeeded(Date())
-            case .failure(let message):
-                self.refreshPhase = .failed(message)
-            }
-            self.refreshTask = nil
+        let outcome = await Task.detached(priority: .userInitiated) {
+            Self.runRefresh(ytdlp: ytdlp, exportURL: exportURL)
+        }.value
+        switch outcome {
+        case .success:
+            AppSettings.youtubeCookieFilePath = exportURL.path
+            AppSettings.youtubeCookieFileBookmark = nil
+            configuredFilePath = exportURL.path
+            refreshPhase = .succeeded(Date())
+        case .failure(let message):
+            refreshPhase = .failed(message)
         }
     }
 

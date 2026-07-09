@@ -950,11 +950,25 @@ extension LibraryStore {
             downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
             let destinationDirectory = Self.mediaFolder(in: libraryURL, named: Self.musicExportFolderName)
             try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-            let outputURL = try await Self.downloadMusicFromYouTube(
-                query: query,
-                into: destinationDirectory,
-                progressCallback: progressCallback
-            )
+            let outputURL: URL
+            do {
+                outputURL = try await Self.downloadMusicFromYouTube(
+                    query: query,
+                    into: destinationDirectory,
+                    progressCallback: progressCallback
+                )
+            } catch {
+                // YouTube 登录验证失败时自动更新一次 cookie 再重试,与视频导入一致
+                guard !Task.isCancelled,
+                      Self.isYouTubeBotVerificationFailure(error.localizedDescription),
+                      await youtubeCookie.refreshAfterBotCheckIfNeeded()
+                else { throw error }
+                outputURL = try await Self.downloadMusicFromYouTube(
+                    query: query,
+                    into: destinationDirectory,
+                    progressCallback: progressCallback
+                )
+            }
             updateMusicDownloadJob(id: jobID) { j in
                 j.status = .succeeded(outputURL.lastPathComponent)
                 j.downloadProgress = 1

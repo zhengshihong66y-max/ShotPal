@@ -18,6 +18,8 @@ extension LibraryStore {
         sourceURL: URL,
         destinationDirectory: URL,
         extraArguments: [String] = [],
+        prefetchedVideoInfo: YTDLPVideoInfo? = nil,
+        skipVideoInfoProbe: Bool = false,
         progressCallback: (@Sendable (Double?, String?) -> Void)? = nil,
         processCallback: (@Sendable (Process?) -> Void)? = nil
     ) async throws -> DownloadedVideoResult {
@@ -34,12 +36,20 @@ extension LibraryStore {
             let selectedPlaylistItemIndex = instagramCarouselItemIndex(from: sourceURL)
             let downloaderSourceURL = ytdlpSourceURL(for: sourceURL)
 
-            let videoInfo = fetchYTDLPVideoInfo(
-                executableURL: executableURL,
-                sourceURL: sourceURL,
-                environment: env,
-                extraArguments: extraArguments
-            )
+            // 换尝试重试时复用已成功的探测结果,避免每次尝试都重跑一遍元数据探测
+            let videoInfo: YTDLPVideoInfo?
+            if let prefetchedVideoInfo {
+                videoInfo = prefetchedVideoInfo
+            } else if skipVideoInfoProbe {
+                videoInfo = nil
+            } else {
+                videoInfo = fetchYTDLPVideoInfo(
+                    executableURL: executableURL,
+                    sourceURL: sourceURL,
+                    environment: env,
+                    extraArguments: extraArguments
+                )
+            }
             let authorName = normalizedSourceAuthorName(videoInfo?.bestUploader ?? "")
             let sourceTitle = screenedSourceTitle(
                 rawTitle: videoInfo?.title,

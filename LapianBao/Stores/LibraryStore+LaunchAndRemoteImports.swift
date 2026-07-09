@@ -453,16 +453,37 @@ extension LibraryStore {
                 await MainActor.run { [weak self] in
                     self?.downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
                 }
-                let downloadedVideo = try await Self.downloadVideo(
-                    from: importSourceURL,
-                    into: libraryURL,
-                    platform: platform,
-                    endpoint: endpoint,
-                    progressCallback: progressCallback,
-                    transcodingCallback: transcodingCallback,
-                    finalizingCallback: finalizingCallback,
-                    processCallback: processCallback
-                )
+                let downloadedVideo: DownloadedVideoResult
+                do {
+                    downloadedVideo = try await Self.downloadVideo(
+                        from: importSourceURL,
+                        into: libraryURL,
+                        platform: platform,
+                        endpoint: endpoint,
+                        progressCallback: progressCallback,
+                        transcodingCallback: transcodingCallback,
+                        finalizingCallback: finalizingCallback,
+                        processCallback: processCallback
+                    )
+                } catch {
+                    // YouTube 登录验证失败时自动更新一次 cookie 再重试,避免用户手动刷新
+                    guard !Task.isCancelled,
+                          Self.isYouTubeURL(importSourceURL),
+                          Self.isYouTubeBotVerificationFailure(error.localizedDescription),
+                          let store = self,
+                          await store.youtubeCookie.refreshAfterBotCheckIfNeeded()
+                    else { throw error }
+                    downloadedVideo = try await Self.downloadVideo(
+                        from: importSourceURL,
+                        into: libraryURL,
+                        platform: platform,
+                        endpoint: endpoint,
+                        progressCallback: progressCallback,
+                        transcodingCallback: transcodingCallback,
+                        finalizingCallback: finalizingCallback,
+                        processCallback: processCallback
+                    )
+                }
                 let outputURL = downloadedVideo.url
 
                 guard !Task.isCancelled else { return }
