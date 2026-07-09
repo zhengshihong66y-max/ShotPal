@@ -59,6 +59,7 @@
 - 主页、画面和音乐工作区的顶部搜索框必须由 `LibraryToolbarSearchField` 使用旧版主页基线：`Design.libraryToolbarSearchMinWidth` 为 110，`Design.libraryToolbarSearchWidth` 为 280，并通过 `idealWidth`/`maxWidth` 锁住正常宽度；不要改回 140，也不要按页面、右侧按钮数量或剩余空间扩展到 `.infinity`。
 - 画面和音乐工作区的 `LibraryToolbar` 必须接收 `ContentView` 通过 `homeMediaContentWidth(containerWidth:)` 传入的主页素材内容区宽度；不能让全宽工作区或分镜自己的宽面板直接决定顶部搜索框长度。
 - 主页、画面和音乐工作区的顶部按钮必须由 `LibraryToolbarActionRow` 统一排列成 3 个固定槽位，槽位使用 `Design.libraryToolbarButtonSlotWidth`/`Design.libraryToolbarButtonSlotHeight`，按钮间距使用 `Design.libraryToolbarButtonGap`；音乐页两个可见按钮直接从第一个槽位开始排列，只有中间缺槽时才用 `LibraryToolbarActionPlaceholder` 占位，不要在单个页面里用额外 `Spacer`、局部 `.frame`、宽滑杆或自定义间距重做工具栏。
+- 不要在 `LazyVStack`/`LazyVGrid` 的行内容里用 `Spacer` 撑固定高度(包括塞进 `.frame(height:)` 容器里),懒加载测量会触发 EXC_BAD_ACCESS 崩溃;需要把某行内容钉到容器底边时用 `.overlay(alignment: .bottomLeading)`。下载记录列表曾因此连崩三次。
 - 播放驱动的时间线移动、帧带平移、滚轮平移、缩放和播放头更新是高频路径。不要让它们继承 SwiftUI 隐式动画。
 - 主页画面时间线的默认缩放由场景数量决定，换视频后只要用户还没有手动平移或缩放，就要在分镜切点、缓存恢复或视频 duration 后到时自动补套聚焦，不要依赖当前激活的是不是画面 tab；密集分镜素材不能被 0.02 可见跨度或 50x 最大缩放卡住；场景进度条只吃外层平滑播放 clock，不要再套第二层进度插值。
 - 画面时间线识别到分镜切点后必须立即使用分段样式；分段显示只能依赖 `sceneCuts`，不能因为 `sceneStripImages` 数量不完整退回普通连续帧带，代表帧缺失时用现有帧带或缩略图兜底。
