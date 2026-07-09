@@ -321,6 +321,19 @@ extension LibraryStore {
                 downloadedBytes: activeDownloadedBytes,
                 totalBytes: activeTotalBytes
             )
+
+            // 兜底(最坏情况):既没有字节权重,进度行的 total 和 total_estimate 也
+            // 全是 NA(并发分片下载常见),但仍有 downloaded_bytes。此前这种情况
+            // 每行都返回 nil,进度条整段冻结在 0、结束才跳 96。改为按已下字节做
+            // 渐近饱和进度:永不冻结、永不假完成(封顶 0.9×完成值),单调保护防回退。
+            if byteWeightedProgress == nil, activeRawProgress == nil,
+               let downloadedBytes = activeDownloadedBytes, downloadedBytes > 0 {
+                let saturating = 0.9 * downloadCompletionProgress
+                    * (1 - exp(-downloadedBytes / (32 * 1024 * 1024)))
+                lastOverallProgress = max(lastOverallProgress, max(0, min(downloadCompletionProgress, saturating)))
+                return DownloadProgressUpdate(progress: lastOverallProgress, speed: update.speed)
+            }
+
             // 字节权重缺失时退回按部件数的估算进度:宁可显示保守的真实爬升,
             // 也不能整个部件静默(曾表现为卡 0 然后跳 96);单调保护防止回退。
             guard byteWeightedProgress != nil
