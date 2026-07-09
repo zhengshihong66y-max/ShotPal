@@ -114,7 +114,7 @@ extension LibraryStore {
 
         // 与视频下载一致:配置了 cookies.txt 时 cookie 尝试排最前,
         // 避免每首歌都先烧完整梯子被风控拦下的匿名尝试。
-        let attempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: configuredYouTubeCookieFileURL())
+        let attempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: configuredYouTubeCookieFileURL(), purpose: .audio)
             + ytdlpYouTubeArgumentAttempts()
         func expandedSources(name: String, target: String) -> [MusicDownloadSource] {
             attempts.map { attempt in
@@ -191,7 +191,7 @@ extension LibraryStore {
         query: String,
         processRegistry: ToolProcessRegistry
     ) async -> URL? {
-        let attempt = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: configuredYouTubeCookieFileURL()).first
+        let attempt = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: configuredYouTubeCookieFileURL(), purpose: .audio).first
             ?? ytdlpYouTubeArgumentAttempts().first
             ?? YTDLPArgumentAttempt(arguments: [])
         return await Task.detached(priority: .utility) { () -> URL? in
