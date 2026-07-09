@@ -57,6 +57,7 @@ final class AppWindowManager {
     private func createMainWindow() -> NSWindow {
         let contentView = ContentView()
             .environmentObject(libraryStore)
+            .environmentObject(libraryStore.downloaderSelfCheck)
         let hostingController = NSHostingController(rootView: contentView)
         let window = PreviewKeyboardWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),

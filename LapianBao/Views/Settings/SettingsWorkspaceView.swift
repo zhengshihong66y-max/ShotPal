@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 
 struct SettingsWorkspaceView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var selfCheckStore: DownloaderSelfCheckStore
     @State private var youtubeCookieFilePath = AppSettings.youtubeCookieFilePath ?? ""
     @State private var shortcutRevision = 0
 
@@ -46,7 +47,7 @@ struct SettingsWorkspaceView: View {
     }
 
     private func downloaderSelfCheckCard() -> some View {
-        let report = libraryStore.downloaderSelfCheckReport
+        let report = selfCheckStore.downloaderSelfCheckReport
         return settingsCompactRow(
             icon: downloaderSelfCheckIcon(for: report),
             iconTint: downloaderSelfCheckColor(for: report),
@@ -57,7 +58,7 @@ struct SettingsWorkspaceView: View {
             actionIcon: "arrow.clockwise",
             help: "刷新 YTDLP 自检",
             isDisabled: report.isRunning,
-            action: { libraryStore.startExternalServiceSelfCheck() }
+            action: { selfCheckStore.startExternalServiceSelfCheck() }
         )
     }
 

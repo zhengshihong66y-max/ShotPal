@@ -451,7 +451,7 @@ extension LibraryStore {
                     job.status = .importing
                 }
                 await MainActor.run { [weak self] in
-                    self?.startExternalServiceSelfCheckPreflightIfNeeded()
+                    self?.downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
                 }
                 let downloadedVideo = try await Self.downloadVideo(
                     from: importSourceURL,

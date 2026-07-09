@@ -850,7 +850,7 @@ extension LibraryStore {
     }
 
     func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) {
-        startExternalServiceSelfCheckPreflightIfNeeded()
+        downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
         guard let jobID = prepareMusicDownloadJob(song: song, type: type, recognitionID: recognitionID) else { return }
         musicDownloadTasks.start(jobID) { [weak self] in
             guard let self else { return }
@@ -860,7 +860,7 @@ extension LibraryStore {
 
     func startMusicDownloadBatch(types: [MusicDownloadJob.DownloadType] = MusicDownloadJob.DownloadType.allCases) {
         guard musicDownloadBatchTask == nil else { return }
-        startExternalServiceSelfCheckPreflightIfNeeded()
+        downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
         guard libraryURL != nil else {
             musicDownloadBatchJob = TranscriptBatchJob(status: .failed("请先打开一个素材库文件夹"), total: 0, completed: 0, progress: 0)
             return
@@ -947,7 +947,7 @@ extension LibraryStore {
         }
 
         do {
-            startExternalServiceSelfCheckPreflightIfNeeded()
+            downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
             let destinationDirectory = Self.mediaFolder(in: libraryURL, named: Self.musicExportFolderName)
             try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
             let outputURL = try await Self.downloadMusicFromYouTube(

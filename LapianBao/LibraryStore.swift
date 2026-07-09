@@ -137,7 +137,7 @@ final class LibraryStore: ObservableObject {
     @Published var remoteImportJobs: [RemoteImportJob] = []
     var remoteImportJob: RemoteImportJob? { remoteImportJobs.last }
     @Published var instagramImportEndpoint = AppSettings.instagramImportEndpoint
-    @Published var downloaderSelfCheckReport = LibraryStore.loadDownloaderSelfCheckReport()
+    let downloaderSelfCheck = DownloaderSelfCheckStore()
 
     var musicPreviewKeyboardTargetJobID: UUID? {
         activeMusicPreviewJobID ?? focusedMusicPreviewJobID
@@ -267,8 +267,6 @@ final class LibraryStore: ObservableObject {
     var musicDownloadBatchTask: Task<Void, Never>?
     let musicDownloadTasks = KeyedTaskRunner<UUID>()
     let musicTagEnrichmentTasks = KeyedTaskRunner<String>()
-    var downloaderSelfCheckTask: Task<Void, Never>?
-    var lastExternalSelfCheckPreflightAt: Date?
     var resourceLibraryScanTask: Task<Void, Never>?
     var resourceLibraryScanTaskLibraryPath: String?
     var resourceLibraryScanGeneration = 0

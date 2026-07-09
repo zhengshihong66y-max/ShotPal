@@ -1058,69 +1058,7 @@ extension LibraryStore {
         sortDirection = direction
     }
 
-    func startExternalServiceSelfCheck(force: Bool = true) {
-        startExternalServiceSelfCheck(
-            force: force,
-            repairMode: force ? .checkLatestAndRepair : .afterFailure
-        )
-    }
-
-    private func startExternalServiceSelfCheck(
-        force: Bool,
-        repairMode: LibraryStore.DownloaderSelfCheckRepairMode
-    ) {
-        guard downloaderSelfCheckTask == nil else { return }
-        if !force,
-           Self.isDownloaderSelfCheckFresh(downloaderSelfCheckReport),
-           downloaderSelfCheckReport.status == .succeeded,
-           let ytdlpPath = downloaderSelfCheckReport.ytdlpPath,
-           FileManager.default.isExecutableFile(atPath: ytdlpPath) {
-            return
-        }
-
-        let startedAt = Date()
-        updateDownloaderSelfCheckReport(DownloaderSelfCheckReport(
-            status: .running,
-            checkedAt: startedAt,
-            message: "正在检查 yt-dlp 可用性",
-            progress: 0.01
-        ))
-
-        downloaderSelfCheckTask = Task { [weak self] in
-            let report = await Self.runDownloaderSelfCheck(
-                startedAt: startedAt,
-                repairMode: repairMode,
-                progressHandler: { [weak self] progressReport in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.downloaderSelfCheckReport.isRunning else { return }
-                        self.updateDownloaderSelfCheckReport(progressReport)
-                    }
-                }
-            )
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.updateDownloaderSelfCheckReport(report)
-                self.downloaderSelfCheckTask = nil
-            }
-        }
-    }
-
     func prepareExternalServiceWork() {
-    }
-
-    func startExternalServiceSelfCheckPreflightIfNeeded() {
-        guard downloaderSelfCheckTask == nil else { return }
-        if let lastExternalSelfCheckPreflightAt,
-           Date().timeIntervalSince(lastExternalSelfCheckPreflightAt) < Self.externalSelfCheckPreflightCooldown {
-            return
-        }
-        lastExternalSelfCheckPreflightAt = Date()
-        startExternalServiceSelfCheck(force: false)
-    }
-
-    func updateDownloaderSelfCheckReport(_ report: DownloaderSelfCheckReport) {
-        downloaderSelfCheckReport = report
-        Self.saveDownloaderSelfCheckReport(report)
     }
 
 }
