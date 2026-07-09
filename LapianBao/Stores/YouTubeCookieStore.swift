@@ -107,6 +107,7 @@ final class YouTubeCookieStore: ObservableObject {
                     "--print", "title",
                     "--no-warnings"
                 ] + extraArguments + [validationVideoURL],
+                environment: LibraryStore.downloaderProcessEnvironment(),
                 timeout: refreshTimeout
             )
 
