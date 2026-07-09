@@ -212,7 +212,7 @@ extension LibraryStore {
         private(set) var expectedPartCount: Int
         let downloadCompletionProgress: Double
         let postProcessingProgress: Double
-        let allowsEstimatedMultipartProgress: Bool
+        private(set) var allowsEstimatedMultipartProgress: Bool
         let reportsPostProcessingProgress: Bool
         private(set) var expectedPartByteCounts: [Double]
         var observedPartByteCounts: [Int: Double] = [:]
@@ -250,6 +250,11 @@ extension LibraryStore {
             let resolvedCount = max(1, count)
             expectedPartCount = resolvedCount
             expectedPartByteCounts = Array(byteCounts.prefix(resolvedCount)).map { max(0, $0) }
+            // 多部件但字节权重不可用时,退化到按部件数估算;
+            // 否则整个下载期进度为 nil,条会死在 0 再跳到后处理档位。
+            if resolvedCount > 1, expectedPartByteCounts.isEmpty {
+                allowsEstimatedMultipartProgress = true
+            }
         }
 
         func update(from line: String) -> DownloadProgressUpdate? {

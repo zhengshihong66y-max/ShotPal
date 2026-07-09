@@ -330,17 +330,23 @@ extension LibraryStore {
               !array.isEmpty
         else { return nil }
 
-        let byteCounts = array.map { item -> Double in
-            if let size = item["filesize"] as? Double, size > 0 {
+        var byteCounts = array.map { item -> Double in
+            if let size = (item["filesize"] as? NSNumber)?.doubleValue, size > 0 {
                 return size
             }
-            if let size = item["filesize_approx"] as? Double, size > 0 {
+            if let size = (item["filesize_approx"] as? NSNumber)?.doubleValue, size > 0 {
                 return size
             }
             return 0
         }
-        let usableByteCounts = byteCounts.allSatisfy { $0 > 0 } ? byteCounts : []
-        return (array.count, usableByteCounts)
+        // 个别部件缺大小(常见是音频轨)时用已知最大部件的 10% 兜底,
+        // 保住字节加权进度;全部未知才放弃权重。
+        if let known = byteCounts.filter({ $0 > 0 }).max() {
+            byteCounts = byteCounts.map { $0 > 0 ? $0 : known * 0.1 }
+        } else {
+            byteCounts = []
+        }
+        return (array.count, byteCounts)
     }
 
     nonisolated struct InstagramCarouselBundlePlan {
