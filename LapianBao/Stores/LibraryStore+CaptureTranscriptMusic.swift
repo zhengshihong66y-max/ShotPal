@@ -1029,7 +1029,9 @@ extension LibraryStore {
             guard progressGate.shouldPublish(normalized) else { return }
             Task { @MainActor [weak self] in
                 self?.updateMusicDownloadJob(id: jobID) { j in
-                    j.downloadProgress = normalized
+                    // 与视频下载一致:每条进度独立 Task 派发,MainActor 执行顺序
+                    // 不保证,写入取 max 丢弃乱序旧值,进度条只前进不抖动。
+                    j.downloadProgress = max(j.downloadProgress ?? 0, normalized)
                 }
             }
         }
