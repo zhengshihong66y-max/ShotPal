@@ -515,6 +515,21 @@ struct MusicRecognitionItem: Identifiable, Codable, Equatable, Sendable {
 
 }
 
+nonisolated struct ITunesSearchResponse: Decodable, Sendable {
+    var results: [ITunesSongResult]
+}
+
+nonisolated struct ITunesSongResult: Decodable, Sendable {
+    var kind: String?
+    var artistName: String?
+    var primaryGenreName: String?
+    var trackTimeMillis: Double?
+}
+
+nonisolated struct AppleMusicSearchResponse: Decodable, Sendable {
+    var results: [AppleMusicSearchResult]
+}
+
 nonisolated struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
     var trackID: Int
     var title: String

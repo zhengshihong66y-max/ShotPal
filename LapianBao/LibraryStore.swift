@@ -183,21 +183,6 @@ final class LibraryStore: ObservableObject {
         var generatedAt: Date
     }
 
-    nonisolated struct ITunesSearchResponse: Decodable, Sendable {
-        var results: [ITunesSongResult]
-    }
-
-    nonisolated struct ITunesSongResult: Decodable, Sendable {
-        var kind: String?
-        var artistName: String?
-        var primaryGenreName: String?
-        var trackTimeMillis: Double?
-    }
-
-    nonisolated struct AppleMusicSearchResponse: Decodable, Sendable {
-        var results: [AppleMusicSearchResult]
-    }
-
     struct TranscriptSceneBlock: Sendable {
         var index: Int
         var start: Double

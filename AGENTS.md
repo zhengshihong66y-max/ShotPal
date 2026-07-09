@@ -4,6 +4,8 @@
 
 - 默认用中文沟通和提交说明，除非用户明确要求英文。
 - 本仓库已经进入收尾阶段。默认不新增大型功能、不重做视觉体系、不引入新的平台分支，优先处理稳定性、分发、验收、文档和少量必要修补。
+- 原"交付版"从 2026-07 起统一改称 **Pro 版**。历史分支 `交付版1.0`、`交付版1.1` 保持原名，新分支、文档和提交说明使用 `Pro X.Y` 命名（当前工作分支 `Pro1.2`）。
+- 例外：项目所有者已批准在 `Pro1.2` 分支进行架构优化，目标是渐进拆分 `LibraryStore` 巨型对象、收敛手工 Task 字典。该工作按领域小步推进，每步必须通过验证命令，不改变用户可见行为。
 - 项目级 Markdown 只保留 `AGENTS.md` 和 `README.md`。`AGENTS.md` 给 Codex 和后续开发者读，`README.md` 给用户和项目所有者读。
 - `Tools/whisper.cpp` 是第三方 submodule，里面的 README 不属于本项目文档清理范围，除非明确更新 submodule，不要改写其中内容。
 - 删除文件前先确认它不是源码、脚本、Xcode 工程配置、submodule 指针或仍被代码引用的测试夹具。
@@ -25,7 +27,7 @@
 - `LapianBaoApp.swift` 只做 AppDelegate/lifecycle 桥接，不接业务逻辑。启动顺序归 `AppStartupCoordinator`，窗口归 `AppWindowManager`，启动可诊断标记归 `StartupDiagnostics`。
 - 外部短命令执行当前 owner 是 `ExternalProcessRunner.swift`；项目隐藏 JSON 路径和基础读写当前 owner 是 `ProjectRepository.swift`；`UserDefaults.standard` 当前唯一 owner 是 `AppSettings.swift`；自定义 `lapianBao*` App 事件当前唯一 owner 是 `AppEventBus.swift`。
 - `Views/` 不直接启动外部进程，不直接读写项目 JSON，不直接枚举素材库目录。View 可以发起用户意图，执行必须落到 Store 或独立 service。
-- 收尾阶段新增抽象必须服务真实复杂度，不能为了“更架构化”继续拆散稳定代码。
+- 收尾阶段新增抽象必须服务真实复杂度，不能为了“更架构化”继续拆散稳定代码。Pro1.2 分支已批准的架构优化不受此条限制，但仍要求每步行为等价并通过验证命令。
 
 ## 启动和窗口
 
