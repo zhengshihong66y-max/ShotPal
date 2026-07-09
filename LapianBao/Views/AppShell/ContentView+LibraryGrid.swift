@@ -566,8 +566,8 @@ extension ContentView {
         } label: {
             libraryToolbarIcon(
                 systemName: selectedLibraryFilterCount == 0
-                    ? "line.3.horizontal.decrease.circle"
-                    : "line.3.horizontal.decrease.circle.fill",
+                    ? "tag"
+                    : "tag.fill",
                 size: 12,
                 tint: isLibrarySidebarFilterAreaPresented || selectedLibraryFilterCount > 0
                     ? Design.neutralStrongAccent
