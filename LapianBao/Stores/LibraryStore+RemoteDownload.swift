@@ -95,6 +95,13 @@ extension LibraryStore {
                     }
                     if isYouTubeSource, isYouTubeBotVerificationFailure(error.localizedDescription) {
                         sawYouTubeLoginVerification = true
+                        ytdlpFailure = error
+                        // 已配置 cookie 仍被风控拦下:剩余更弱的匿名尝试不可能成功,
+                        // 立刻结束梯子,让上层尽快走 cookie 自动更新并重试。
+                        if cookieFileURL != nil {
+                            break
+                        }
+                        continue
                     }
                     ytdlpFailure = error
                 }

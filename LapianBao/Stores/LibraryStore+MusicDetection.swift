@@ -89,6 +89,11 @@ extension LibraryStore {
                 throw CancellationError()
             } catch {
                 failures.append("\(source.name)：\(error.localizedDescription)")
+                // 已配置 cookie 仍被风控拦下:立刻结束梯子,让上层走 cookie 自动更新并重试
+                if configuredYouTubeCookieFileURL() != nil,
+                   isYouTubeBotVerificationFailure(error.localizedDescription) {
+                    break
+                }
             }
         }
 
