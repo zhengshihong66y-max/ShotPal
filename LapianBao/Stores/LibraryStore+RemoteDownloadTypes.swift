@@ -328,11 +328,9 @@ extension LibraryStore {
                     ?? (Double(partIndex) + LibraryStore.normalizedProgress(activeRawProgress ?? 0)) / Double(partCount)
             ) * downloadCompletionProgress
             let clampedProgress = min(downloadCompletionProgress, estimatedProgress)
-            if advancedPart && expectedPartByteCounts.count < partIndex + 1 {
-                lastOverallProgress = max(0, min(downloadCompletionProgress, clampedProgress))
-            } else {
-                lastOverallProgress = max(lastOverallProgress, max(0, min(downloadCompletionProgress, clampedProgress)))
-            }
+            // 进度严格单调:换部时字节权重未知的话,宁可停在高位等后续部分
+            // 追上来,也不回退(音频部分通常几秒就补完)。
+            lastOverallProgress = max(lastOverallProgress, max(0, min(downloadCompletionProgress, clampedProgress)))
             return DownloadProgressUpdate(progress: lastOverallProgress, speed: update.speed)
         }
 
