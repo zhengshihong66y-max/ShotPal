@@ -26,6 +26,8 @@
 - `ContentView.swift` 只能保留主布局壳、全局 overlay、workspace 切换和跨工作区跳转。复杂导入面板、筛选、资产列表、播放行、分析视图继续拆在 `Views/*` 子目录。
 - `LapianBaoApp.swift` 只做 AppDelegate/lifecycle 桥接，不接业务逻辑。启动顺序归 `AppStartupCoordinator`，窗口归 `AppWindowManager`，启动可诊断标记归 `StartupDiagnostics`。
 - 外部短命令执行当前 owner 是 `ExternalProcessRunner.swift`；项目隐藏 JSON 路径和基础读写当前 owner 是 `ProjectRepository.swift`；`UserDefaults.standard` 当前唯一 owner 是 `AppSettings.swift`；自定义 `lapianBao*` App 事件当前唯一 owner 是 `AppEventBus.swift`。
+- per-key 后台任务记账当前唯一 owner 是 `KeyedTaskRunner.swift`。不要再在 store 上新增手工 `[Key: Task<Void, Never>]` 字典；新任务族一律用 `KeyedTaskRunner`（启动去重用 `start`/`startDetached`，先取消再启动用 `replace`，完成令牌用 `finish`）。
+- 领域拆分模式（Pro1.2 起）：从 LibraryStore 拆出的领域 store 是独立 `@MainActor ObservableObject`，由 LibraryStore 以 `let` 持有，`AppWindowManager.createMainWindow()` 逐个 `.environmentObject(...)` 注入；视图只观察自己需要的领域 store。首例是 `Stores/DownloaderSelfCheckStore.swift`（自检报告/自检任务/preflight 冷却），无状态工具函数仍留在原 `LibraryStore+*.swift` 静态扩展里。
 - `Views/` 不直接启动外部进程，不直接读写项目 JSON，不直接枚举素材库目录。View 可以发起用户意图，执行必须落到 Store 或独立 service。
 - 收尾阶段新增抽象必须服务真实复杂度，不能为了“更架构化”继续拆散稳定代码。Pro1.2 分支已批准的架构优化不受此条限制，但仍要求每步行为等价并通过验证命令。
 
