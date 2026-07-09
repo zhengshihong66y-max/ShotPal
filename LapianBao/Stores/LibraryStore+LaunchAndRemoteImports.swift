@@ -85,29 +85,30 @@ extension LibraryStore {
                         decodeCachedThumbnailsImmediately: false
                     )
                 }
-                return
+            } else {
+                let quickSnapshot = Self.quickVideoOrganizationSnapshot(in: url)
+                await MainActor.run { [weak self] in
+                    guard let store = self, store.libraryURL == nil else { return }
+                    store.applyScannedVideos(
+                        in: url,
+                        urls: quickSnapshot.urls,
+                        deferProjectDataLoad: true,
+                        projectDataLoadDelay: 0,
+                        selectFirstVideo: false,
+                        metadataPrefetchLimit: Self.launchMetadataPrefetchLimit,
+                        metadataWorkerCount: Self.launchMetadataWorkerCount,
+                        metadataBackgroundPrefetchDelay: nil,
+                        videoPathRemap: quickSnapshot.pathRemap,
+                        videoFolderTagsByPath: quickSnapshot.folderTagsByPath,
+                        cachedMetadataByPath: quickSnapshot.metadataByPath,
+                        cachedThumbnailDataByPath: quickSnapshot.thumbnailDataByPath,
+                        cachedPlaybackSupportByPath: quickSnapshot.playbackSupportByPath
+                    )
+                }
             }
 
-            let quickSnapshot = Self.quickVideoOrganizationSnapshot(in: url)
-            await MainActor.run { [weak self] in
-                guard let store = self, store.libraryURL == nil else { return }
-                store.applyScannedVideos(
-                    in: url,
-                    urls: quickSnapshot.urls,
-                    deferProjectDataLoad: true,
-                    projectDataLoadDelay: 0,
-                    selectFirstVideo: false,
-                    metadataPrefetchLimit: Self.launchMetadataPrefetchLimit,
-                    metadataWorkerCount: Self.launchMetadataWorkerCount,
-                    metadataBackgroundPrefetchDelay: nil,
-                    videoPathRemap: quickSnapshot.pathRemap,
-                    videoFolderTagsByPath: quickSnapshot.folderTagsByPath,
-                    cachedMetadataByPath: quickSnapshot.metadataByPath,
-                    cachedThumbnailDataByPath: quickSnapshot.thumbnailDataByPath,
-                    cachedPlaybackSupportByPath: quickSnapshot.playbackSupportByPath
-                )
-            }
-
+            // 缓存恢复路径也必须做延迟全量对账:上一会话崩溃时,已落盘但
+            // 未写进缓存的下载会永久对库不可见(只提示"已存在"却看不到)。
             try? await Task.sleep(nanoseconds: UInt64(Self.launchVideoReconcileDelay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             let organized = Self.organizeVideoFiles(in: url)
@@ -115,6 +116,8 @@ extension LibraryStore {
                 guard let store = self,
                       store.libraryURL?.path == url.path
                 else { return }
+                // 清单没有变化就不重建,避免每次启动都触发一次全量应用
+                guard Set(organized.urls.map(\.path)) != store.videoPathSet else { return }
                 let selectedPath = store.selectedVideo?.url.path
                 let selectedTags = store.selectedTags
                 store.applyScannedVideos(
