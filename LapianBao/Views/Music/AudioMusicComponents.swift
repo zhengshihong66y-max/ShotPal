@@ -1085,6 +1085,11 @@ struct MusicDownloadWaveformPanel: View {
                 requestWaveformIfNeeded()
             }
         }
+        // 资源扫描晚于行首次出现时,资产列表就绪后补一次波形请求,
+        // 否则该行会一直停在占位条(时好时坏的波形缺失)。
+        .onChange(of: libraryStore.localMusicAssets.count) { _, _ in
+            requestWaveformIfNeeded()
+        }
         .task(id: previewToggleRequest) {
             handlePreviewToggleRequest(previewToggleRequest)
         }
@@ -1722,6 +1727,15 @@ struct MusicDownloadStatusView: View {
             if !canPreviewAudio {
                 stopAudioPreview()
             }
+        }
+        // 波形缓存水合完成或资源扫描就绪后补请求,避免行停在占位条
+        .onChange(of: libraryStore.isHydratingLocalWaveformCache) { _, isHydrating in
+            if !isHydrating {
+                requestDownloadedMediaInfoIfNeeded()
+            }
+        }
+        .onChange(of: libraryStore.localMusicAssets.count) { _, _ in
+            requestDownloadedMediaInfoIfNeeded()
         }
         .task(id: previewFileURL?.path) {
             await loadAudioDuration()
