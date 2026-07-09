@@ -209,12 +209,12 @@ extension LibraryStore {
 
     nonisolated final class YTDLPProgressTracker: @unchecked Sendable {
         let lock = NSLock()
-        let expectedPartCount: Int
+        private(set) var expectedPartCount: Int
         let downloadCompletionProgress: Double
         let postProcessingProgress: Double
         let allowsEstimatedMultipartProgress: Bool
         let reportsPostProcessingProgress: Bool
-        let expectedPartByteCounts: [Double]
+        private(set) var expectedPartByteCounts: [Double]
         var observedPartByteCounts: [Int: Double] = [:]
         var observedPartDownloadedBytes: [Int: Double] = [:]
         var partIndex = 0
@@ -239,6 +239,17 @@ extension LibraryStore {
                 .map { max(0, $0) }
             self.allowsEstimatedMultipartProgress = allowsEstimatedMultipartProgress
             self.reportsPostProcessingProgress = reportsPostProcessingProgress
+        }
+
+        /// 免探测快速启动路径:下载进程在正式下载前打印选中的分片信息,
+        /// 在收到第一条进度前用它补齐部件数和字节权重。
+        func noteExpectedParts(count: Int, byteCounts: [Double]) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !hasSeenProgress else { return }
+            let resolvedCount = max(1, count)
+            expectedPartCount = resolvedCount
+            expectedPartByteCounts = Array(byteCounts.prefix(resolvedCount)).map { max(0, $0) }
         }
 
         func update(from line: String) -> DownloadProgressUpdate? {

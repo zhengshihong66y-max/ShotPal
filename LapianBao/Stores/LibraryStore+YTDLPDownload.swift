@@ -56,6 +56,12 @@ extension LibraryStore {
                 description: videoInfo?.description,
                 sourceURL: sourceURL
             )
+            // 免探测快速启动:没有预取元数据时不再单独探测,直接开下;
+            // 部件数/字节权重由下载进程的 before_dl 打印行补齐,
+            // 文件先落到唯一临时名,下载完成后按 after_move 打印的标题重命名。
+            let usesDeferredNaming = videoInfo == nil
+                && skipVideoInfoProbe
+                && selectedPlaylistItemIndex == nil
             let expectedPartCount = videoInfo?.expectedDownloadPartCount ?? 1
             let expectedPartByteCounts = videoInfo?.expectedDownloadPartByteCounts ?? []
             let progressTracker = YTDLPProgressTracker(
@@ -66,14 +72,21 @@ extension LibraryStore {
                 allowsEstimatedMultipartProgress: false,
                 reportsPostProcessingProgress: true
             )
-            let baseOutputURL = cleanedImportVideoURL(
-                in: destinationDirectory,
-                sourceURL: sourceURL,
-                rawTitle: videoInfo?.title,
-                description: videoInfo?.description,
-                uploader: videoInfo?.bestUploader,
-                preferredExtension: "mp4"
-            )
+            let baseOutputURL: URL
+            if usesDeferredNaming {
+                // 临时名按源 URL 派生保持稳定,暂停/继续时 yt-dlp 才能续传同名 .part 文件
+                baseOutputURL = destinationDirectory
+                    .appendingPathComponent("lapianbao-dl-\(stableImportStemDigest(for: sourceURL)).mp4")
+            } else {
+                baseOutputURL = cleanedImportVideoURL(
+                    in: destinationDirectory,
+                    sourceURL: sourceURL,
+                    rawTitle: videoInfo?.title,
+                    description: videoInfo?.description,
+                    uploader: videoInfo?.bestUploader,
+                    preferredExtension: "mp4"
+                )
+            }
             let outputURL = selectedPlaylistItemIndex.map {
                 uniqueImportVideoURL(
                     in: destinationDirectory,
@@ -102,9 +115,16 @@ extension LibraryStore {
             arguments += [
                 "--paths", destinationDirectory.path,
                 "-o", outputTemplate,
-                "--print", "after_move:filepath",
-                downloaderSourceURL.absoluteString
+                "--print", "after_move:filepath"
             ]
+            if usesDeferredNaming {
+                arguments += [
+                    "--print", "before_dl:\(Self.ytdlpPartsMarkerPrefix)%(requested_formats)j",
+                    "--print", "after_move:\(Self.ytdlpTitleMarkerPrefix)%(title)s",
+                    "--print", "after_move:\(Self.ytdlpUploaderMarkerPrefix)%(uploader)s"
+                ]
+            }
+            arguments.append(downloaderSourceURL.absoluteString)
             process.arguments = arguments
 
             let outputPipe = Pipe()
@@ -115,8 +135,13 @@ extension LibraryStore {
             let startedAt = Date()
             let outputCollector = PipeLineCollector()
             let errorCollector = PipeLineCollector()
+            let namingBox = YTDLPDeferredNamingBox()
             let handleProgressLines: @Sendable ([String]) -> Void = { lines in
                 for line in lines {
+                    if usesDeferredNaming,
+                       consumeYTDLPDeferredNamingLine(line, into: namingBox, progressTracker: progressTracker) {
+                        continue
+                    }
                     if let update = progressTracker.update(from: line) {
                         progressCallback?(update.progress, update.speed)
                     }
@@ -179,12 +204,143 @@ extension LibraryStore {
                 )
             }
 
+            guard usesDeferredNaming else {
+                return DownloadedVideoResult(
+                    url: downloadedURL,
+                    authorName: authorName,
+                    sourceTitle: sourceTitle
+                )
+            }
+
+            // 快速启动路径:用下载进程打印的标题/作者补齐命名与来源信息
+            let printedTitle = namingBox.title
+            let printedUploader = namingBox.uploader
+            let resolvedExtension = downloadedURL.pathExtension.isEmpty ? "mp4" : downloadedURL.pathExtension
+            let targetURL = cleanedImportVideoURL(
+                in: destinationDirectory,
+                sourceURL: sourceURL,
+                rawTitle: printedTitle,
+                description: nil,
+                uploader: printedUploader,
+                preferredExtension: resolvedExtension
+            )
+            var finalURL = downloadedURL
+            if targetURL != downloadedURL {
+                do {
+                    try FileManager.default.moveItem(at: downloadedURL, to: targetURL)
+                    finalURL = targetURL
+                } catch {
+                    // 重命名失败不影响导入,保留临时名文件
+                }
+            }
             return DownloadedVideoResult(
-                url: downloadedURL,
-                authorName: authorName,
-                sourceTitle: sourceTitle
+                url: finalURL,
+                authorName: normalizedSourceAuthorName(printedUploader ?? ""),
+                sourceTitle: screenedSourceTitle(
+                    rawTitle: printedTitle,
+                    description: nil,
+                    sourceURL: sourceURL
+                )
             )
         }.value
+    }
+
+    /// FNV-1a 稳定摘要:同一源 URL 跨启动生成相同的临时文件名(Swift hashValue 不稳定)
+    nonisolated static func stableImportStemDigest(for sourceURL: URL) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in Array(sourceURL.absoluteString.utf8) {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return String(format: "%08x", UInt32(truncatingIfNeeded: hash))
+    }
+
+    nonisolated static let ytdlpPartsMarkerPrefix = "lapianbao-parts "
+    nonisolated static let ytdlpTitleMarkerPrefix = "lapianbao-title "
+    nonisolated static let ytdlpUploaderMarkerPrefix = "lapianbao-uploader "
+
+    nonisolated final class YTDLPDeferredNamingBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedTitle: String?
+        private var storedUploader: String?
+
+        var title: String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedTitle
+        }
+
+        var uploader: String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedUploader
+        }
+
+        func setTitle(_ value: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            storedTitle = value
+        }
+
+        func setUploader(_ value: String?) {
+            lock.lock()
+            defer { lock.unlock() }
+            storedUploader = value
+        }
+    }
+
+    /// 处理快速启动路径的标记行;命中标记时返回 true,调用方跳过后续进度解析。
+    nonisolated static func consumeYTDLPDeferredNamingLine(
+        _ line: String,
+        into box: YTDLPDeferredNamingBox,
+        progressTracker: YTDLPProgressTracker
+    ) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix(ytdlpPartsMarkerPrefix) {
+            let payload = String(trimmed.dropFirst(ytdlpPartsMarkerPrefix.count))
+            if let partInfo = parseYTDLPRequestedFormatsPartInfo(payload) {
+                progressTracker.noteExpectedParts(count: partInfo.count, byteCounts: partInfo.byteCounts)
+            }
+            return true
+        }
+        if trimmed.hasPrefix(ytdlpTitleMarkerPrefix) {
+            let payload = String(trimmed.dropFirst(ytdlpTitleMarkerPrefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            box.setTitle(payload.isEmpty || payload == "NA" ? nil : payload)
+            return true
+        }
+        if trimmed.hasPrefix(ytdlpUploaderMarkerPrefix) {
+            let payload = String(trimmed.dropFirst(ytdlpUploaderMarkerPrefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            box.setUploader(payload.isEmpty || payload == "NA" ? nil : payload)
+            return true
+        }
+        return false
+    }
+
+    /// 解析 before_dl 打印的 %(requested_formats)j:返回部件数,以及在
+    /// 每个部件都有已知大小时的字节权重(缺任一大小则不提供权重)。
+    nonisolated static func parseYTDLPRequestedFormatsPartInfo(
+        _ json: String
+    ) -> (count: Int, byteCounts: [Double])? {
+        let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "NA", trimmed != "null", trimmed != "None" else { return nil }
+        guard let data = trimmed.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              !array.isEmpty
+        else { return nil }
+
+        let byteCounts = array.map { item -> Double in
+            if let size = item["filesize"] as? Double, size > 0 {
+                return size
+            }
+            if let size = item["filesize_approx"] as? Double, size > 0 {
+                return size
+            }
+            return 0
+        }
+        let usableByteCounts = byteCounts.allSatisfy { $0 > 0 } ? byteCounts : []
+        return (array.count, usableByteCounts)
     }
 
     nonisolated struct InstagramCarouselBundlePlan {
@@ -697,7 +853,8 @@ extension LibraryStore {
             "--concurrent-fragments", "8"
         ]
         if isYouTube {
-            arguments += ["--sleep-requests", "0.75"]
+            // cookie 方案下已是认证会话,缩短请求间隔以加快下载前的解析阶段
+            arguments += ["--sleep-requests", "0.3"]
         }
         return arguments
     }
