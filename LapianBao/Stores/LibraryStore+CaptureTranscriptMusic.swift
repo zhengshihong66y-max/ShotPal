@@ -488,10 +488,22 @@ extension LibraryStore {
 
         guard !affectedJobIDs.isEmpty else { return }
 
+        // 孤儿歌曲(不再被任何视频引用)连文件带记录一起删,
+        // 不再沿用交付版早期"下载音乐永久保留"的旧规矩。
+        for filePath in affectedFilePaths {
+            _ = trashLibraryFileIfPresent(URL(fileURLWithPath: filePath), context: "orphaned music download")
+            knownLocalResourcePaths.remove(filePath)
+        }
+        localMusicAssets.removeAll { asset in
+            affectedFilePaths.contains(Self.normalizedLocalFilePath(asset.filePath))
+        }
+        musicDownloadJobs.removeAll { songKeys.contains($0.songKey) }
+
         invalidateMusicWorkspaceDisplayCache()
         if didRemoveWaveformCache {
             DownloadedMusicWaveformRenderCache.shared.removeAllImages()
         }
+        scanResourceLibrary(refreshMode: .deferred, loadCachedSnapshotSynchronously: false)
     }
 
     @discardableResult
