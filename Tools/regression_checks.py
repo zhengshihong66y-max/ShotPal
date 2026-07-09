@@ -2873,9 +2873,9 @@ def main() -> None:
         "Remote import jobs must not regress from terminal states back to active progress states.",
     )
     require(
-        "if let progress {\n                        job.downloadProgress = Self.normalizedProgress(progress)" in library_store
+        "job.downloadProgress = max(job.downloadProgress ?? 0, normalized)" in library_store
         and "else if progress == nil {\n                        job.downloadSpeed = nil" in library_store,
-        "Remote import progress callbacks must preserve the last percent on yt-dlp speed-only or post-processing lines.",
+        "Remote import progress must apply monotonically (max) so out-of-order MainActor tasks can't jitter the bar, and speed-only lines preserve the last percent.",
     )
     require(
         "finalizingCallback?(1)\n        let finalURL" in library_store

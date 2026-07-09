@@ -396,7 +396,11 @@ extension LibraryStore {
                 self?.updateRemoteImportJob(id: jobID) { job in
                     guard case .importing = job.status else { return }
                     if let progress {
-                        job.downloadProgress = Self.normalizedProgress(progress)
+                        // 每条进度用独立 Task 派发,MainActor 上执行顺序不保证与
+                        // 产生顺序一致;下载阶段进度天然单调,写入时取 max 丢弃
+                        // 乱序到达的旧值,消除进度条来回抖动。
+                        let normalized = Self.normalizedProgress(progress)
+                        job.downloadProgress = max(job.downloadProgress ?? 0, normalized)
                     }
                     if let speed, !speed.isEmpty {
                         job.downloadSpeed = speed
