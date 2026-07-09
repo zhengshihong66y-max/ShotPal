@@ -608,7 +608,13 @@ extension LibraryStore {
         let cookieArguments = ["--cookies", workingCookieURL.path]
         var attempts: [YTDLPArgumentAttempt] = []
 
-        attempts.append(YTDLPArgumentAttempt(label: "cookies.txt", arguments: cookieArguments))
+        // 第一发用单一 web_safari 客户端并跳过 HLS/DASH 清单:请求数最少,
+        // 慢代理下解析从约 15 秒缩到 6 秒;不适用的视频(直播等)由后续
+        // 多客户端、不带 skip 的尝试兜底。
+        attempts.append(YTDLPArgumentAttempt(
+            label: "cookies.txt",
+            arguments: cookieArguments + ["--extractor-args", "youtube:player_client=web_safari;skip=hls,dash"]
+        ))
         attempts.append(YTDLPArgumentAttempt(label: "cookies.txt备用客户端", arguments: cookieArguments + clientArguments))
 
         for proxyURL in currentYTDLPProxyURLs() {
@@ -930,6 +936,16 @@ extension LibraryStore {
             return await ytdlpRemoteImportCandidateMetadata(for: sourceURL)
         }
 
+        // YouTube 用轻量接口(oEmbed + 固定缩略图地址)拿标题/作者/封面:
+        // 单个请求、不受风控影响,也不再和正式下载并行抢代理带宽。
+        if isYouTubeURL(sourceURL) {
+            if let lightweight = await youtubeLightweightCandidateMetadata(for: sourceURL),
+               lightweight.hasAnyValue {
+                return lightweight
+            }
+            return await ytdlpRemoteImportCandidateMetadata(for: sourceURL)
+        }
+
         async let ytdlpMetadata = ytdlpRemoteImportCandidateMetadata(for: sourceURL)
         async let nativeMetadata = xiaohongshuRemoteImportCandidateMetadataIfNeeded(for: sourceURL)
 
@@ -940,6 +956,46 @@ extension LibraryStore {
             authorName: ytdlp.authorName ?? native?.authorName,
             thumbnailData: ytdlp.thumbnailData ?? native?.thumbnailData
         )
+    }
+
+    nonisolated static func youtubeLightweightCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata? {
+        guard let videoID = youTubeVideoID(from: sourceURL) else { return nil }
+
+        var title: String?
+        var authorName: String?
+        if var components = URLComponents(string: "https://www.youtube.com/oembed") {
+            components.queryItems = [
+                URLQueryItem(name: "url", value: "https://www.youtube.com/watch?v=\(videoID)"),
+                URLQueryItem(name: "format", value: "json")
+            ]
+            if let oembedURL = components.url {
+                var request = URLRequest(url: oembedURL)
+                request.timeoutInterval = 10
+                if let (data, response) = try? await URLSession.shared.data(for: request),
+                   let httpResponse = response as? HTTPURLResponse,
+                   (200..<300).contains(httpResponse.statusCode),
+                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    title = screenedSourceTitle(
+                        rawTitle: object["title"] as? String,
+                        description: nil,
+                        sourceURL: sourceURL
+                    )
+                    authorName = normalizedSourceAuthorName(object["author_name"] as? String ?? "")
+                }
+            }
+        }
+
+        var thumbnailData: Data?
+        if let thumbnailURL = URL(string: "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg") {
+            thumbnailData = await fetchRemoteImageData(from: thumbnailURL)
+        }
+
+        let metadata = RemoteImportCandidateMetadata(
+            title: title,
+            authorName: authorName,
+            thumbnailData: thumbnailData
+        )
+        return metadata.hasAnyValue ? metadata : nil
     }
 
     nonisolated static func ytdlpRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
