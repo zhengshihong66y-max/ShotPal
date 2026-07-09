@@ -58,6 +58,7 @@ final class AppWindowManager {
         let contentView = ContentView()
             .environmentObject(libraryStore)
             .environmentObject(libraryStore.downloaderSelfCheck)
+            .environmentObject(libraryStore.youtubeCookie)
         let hostingController = NSHostingController(rootView: contentView)
         let window = PreviewKeyboardWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),

@@ -138,6 +138,7 @@ final class LibraryStore: ObservableObject {
     var remoteImportJob: RemoteImportJob? { remoteImportJobs.last }
     @Published var instagramImportEndpoint = AppSettings.instagramImportEndpoint
     let downloaderSelfCheck = DownloaderSelfCheckStore()
+    let youtubeCookie = YouTubeCookieStore()
 
     var musicPreviewKeyboardTargetJobID: UUID? {
         activeMusicPreviewJobID ?? focusedMusicPreviewJobID

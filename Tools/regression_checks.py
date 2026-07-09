@@ -1443,13 +1443,32 @@ def require_account_login_and_saved_import_removed_guardrails(sources: dict[str,
         "ChromeCookieFileCache",
         "cachedOrExportedChromeCookieURL",
         "browserCookieCandidates",
-        "--cookies-from-browser",
     ]
     offenders = [token for token in forbidden_tokens if token in combined]
     require(
         not offenders,
         "Account login, browser-cookie, and saved-collection import code must stay removed: "
         + ", ".join(offenders),
+    )
+
+    # 用户手动触发的一键 cookie 刷新是唯一例外:--cookies-from-browser 只允许出现在
+    # YouTubeCookieStore.swift,不允许回到自动账号识别或收藏列表读取的用法。
+    cookie_refresh_store_path = "LapianBao/Stores/YouTubeCookieStore.swift"
+    browser_cookie_offenders = [
+        relative
+        for relative, text in sources.items()
+        if "--cookies-from-browser" in text
+        and relative != cookie_refresh_store_path
+        and (relative.startswith("LapianBao/") or relative.startswith("README"))
+    ]
+    require(
+        not browser_cookie_offenders,
+        "--cookies-from-browser must stay inside the user-triggered YouTubeCookieStore refresh: "
+        + ", ".join(browser_cookie_offenders),
+    )
+    require(
+        "--cookies-from-browser" in sources.get(cookie_refresh_store_path, ""),
+        "Settings must keep the one-click YouTube cookies refresh (YouTubeCookieStore).",
     )
 
 
