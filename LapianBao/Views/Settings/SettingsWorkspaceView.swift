@@ -66,46 +66,18 @@ struct SettingsWorkspaceView: View {
         let isConfigured = !(youtubeCookieStore.configuredFilePath ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let isRefreshing = youtubeCookieStore.isRefreshing
-        return HStack(alignment: .center, spacing: Self.rowColumnSpacing) {
-            settingsRowIcon(
-                youtubeCookieCardIcon(isConfigured: isConfigured),
-                tint: youtubeCookieCardIconTint(isConfigured: isConfigured)
-            )
-
-            settingsInfoColumn(
-                title: "YouTube cookies",
-                description: "仅在 YouTube 要求登录验证时使用,点击刷新可从 Chrome 一键配置。",
-                detail: youtubeCookieFileDetailText,
-                detailColor: youtubeCookieDetailColor(isConfigured: isConfigured)
-            )
-
-            if isConfigured && !isRefreshing {
-                settingsActionButton(
-                    systemImage: "xmark",
-                    tint: .white.opacity(0.52),
-                    help: "清除 YouTube cookies 文件",
-                    action: clearYouTubeCookieFile
-                )
-            }
-
-            settingsActionButton(
-                systemImage: "folder",
-                help: "手动选择 YouTube cookies.txt",
-                action: chooseYouTubeCookieFile
-            )
-
-            settingsActionButton(
-                systemImage: isRefreshing ? "hourglass" : "arrow.triangle.2.circlepath",
-                tint: isRefreshing ? .white.opacity(0.40) : .white.opacity(0.70),
-                help: isConfigured ? "从 Chrome 一键更新 cookies" : "从 Chrome 一键配置 cookies",
-                action: { youtubeCookieStore.refreshFromBrowser() }
-            )
-            .disabled(isRefreshing)
-        }
-        .padding(.horizontal, Self.rowHorizontalPadding)
-        .padding(.vertical, Self.rowVerticalPadding)
-        .frame(height: Self.rowHeight, alignment: .center)
-        .settingsRowBackground()
+        return settingsCompactRow(
+            icon: youtubeCookieCardIcon(isConfigured: isConfigured),
+            iconTint: youtubeCookieCardIconTint(isConfigured: isConfigured),
+            title: "YouTube cookies",
+            description: "仅在 YouTube 要求登录验证时使用,点击刷新可从 Chrome 一键配置。",
+            detail: youtubeCookieFileDetailText,
+            detailColor: youtubeCookieDetailColor(isConfigured: isConfigured),
+            actionIcon: "arrow.clockwise",
+            help: isConfigured ? "从 Chrome 一键更新 cookies" : "从 Chrome 一键配置 cookies",
+            isDisabled: isRefreshing,
+            action: { youtubeCookieStore.refreshFromBrowser() }
+        )
     }
 
     private var youtubeCookieFileDetailText: String {
@@ -117,7 +89,7 @@ struct SettingsWorkspaceView: View {
         case .succeeded:
             return "\(youtubeCookieConfiguredFileName ?? "cookies.txt") · 已验证通过"
         case .idle:
-            return youtubeCookieConfiguredFileName ?? "未配置"
+            return youtubeCookieConfiguredFileName.map { "\($0) · 已配置" } ?? "未配置"
         }
     }
 
@@ -139,49 +111,19 @@ struct SettingsWorkspaceView: View {
 
     private func youtubeCookieCardIconTint(isConfigured: Bool) -> Color {
         switch youtubeCookieStore.refreshPhase {
-        case .running: return .white.opacity(0.62)
-        case .failed: return .orange.opacity(0.85)
-        case .succeeded: return Design.annotationAccent
-        case .idle: return isConfigured ? Design.annotationAccent : .white.opacity(0.38)
+        case .running: return Design.annotationAccent
+        case .failed: return .red
+        case .succeeded: return .green
+        case .idle: return isConfigured ? .green : Design.annotationAccent
         }
     }
 
     private func youtubeCookieDetailColor(isConfigured: Bool) -> Color {
         switch youtubeCookieStore.refreshPhase {
-        case .running: return .white.opacity(0.62)
-        case .failed: return .orange.opacity(0.85)
-        case .succeeded: return .white.opacity(0.82)
-        case .idle: return isConfigured ? .white.opacity(0.82) : .white.opacity(0.45)
+        case .succeeded: return .green
+        case .idle where isConfigured: return .green
+        default: return Color.yellow.opacity(0.92)
         }
-    }
-
-    private func chooseYouTubeCookieFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.title = "选择 YouTube cookies.txt"
-        panel.prompt = "选择"
-        panel.allowedContentTypes = [.text, .plainText, .data]
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        AppSettings.youtubeCookieFilePath = url.path
-        if let bookmark = try? url.bookmarkData(
-            options: .withSecurityScope,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        ) {
-            AppSettings.youtubeCookieFileBookmark = bookmark
-        } else {
-            AppSettings.youtubeCookieFileBookmark = nil
-        }
-        youtubeCookieStore.recordManualCookieFile(path: url.path)
-    }
-
-    private func clearYouTubeCookieFile() {
-        AppSettings.youtubeCookieFilePath = nil
-        AppSettings.youtubeCookieFileBookmark = nil
-        youtubeCookieStore.recordManualCookieFile(path: nil)
     }
 
     private func shortcutSettingsCard() -> some View {

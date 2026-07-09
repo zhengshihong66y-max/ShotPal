@@ -69,11 +69,6 @@ final class YouTubeCookieStore: ObservableObject {
         }
     }
 
-    func recordManualCookieFile(path: String?) {
-        configuredFilePath = path
-        refreshPhase = .idle
-    }
-
     nonisolated static func managedCookieFileURL() -> URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("LapianBao", isDirectory: true)
