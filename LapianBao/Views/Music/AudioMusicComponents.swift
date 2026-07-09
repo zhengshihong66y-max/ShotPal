@@ -1022,11 +1022,7 @@ struct MusicDownloadWaveformPanel: View {
     }
 
     private func waveformSamples(for job: MusicDownloadJob) -> [Double]? {
-        if let samples = job.waveformSamples, !samples.isEmpty {
-            return samples
-        }
-        guard let localAsset = localMusicAsset(for: job) else { return nil }
-        return libraryStore.localMusicWaveformSamplesByPath[localAsset.filePath]
+        libraryStore.musicDownloadWaveformSamples(for: job)
     }
 
     private var effectiveAudioDuration: Double {
@@ -1578,11 +1574,7 @@ struct MusicDownloadStatusView: View {
     }
 
     private func waveformSamples(for job: MusicDownloadJob) -> [Double]? {
-        if let samples = job.waveformSamples, !samples.isEmpty {
-            return samples
-        }
-        guard let localAsset = localMusicAsset(for: job) else { return nil }
-        return libraryStore.localMusicWaveformSamplesByPath[localAsset.filePath]
+        libraryStore.musicDownloadWaveformSamples(for: job)
     }
 
     var body: some View {

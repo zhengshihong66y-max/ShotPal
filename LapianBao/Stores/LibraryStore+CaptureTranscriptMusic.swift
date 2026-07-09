@@ -1214,6 +1214,29 @@ extension LibraryStore {
         musicDownloadJobs.last { $0.songKey == songKey && $0.type == type && $0.recognitionID == recognitionID }
     }
 
+    /// 波形样本按文件共享:同一首歌被不同视频识别会产生不同 recognitionID 的
+    /// 任务,样本可能挂在另一条任务上;文件相同就直接复用,最后退回本地资产波形。
+    func musicDownloadWaveformSamples(for job: MusicDownloadJob) -> [Double]? {
+        if let samples = job.waveformSamples, !samples.isEmpty {
+            return samples
+        }
+        guard let filePath = job.filePath else { return nil }
+
+        if let shared = musicDownloadJobs.last(where: {
+            $0.filePath == filePath && !($0.waveformSamples?.isEmpty ?? true)
+        })?.waveformSamples {
+            return shared
+        }
+        if let samples = localMusicWaveformSamplesByPath[filePath], !samples.isEmpty {
+            return samples
+        }
+        let normalizedPath = Self.normalizedLocalFilePath(filePath)
+        guard let asset = localMusicAssets.first(where: {
+            Self.normalizedLocalFilePath($0.filePath) == normalizedPath
+        }) else { return nil }
+        return localMusicWaveformSamplesByPath[asset.filePath]
+    }
+
     func musicSongKey(_ song: MusicRecognitionItem) -> String {
         "\(song.title)|\(song.artist)"
     }

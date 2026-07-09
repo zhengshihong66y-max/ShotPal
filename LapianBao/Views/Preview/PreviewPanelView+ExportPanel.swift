@@ -1296,22 +1296,7 @@ extension PreviewPanelView {
     }
 
     private func exportMusicWaveformSamplesForRenderPrewarm(_ job: MusicDownloadJob) -> [Double]? {
-        if let samples = job.waveformSamples, !samples.isEmpty {
-            return samples
-        }
-
-        guard let filePath = job.filePath else { return nil }
-        if let samples = libraryStore.localMusicWaveformSamplesByPath[filePath], !samples.isEmpty {
-            return samples
-        }
-
-        let normalizedPath = LibraryStore.normalizedLocalFilePath(filePath)
-        guard
-            let localAsset = libraryStore.localMusicAssets.first(where: {
-                LibraryStore.normalizedLocalFilePath($0.filePath) == normalizedPath
-            })
-        else { return nil }
-        return libraryStore.localMusicWaveformSamplesByPath[localAsset.filePath]
+        libraryStore.musicDownloadWaveformSamples(for: job)
     }
 
 }

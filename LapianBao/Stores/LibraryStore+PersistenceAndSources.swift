@@ -555,7 +555,7 @@ extension LibraryStore {
     }
 
     func reconciledMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
-        jobs.map { job in
+        let reconciledJobs = jobs.map { job in
             var reconciled = job
             if reconciled.recognitionID == nil {
                 reconciled.recognitionID = uniqueMusicRecognitionID(forSongKey: reconciled.songKey)
@@ -575,6 +575,32 @@ extension LibraryStore {
             }
             return reconciled
         }
+        return dedupedMusicDownloadJobs(reconciledJobs)
+    }
+
+    /// 收敛历次下载/重试留下的重复任务存根:同一(歌曲, 类型, 识别ID)只保留
+    /// 最新一条,与查询处 `.last` 的"最新即当前"语义一致;新条目缺波形而旧
+    /// 条目同文件有波形时把样本带上,避免波形随存根更替丢失。
+    func dedupedMusicDownloadJobs(_ jobs: [MusicDownloadJob]) -> [MusicDownloadJob] {
+        var kept: [MusicDownloadJob] = []
+        var indexByKey: [String: Int] = [:]
+        for job in jobs {
+            let key = "\(job.songKey)|\(job.type.rawValue)|\(job.recognitionID?.uuidString ?? "-")"
+            if let existingIndex = indexByKey[key] {
+                var newer = job
+                if newer.waveformSamples?.isEmpty ?? true,
+                   let samples = kept[existingIndex].waveformSamples,
+                   !samples.isEmpty,
+                   kept[existingIndex].filePath == newer.filePath {
+                    newer.waveformSamples = samples
+                }
+                kept[existingIndex] = newer
+            } else {
+                indexByKey[key] = kept.count
+                kept.append(job)
+            }
+        }
+        return kept
     }
 
     func uniqueMusicRecognitionID(forSongKey songKey: String) -> UUID? {
