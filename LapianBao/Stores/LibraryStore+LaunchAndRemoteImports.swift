@@ -508,6 +508,8 @@ extension LibraryStore {
                     if selectOnCompletion {
                         self?.selectVideo(importedVideo, autoplay: false)
                     }
+                    // 下载入库即自动开始音乐识别,识别到的歌立刻预搜索下载链接
+                    self?.startAutoMusicRecognitionIfNeeded(for: importedVideo)
                 }
             } catch {
                 guard !Task.isCancelled else { return }

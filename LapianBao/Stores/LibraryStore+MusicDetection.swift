@@ -31,6 +31,7 @@ extension LibraryStore {
     nonisolated static func downloadMusicFromYouTube(
         query: String,
         into destinationDirectory: URL,
+        preResolvedURL: URL? = nil,
         progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         let processRegistry = ToolProcessRegistry()
@@ -40,6 +41,7 @@ extension LibraryStore {
                     try await downloadMusicFromYouTubeSearch(
                         query: query,
                         into: destinationDirectory,
+                        preResolvedURL: preResolvedURL,
                         processRegistry: processRegistry,
                         progressCallback: progressCallback
                     )
@@ -64,11 +66,12 @@ extension LibraryStore {
     nonisolated static func downloadMusicFromYouTubeSearch(
         query: String,
         into destinationDirectory: URL,
+        preResolvedURL: URL? = nil,
         processRegistry: ToolProcessRegistry,
         progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
         progressCallback?(0.02)
-        let sources = await musicDownloadSources(for: query)
+        let sources = await musicDownloadSources(for: query, preResolvedURL: preResolvedURL)
         var failures: [String] = []
 
         // 与导入页一致:进度条直接反映当前尝试的真实下载进度,
@@ -102,7 +105,10 @@ extension LibraryStore {
         )
     }
 
-    nonisolated static func musicDownloadSources(for query: String) async -> [MusicDownloadSource] {
+    nonisolated static func musicDownloadSources(
+        for query: String,
+        preResolvedURL: URL? = nil
+    ) async -> [MusicDownloadSource] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return [] }
 
@@ -121,6 +127,11 @@ extension LibraryStore {
         }
 
         var sources: [MusicDownloadSource] = []
+
+        // 识别后预搜索命中的播放页排最前:点下载时连搜索都不用做
+        if let preResolvedURL {
+            sources.append(contentsOf: expandedSources(name: "预搜索播放页", target: preResolvedURL.absoluteString))
+        }
 
         // 配置了 cookie 时让下载进程用 ytsearch1: 一步完成搜索+下载,
         // 省掉独立搜索探测的一整个进程(慢代理下约 6-10 秒);

@@ -268,6 +268,9 @@ final class LibraryStore: ObservableObject {
     var musicDownloadBatchTask: Task<Void, Never>?
     let musicDownloadTasks = KeyedTaskRunner<UUID>()
     let musicTagEnrichmentTasks = KeyedTaskRunner<String>()
+    // 识别完成后预搜索到的 YouTube 播放页,点下载时直接命中(会话内缓存)
+    var musicSearchURLBySongKey: [String: URL] = [:]
+    let musicSearchPrefetchTasks = KeyedTaskRunner<String>()
     var resourceLibraryScanTask: Task<Void, Never>?
     var resourceLibraryScanTaskLibraryPath: String?
     var resourceLibraryScanGeneration = 0

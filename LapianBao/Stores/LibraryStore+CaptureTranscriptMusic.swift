@@ -327,6 +327,45 @@ extension LibraryStore {
         "\(Int((normalizedProgress(progress) * 100).rounded()))%"
     }
 
+    /// 下载入库后自动开始音乐识别与预搜索;已有识别结果时只补预搜索,不重复识别。
+    func startAutoMusicRecognitionIfNeeded(for video: VideoItem) {
+        let path = video.url.path
+        let existingSongs = musicsByVideoPath[path, default: []]
+        guard existingSongs.isEmpty else {
+            prefetchMusicSearchURLs(for: existingSongs)
+            return
+        }
+        if case .running = musicDetectionStatusByVideoPath[path] { return }
+        detectMusic(for: video)
+    }
+
+    func musicDownloadQuery(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) -> String {
+        "\(song.artist.isEmpty ? "" : song.artist + " ")\(song.title)\(type.searchSuffix)"
+    }
+
+    func musicSearchURLCacheKey(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) -> String {
+        "\(musicSongKey(song))|\(type.rawValue)"
+    }
+
+    func prefetchMusicSearchURLs(for songs: [MusicRecognitionItem]) {
+        for song in songs {
+            for type in MusicDownloadJob.DownloadType.allCases {
+                prefetchMusicSearchURL(for: song, type: type)
+            }
+        }
+    }
+
+    /// 识别出歌曲后立刻在后台解析下载用的播放页链接,点下载时免搜索。
+    func prefetchMusicSearchURL(for song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) {
+        let cacheKey = musicSearchURLCacheKey(song: song, type: type)
+        guard musicSearchURLBySongKey[cacheKey] == nil else { return }
+        let query = musicDownloadQuery(song: song, type: type)
+        musicSearchPrefetchTasks.start(cacheKey) { [weak self] in
+            guard let url = await Self.firstYouTubeSearchResultURL(for: query) else { return }
+            self?.musicSearchURLBySongKey[cacheKey] = url
+        }
+    }
+
     func detectMusic(for video: VideoItem) {
         let path = video.url.path
         if case .running = musicDetectionStatusByVideoPath[path] { return }
@@ -349,6 +388,8 @@ extension LibraryStore {
                                 if !current.contains(where: { $0.title == taggedSong.title && $0.artist == taggedSong.artist }) {
                                     current.append(taggedSong)
                                     weakSelf?.musicsByVideoPath[path] = current
+                                    // 识别到即预搜索,点下载时直接命中播放页
+                                    weakSelf?.prefetchMusicSearchURLs(for: [taggedSong])
                                 }
                             }
                         }
@@ -357,6 +398,7 @@ extension LibraryStore {
                 let currentSongs = weakSelf?.musicsByVideoPath[path] ?? existingSongs
                 weakSelf?.musicsByVideoPath[path] = Self.musicItems(songs, preservingStateFrom: currentSongs)
                 weakSelf?.musicDetectionStatusByVideoPath[path] = .completed
+                weakSelf?.prefetchMusicSearchURLs(for: weakSelf?.musicsByVideoPath[path] ?? [])
                 weakSelf?.saveProjectData()
             } catch is CancellationError {
                 weakSelf?.musicsByVideoPath[path] = existingSongs
@@ -937,7 +979,8 @@ extension LibraryStore {
             return
         }
 
-        let query = "\(song.artist.isEmpty ? "" : song.artist + " ")\(song.title)\(type.searchSuffix)"
+        let query = musicDownloadQuery(song: song, type: type)
+        let preResolvedURL = musicSearchURLBySongKey[musicSearchURLCacheKey(song: song, type: type)]
         let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
                 self?.updateMusicDownloadJob(id: jobID) { j in
@@ -955,6 +998,7 @@ extension LibraryStore {
                 outputURL = try await Self.downloadMusicFromYouTube(
                     query: query,
                     into: destinationDirectory,
+                    preResolvedURL: preResolvedURL,
                     progressCallback: progressCallback
                 )
             } catch {
@@ -966,6 +1010,7 @@ extension LibraryStore {
                 outputURL = try await Self.downloadMusicFromYouTube(
                     query: query,
                     into: destinationDirectory,
+                    preResolvedURL: preResolvedURL,
                     progressCallback: progressCallback
                 )
             }
