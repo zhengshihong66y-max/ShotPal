@@ -217,8 +217,7 @@ extension LibraryStore {
     }
 
     func pauseRemoteImportJob(id: UUID) {
-        remoteImportTasks[id]?.cancel()
-        remoteImportTasks[id] = nil
+        remoteImportTasks.cancel(id)
         remoteImportProcesses[id]?.terminate()
         remoteImportProcesses[id] = nil
         updateRemoteImportJob(id: id) { job in
@@ -242,8 +241,7 @@ extension LibraryStore {
     }
 
     func deleteRemoteImportJob(id: UUID) {
-        remoteImportTasks[id]?.cancel()
-        remoteImportTasks[id] = nil
+        remoteImportTasks.cancel(id)
         remoteImportProcesses[id]?.terminate()
         remoteImportProcesses[id] = nil
 
@@ -318,7 +316,7 @@ extension LibraryStore {
 
         for jobID in jobIDs {
             guard !Task.isCancelled else { return }
-            await remoteImportTasks[jobID]?.value
+            await remoteImportTasks.wait(for: jobID)
         }
     }
 
@@ -432,7 +430,7 @@ extension LibraryStore {
             }
         }
 
-        let task = Task { [weak self] in
+        remoteImportTasks.start(jobID) { [weak self] in
             var didAcquireDownloadSlot = false
             defer {
                 if didAcquireDownloadSlot {
@@ -441,7 +439,6 @@ extension LibraryStore {
                     }
                 }
                 Task { @MainActor [weak self] in
-                    self?.remoteImportTasks[jobID] = nil
                     self?.remoteImportProcesses[jobID] = nil
                 }
             }
@@ -497,7 +494,6 @@ extension LibraryStore {
                 }
             }
         }
-        remoteImportTasks[jobID] = task
         return jobID
     }
 

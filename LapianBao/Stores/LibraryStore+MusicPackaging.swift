@@ -93,8 +93,7 @@ extension LibraryStore {
             musicsByVideoPath.removeValue(forKey: oldPath)
             musicDetectionStatusByVideoPath.removeValue(forKey: oldPath)
             localMusicWaveformSamplesByPath.removeValue(forKey: oldPath)
-            localMusicWaveformTasks[oldPath]?.cancel()
-            localMusicWaveformTasks[oldPath] = nil
+            localMusicWaveformTasks.cancel(oldPath)
             localMusicWaveformRenderingPaths.remove(oldPath)
             localMusicWaveformQueuedPaths.remove(oldPath)
             queuedLocalMusicWaveformAssets.removeAll { $0.filePath == oldPath }
@@ -232,8 +231,7 @@ extension LibraryStore {
             if let samples = localMusicWaveformSamplesByPath.removeValue(forKey: oldPath) {
                 localMusicWaveformSamplesByPath[newPath] = samples
             }
-            localMusicWaveformTasks[oldPath]?.cancel()
-            localMusicWaveformTasks[oldPath] = nil
+            localMusicWaveformTasks.cancel(oldPath)
             localMusicWaveformRenderingPaths.remove(oldPath)
             localMusicWaveformQueuedPaths.remove(oldPath)
             queuedLocalMusicWaveformAssets.removeAll { $0.filePath == oldPath }

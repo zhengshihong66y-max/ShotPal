@@ -242,7 +242,7 @@ final class LibraryStore: ObservableObject {
     var videoSourceAuthorCache: [String: String?] = [:]
     var videoSourceTitleCache: [String: String?] = [:]
     let waveformTasks = KeyedTaskRunner<String>()
-    var audioClipWaveformTasks: [UUID: Task<Void, Never>] = [:]
+    let audioClipWaveformTasks = KeyedTaskRunner<UUID>()
     var pendingAudioClipWaveformIDs: [UUID] = []
     var pendingAudioClipWaveformIDSet = Set<UUID>()
     var localWaveformCacheByKey: [String: LocalWaveformCacheEntry] = [:]
@@ -250,7 +250,7 @@ final class LibraryStore: ObservableObject {
     var localWaveformCacheHydrationTask: Task<Void, Never>?
     var localWaveformCacheSaveTask: Task<Void, Never>?
     var localWaveformCacheNeedsSave = false
-    var localMusicWaveformTasks: [String: Task<Void, Never>] = [:]
+    let localMusicWaveformTasks = KeyedTaskRunner<String>()
     var queuedLocalMusicWaveformAssets: [LocalMusicAsset] = []
     let musicFileDurationTasks = KeyedTaskRunner<String>()
     let frameStripTasks = KeyedTaskRunner<String>()
@@ -265,7 +265,7 @@ final class LibraryStore: ObservableObject {
     let musicDetectionTasks = KeyedTaskRunner<String>()
     var localMusicRecognitionTask: Task<Void, Never>?
     var musicDownloadBatchTask: Task<Void, Never>?
-    var musicDownloadTasks: [UUID: Task<Void, Never>] = [:]
+    let musicDownloadTasks = KeyedTaskRunner<UUID>()
     let musicTagEnrichmentTasks = KeyedTaskRunner<String>()
     var downloaderSelfCheckTask: Task<Void, Never>?
     var lastExternalSelfCheckPreflightAt: Date?
@@ -281,7 +281,7 @@ final class LibraryStore: ObservableObject {
     var pendingVideoPathRemap: [String: String] = [:]
     var pendingVideoFolderTagsByPath: [String: [String]] = [:]
     var persistedVideoTagPaths = Set<String>()
-    var remoteImportTasks: [UUID: Task<Void, Never>] = [:]
+    let remoteImportTasks = KeyedTaskRunner<UUID>()
     var remoteImportProcesses: [UUID: Process] = [:]
     var scopedLibraryURL: URL?
     var sceneCutCache: [String: SceneCutCacheEntry] = [:]

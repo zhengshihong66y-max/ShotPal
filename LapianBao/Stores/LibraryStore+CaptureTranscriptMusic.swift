@@ -416,10 +416,7 @@ extension LibraryStore {
             let jobID = musicDownloadJobs[index].id
             affectedJobIDs.insert(jobID)
 
-            if let task = musicDownloadTasks[jobID] {
-                task.cancel()
-                musicDownloadTasks[jobID] = nil
-            }
+            musicDownloadTasks.cancel(jobID)
 
             if musicDownloadWaveformProgressByID.removeValue(forKey: jobID) != nil {
                 didRemoveWaveformCache = true
@@ -467,9 +464,7 @@ extension LibraryStore {
             if localMusicWaveformSamplesByPath.removeValue(forKey: path) != nil {
                 didChange = true
             }
-            if let task = localMusicWaveformTasks[path] {
-                task.cancel()
-                localMusicWaveformTasks[path] = nil
+            if localMusicWaveformTasks.cancel(path) {
                 didChange = true
             }
             if localMusicWaveformRenderingPaths.remove(path) != nil {
@@ -751,8 +746,7 @@ extension LibraryStore {
             musicsByVideoPath.removeValue(forKey: path)
             musicDetectionStatusByVideoPath.removeValue(forKey: path)
             localMusicWaveformSamplesByPath.removeValue(forKey: path)
-            localMusicWaveformTasks[path]?.cancel()
-            localMusicWaveformTasks[path] = nil
+            localMusicWaveformTasks.cancel(path)
             localMusicWaveformRenderingPaths.remove(path)
             localMusicWaveformQueuedPaths.remove(path)
             queuedLocalMusicWaveformAssets.removeAll { $0.filePath == path }
@@ -858,11 +852,10 @@ extension LibraryStore {
     func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) {
         startExternalServiceSelfCheckPreflightIfNeeded()
         guard let jobID = prepareMusicDownloadJob(song: song, type: type, recognitionID: recognitionID) else { return }
-        let task = Task { [weak self] in
+        musicDownloadTasks.start(jobID) { [weak self] in
             guard let self else { return }
             await self.runMusicDownload(jobID: jobID, song: song, type: type)
         }
-        musicDownloadTasks[jobID] = task
     }
 
     func startMusicDownloadBatch(types: [MusicDownloadJob.DownloadType] = MusicDownloadJob.DownloadType.allCases) {
@@ -935,10 +928,6 @@ extension LibraryStore {
     }
 
     func runMusicDownload(jobID: UUID, song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) async {
-        defer {
-            musicDownloadTasks.removeValue(forKey: jobID)
-        }
-
         guard let libraryURL else {
             updateMusicDownloadJob(id: jobID) { j in
                 j.status = .failed("请先打开一个素材库文件夹")

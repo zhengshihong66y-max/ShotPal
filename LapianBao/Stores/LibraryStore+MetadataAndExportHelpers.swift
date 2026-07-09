@@ -301,8 +301,7 @@ extension LibraryStore {
         let preservedDurations = durationByVideoPath.filter { libraryPaths.contains($0.key) }
         let preservedPlaybackSupport = playbackSupportByVideoPath.filter { libraryPaths.contains($0.key) }
         waveformTasks.cancelAll()
-        audioClipWaveformTasks.values.forEach { $0.cancel() }
-        audioClipWaveformTasks.removeAll()
+        audioClipWaveformTasks.cancelAll()
         frameStripTasks.cancelAll()
         sceneDetectionTasks.cancelAll()
         sceneThumbnailHydrationTasks.cancelAll()

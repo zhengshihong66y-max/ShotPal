@@ -849,8 +849,7 @@ extension LibraryStore {
             musicsByVideoPath.removeValue(forKey: path)
             musicDetectionStatusByVideoPath.removeValue(forKey: path)
             localMusicWaveformSamplesByPath.removeValue(forKey: path)
-            localMusicWaveformTasks[path]?.cancel()
-            localMusicWaveformTasks[path] = nil
+            localMusicWaveformTasks.cancel(path)
             localMusicWaveformRenderingPaths.remove(path)
             localMusicWaveformQueuedPaths.remove(path)
             queuedLocalMusicWaveformAssets.removeAll { $0.filePath == path }

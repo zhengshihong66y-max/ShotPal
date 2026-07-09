@@ -308,8 +308,7 @@ extension LibraryStore {
         frameStripTasks.cancelAll()
         musicDownloadBatchTask?.cancel()
         musicDownloadBatchTask = nil
-        musicDownloadTasks.values.forEach { $0.cancel() }
-        musicDownloadTasks.removeAll()
+        musicDownloadTasks.cancelAll()
         loadTagsJSON()
         loadSourceInfoJSON()
         applyPendingVideoPathMigrationToLoadedMetadata()
@@ -1783,8 +1782,7 @@ extension LibraryStore {
         transcriptExports.removeAll { $0.videoPath == path }
         let removedAudioClipIDs = Set(audioClips.filter { $0.videoPath == path }.map(\.id))
         for clipID in removedAudioClipIDs {
-            audioClipWaveformTasks[clipID]?.cancel()
-            audioClipWaveformTasks[clipID] = nil
+            audioClipWaveformTasks.cancel(clipID)
         }
         pendingAudioClipWaveformIDSet.subtract(removedAudioClipIDs)
         pendingAudioClipWaveformIDs.removeAll { removedAudioClipIDs.contains($0) }

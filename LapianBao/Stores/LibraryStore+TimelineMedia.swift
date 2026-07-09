@@ -96,7 +96,7 @@ extension LibraryStore {
 
     func loadAudioClipWaveformIfNeeded(_ clip: AudioClipItem) {
         guard !hasCurrentAudioClipWaveform(clip),
-              audioClipWaveformTasks[clip.id] == nil
+              !audioClipWaveformTasks.isRunning(clip.id)
         else { return }
 
         if pendingAudioClipWaveformIDSet.contains(clip.id) {
@@ -121,7 +121,7 @@ extension LibraryStore {
 
             guard let clip = audioClips.first(where: { $0.id == clipID }),
                   !hasCurrentAudioClipWaveform(clip),
-                  audioClipWaveformTasks[clipID] == nil
+                  !audioClipWaveformTasks.isRunning(clipID)
             else { continue }
 
             let clipFileURL = audioClipFileURL(for: clip)
@@ -129,7 +129,7 @@ extension LibraryStore {
             let start = clipFileURL == nil ? clip.inTime : nil
             let end = clipFileURL == nil ? clip.outTime : nil
 
-            let task = Task.detached(priority: .utility) { [weak self, clipID, url, start, end] in
+            audioClipWaveformTasks.startDetached(clipID, priority: .utility) { [weak self, clipID, url, start, end] in
                 let samples = await Self.makeWaveformSamples(
                     for: url,
                     sampleCount: Self.audioClipWaveformSampleCount,
@@ -142,13 +142,11 @@ extension LibraryStore {
                     self?.finishAudioClipWaveform(id: clipID, samples: samples)
                 }
             }
-            audioClipWaveformTasks[clipID] = task
         }
     }
 
     func finishAudioClipWaveform(id: UUID, samples: [Double]) {
-        guard audioClipWaveformTasks[id] != nil else { return }
-        audioClipWaveformTasks[id] = nil
+        guard audioClipWaveformTasks.finish(id) else { return }
         setAudioClipWaveform(id: id, samples: samples)
         startQueuedAudioClipWaveforms()
     }
@@ -229,7 +227,7 @@ extension LibraryStore {
         for asset in assets {
             let path = asset.filePath
             guard shouldGenerateLocalMusicWaveform(for: asset),
-                  localMusicWaveformTasks[path] == nil,
+                  !localMusicWaveformTasks.isRunning(path),
                   !localMusicWaveformQueuedPaths.contains(path)
             else { continue }
 
@@ -254,7 +252,7 @@ extension LibraryStore {
                   currentAsset.fileSize == queuedAsset.fileSize,
                   currentAsset.modifiedAt == queuedAsset.modifiedAt,
                   shouldGenerateLocalMusicWaveform(for: currentAsset),
-                  localMusicWaveformTasks[currentAsset.filePath] == nil
+                  !localMusicWaveformTasks.isRunning(currentAsset.filePath)
             else { continue }
 
             startLocalMusicWaveformTask(for: currentAsset)
@@ -349,10 +347,7 @@ extension LibraryStore {
         localWaveformCacheHydrationTask = nil
         isHydratingLocalWaveformCache = false
 
-        for task in localMusicWaveformTasks.values {
-            task.cancel()
-        }
-        localMusicWaveformTasks.removeAll()
+        localMusicWaveformTasks.cancelAll()
         localMusicWaveformRenderingPaths.removeAll()
         localMusicWaveformQueuedPaths.removeAll()
         queuedLocalMusicWaveformAssets.removeAll()
@@ -571,14 +566,14 @@ extension LibraryStore {
 
         localMusicWaveformRenderingPaths.insert(path)
         localMusicWaveformProgressByPath[path] = 0
-        localMusicWaveformTasks[path] = Task.detached(priority: .utility) { [weak self, fileURL, path, libraryURL, fileSize, modifiedAt] in
+        localMusicWaveformTasks.startDetached(path, priority: .utility) { [weak self, fileURL, path, libraryURL, fileSize, modifiedAt] in
             guard let store = self else { return }
             let samples = await Self.makeWaveformSamples(
                 for: fileURL,
                 sampleCount: Self.localMusicWaveformSampleCount
             ) { progress in
                 Task { @MainActor [weak store] in
-                    guard let store, store.localMusicWaveformTasks[path] != nil else { return }
+                    guard let store, store.localMusicWaveformTasks.isRunning(path) else { return }
                     store.localMusicWaveformProgressByPath[path] = progress
                 }
             } ?? []
@@ -586,7 +581,7 @@ extension LibraryStore {
 
             await MainActor.run { [weak store] in
                 guard let store else { return }
-                store.localMusicWaveformTasks[path] = nil
+                store.localMusicWaveformTasks.finish(path)
                 store.localMusicWaveformRenderingPaths.remove(path)
                 store.localMusicWaveformProgressByPath.removeValue(forKey: path)
                 defer { store.startQueuedLocalMusicWaveforms() }
@@ -1431,8 +1426,7 @@ extension LibraryStore {
     func deleteAudioClip(_ clip: AudioClipItem) -> Bool {
         guard trashLibraryFileIfPresent(audioClipFileURL(for: clip), context: "audio clip export") else { return false }
 
-        audioClipWaveformTasks[clip.id]?.cancel()
-        audioClipWaveformTasks[clip.id] = nil
+        audioClipWaveformTasks.cancel(clip.id)
         pendingAudioClipWaveformIDSet.remove(clip.id)
         pendingAudioClipWaveformIDs.removeAll { $0 == clip.id }
         audioClips.removeAll { $0.id == clip.id }
