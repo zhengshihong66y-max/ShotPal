@@ -31,18 +31,17 @@ extension LibraryStore {
     func loadWaveform(for video: VideoItem) {
         let path = video.url.path
         noteTransientMediaAccess(for: path)
-        guard waveformTasks[path] == nil else { return }
+        guard !waveformTasks.isRunning(path) else { return }
         if let samples = waveformSamplesByVideoPath[path], samples.count >= Self.waveformSampleCount {
             return
         }
 
-        waveformTasks[path] = Task { [weak self] in
+        waveformTasks.start(path) { [weak self] in
             let samples = await Self.makeWaveformSamples(for: video.url, sampleCount: Self.waveformSampleCount) ?? []
             guard !Task.isCancelled else { return }
 
             self?.noteTransientMediaAccess(for: path)
             self?.waveformSamplesByVideoPath[path] = samples
-            self?.waveformTasks[path] = nil
             PerformanceDiagnostics.mark("waveform ready", path: path)
         }
     }

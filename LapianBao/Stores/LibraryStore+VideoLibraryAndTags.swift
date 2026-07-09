@@ -1768,8 +1768,7 @@ extension LibraryStore {
         thumbnailImageAccessTickByPath.removeValue(forKey: path)
         durationByVideoPath.removeValue(forKey: path)
         playbackSupportByVideoPath.removeValue(forKey: path)
-        waveformTasks[path]?.cancel()
-        waveformTasks[path] = nil
+        waveformTasks.cancel(path)
         waveformSamplesByVideoPath.removeValue(forKey: path)
         frameStripTasks[path]?.cancel()
         frameStripTasks[path] = nil

@@ -241,7 +241,7 @@ final class LibraryStore: ObservableObject {
     var videoSourcePlatformCache: [String: String?] = [:]
     var videoSourceAuthorCache: [String: String?] = [:]
     var videoSourceTitleCache: [String: String?] = [:]
-    var waveformTasks: [String: Task<Void, Never>] = [:]
+    let waveformTasks = KeyedTaskRunner<String>()
     var audioClipWaveformTasks: [UUID: Task<Void, Never>] = [:]
     var pendingAudioClipWaveformIDs: [UUID] = []
     var pendingAudioClipWaveformIDSet = Set<UUID>()
