@@ -399,7 +399,6 @@ extension PreviewPanelView {
                     }
                 }
 
-                Spacer()
                 AnnotationEditorActionButton(
                     title: "取消",
                     role: .secondary,
@@ -416,6 +415,7 @@ extension PreviewPanelView {
                     saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)
                 }
             }
+            .frame(maxWidth: .infinity)
             .frame(height: AnnotationEditorActionButton.height)
             .zIndex(2)
         }
@@ -531,75 +531,113 @@ private struct AnnotationEditorActionButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .foregroundStyle(foreground)
-                .frame(minWidth: 56)
-                .frame(height: Self.height)
-                .padding(.horizontal, 4)
-                .background(background)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(AnnotationEditorHitTargetButtonStyle())
+        AnnotationEditorNativeActionButton(
+            title: title,
+            role: role,
+            accessibilityIdentifier: accessibilityIdentifier,
+            action: action
+        )
+        .frame(minWidth: 64)
+        .frame(maxWidth: .infinity)
+        .frame(height: Self.height)
         .accessibilityLabel(title)
         .accessibilityIdentifier(accessibilityIdentifier)
         .accessibilityAction(named: Text(title), action)
     }
 
-    private var foreground: Color {
-        switch role {
-        case .primary:
-            return .white.opacity(0.96)
-        case .secondary:
-            return .white.opacity(0.78)
-        case .destructive:
-            return .red.opacity(0.9)
-        }
+}
+
+private struct AnnotationEditorNativeActionButton: NSViewRepresentable {
+    let title: String
+    let role: AnnotationEditorActionButton.Role
+    let accessibilityIdentifier: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
     }
 
-    @ViewBuilder
-    private var background: some View {
-        switch role {
-        case .primary:
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Design.annotationAccent.opacity(0.34))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Design.annotationAccent.opacity(0.36), lineWidth: 0.8)
-                        .allowsHitTesting(false)
-                }
-        case .secondary:
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(.white.opacity(0.08))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(.white.opacity(0.12), lineWidth: 0.8)
-                        .allowsHitTesting(false)
-                }
-        case .destructive:
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(.red.opacity(0.12))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(.red.opacity(0.18), lineWidth: 0.8)
-                        .allowsHitTesting(false)
-                }
+    func makeNSView(context: Context) -> AnnotationEditorNSButton {
+        let button = AnnotationEditorNSButton()
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.performAction)
+        button.setButtonType(.momentaryPushIn)
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.focusRingType = .none
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 7
+        button.layer?.masksToBounds = true
+        button.setAccessibilityRole(.button)
+        updateButton(button, context: context)
+        return button
+    }
+
+    func updateNSView(_ button: AnnotationEditorNSButton, context: Context) {
+        context.coordinator.action = action
+        updateButton(button, context: context)
+    }
+
+    private func updateButton(_ button: AnnotationEditorNSButton, context: Context) {
+        let colors = role.colors
+        button.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: colors.foreground
+            ]
+        )
+        button.alignment = .center
+        button.layer?.backgroundColor = colors.background.cgColor
+        button.layer?.borderColor = colors.border.cgColor
+        button.layer?.borderWidth = 0.8
+        button.setAccessibilityIdentifier(accessibilityIdentifier)
+        button.setAccessibilityLabel(title)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func performAction() {
+            action()
         }
     }
 }
 
-private struct AnnotationEditorHitTargetButtonStyle: PrimitiveButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .contentShape(Rectangle())
-            .highPriorityGesture(
-                TapGesture().onEnded {
-                    configuration.trigger()
-                }
+private final class AnnotationEditorNSButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: max(64, super.intrinsicContentSize.width + 10), height: AnnotationEditorActionButton.height)
+    }
+}
+
+private extension AnnotationEditorActionButton.Role {
+    var colors: (foreground: NSColor, background: NSColor, border: NSColor) {
+        switch self {
+        case .primary:
+            return (
+                NSColor.white.withAlphaComponent(0.96),
+                NSColor(red: 0.68, green: 0.72, blue: 0.72, alpha: 0.34),
+                NSColor(red: 0.68, green: 0.72, blue: 0.72, alpha: 0.36)
             )
+        case .secondary:
+            return (
+                NSColor.white.withAlphaComponent(0.78),
+                NSColor.white.withAlphaComponent(0.08),
+                NSColor.white.withAlphaComponent(0.12)
+            )
+        case .destructive:
+            return (
+                NSColor.systemRed.withAlphaComponent(0.9),
+                NSColor.systemRed.withAlphaComponent(0.12),
+                NSColor.systemRed.withAlphaComponent(0.18)
+            )
+        }
     }
 }
 

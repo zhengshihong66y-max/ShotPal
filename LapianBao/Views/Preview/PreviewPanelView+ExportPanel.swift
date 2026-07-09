@@ -413,40 +413,41 @@ extension PreviewPanelView {
     func exportFrameRow(_ frame: SampledFrame, showsMetadata: Bool = true, highlightIntensity: Double = 0) -> some View {
         let title = exportFrameDisplayTitle(for: frame)
         let highlight = min(1, max(0, highlightIntensity))
+        let dragProvider = {
+            libraryStore.savedFrameImageProvider(for: frame)
+        }
 
         return HStack(spacing: 9) {
-            Button {
-                jumpToExportLocation(path: frame.videoPath, time: frame.time)
-            } label: {
-                HStack(spacing: 9) {
-                    exportFramePreview(
-                        image: libraryStore.thumbnailImage(for: frame),
-                        showsMetadata: showsMetadata
-                    )
+            HStack(spacing: 9) {
+                exportFramePreview(
+                    image: libraryStore.thumbnailImage(for: frame),
+                    showsMetadata: showsMetadata
+                )
 
-                    if showsMetadata {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.86))
-                                .lineLimit(2)
-                                .truncationMode(.tail)
-                                .multilineTextAlignment(.leading)
-                                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                if showsMetadata {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.86))
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
 
-                            Spacer(minLength: 4)
+                        Spacer(minLength: 4)
 
-                            exportFrameTagPreview(for: frame)
-                        }
-                        .frame(height: Self.exportRowContentHeight, alignment: .top)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        exportFrameTagPreview(for: frame)
                     }
+                    .frame(height: Self.exportRowContentHeight, alignment: .top)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(height: Self.exportRowContentHeight, alignment: .center)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .frame(height: Self.exportRowContentHeight, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .highPriorityGesture(TapGesture().onEnded {
+                jumpToExportLocation(path: frame.videoPath, time: frame.time)
+            })
             .accessibilityLabel("跳到这张画面")
             .accessibilityIdentifier("export_frame_row_\(frame.id.uuidString)")
 
@@ -474,9 +475,8 @@ extension PreviewPanelView {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(exportRowStrokeColor(highlightIntensity: highlight, fallback: .white.opacity(0.07)), lineWidth: 0.8 + 0.4 * highlight)
         }
-        .fullResolutionImageDrag {
-            libraryStore.fullResolutionFrameProvider(for: frame)
-        }
+        .itemProviderDrag(dragProvider)
+        .accessibilityIdentifier("export_frame_drag_row_\(frame.id.uuidString)")
     }
 
     func exportFramePreview(image: NSImage?, showsMetadata: Bool) -> some View {
@@ -706,6 +706,7 @@ extension PreviewPanelView {
         let duration = max(0, clip.outTime - clip.inTime)
         let title = showsSource ? clip.videoName : audioClipTitle(index: index)
         let waveformHeight: CGFloat = showsSource ? 40 : 58
+        let dragProvider = audioClipDragProvider(for: clip)
 
         return HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: showsSource ? 3 : 4) {
@@ -738,10 +739,9 @@ extension PreviewPanelView {
             .frame(height: Self.exportRowContentHeight, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture {
+            .highPriorityGesture(TapGesture().onEnded {
                 toggleExportAudioClipPlayback(clip)
-            }
-            .itemProviderDrag(audioClipDragProvider(for: clip))
+            })
             .accessibilityLabel(isPlaying ? "暂停导出声音片段" : "播放导出声音片段")
             .accessibilityIdentifier("export_audio_row_\(clip.id.uuidString)")
 
@@ -770,7 +770,8 @@ extension PreviewPanelView {
         .onAppear {
             libraryStore.loadAudioClipWaveformIfNeeded(clip)
         }
-        .itemProviderDrag(audioClipDragProvider(for: clip))
+        .itemProviderDrag(dragProvider)
+        .accessibilityIdentifier("export_audio_drag_row_\(clip.id.uuidString)")
     }
 
     func exportTranscriptProgressRow(_ job: TranscriptExportJob, highlightIntensity: Double = 0) -> some View {
@@ -1261,7 +1262,8 @@ extension PreviewPanelView {
         hasher.combine(Int(contentWidth.rounded(.up)))
 
         for song in songs {
-            for job in musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id) where completedMusicFileURL(for: job) != nil {
+            for job in musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)
+                where libraryStore.completedMusicDownloadFileURL(for: job) != nil {
                 hasher.combine(job.id)
                 hasher.combine(job.filePath)
                 hasher.combine(exportMusicWaveformSamplesForRenderPrewarm(job)?.count ?? 0)
@@ -1281,7 +1283,7 @@ extension PreviewPanelView {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         return songs.flatMap { song in
             musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id).compactMap { job in
-                guard completedMusicFileURL(for: job) != nil else { return nil }
+                guard libraryStore.completedMusicDownloadFileURL(for: job) != nil else { return nil }
                 guard let samples = exportMusicWaveformSamplesForRenderPrewarm(job), !samples.isEmpty else { return nil }
                 return DownloadedMusicWaveformRenderPrewarmRequest(
                     samples: samples,

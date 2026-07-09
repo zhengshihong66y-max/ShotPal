@@ -97,6 +97,9 @@ extension ContentView {
                     }
             }
         }
+        .onAppear {
+            clearHiddenAuthorFilterState()
+        }
 
         if framed {
             content.contentPanel()
@@ -116,7 +119,7 @@ extension ContentView {
         libraryStore.libraryBrowserProjection(
             searchText: librarySearchText,
             selectedPlatforms: selectedLibraryPlatforms,
-            selectedAuthors: selectedLibraryAuthors
+            selectedAuthors: []
         )
     }
 
@@ -180,21 +183,6 @@ extension ContentView {
                     tint: VideoSourcePlatform.color(for: platform)
                 ) {
                     toggleLibraryPlatformFilter(platform)
-                }
-            }
-
-            librarySidebarFilterSection(
-                title: "作者",
-                values: metrics.authors,
-                emptyTitle: "暂无作者"
-            ) { author in
-                libraryCompactFilterChip(
-                    title: author,
-                    count: metrics.authorCounts[author, default: 0],
-                    isSelected: selectedLibraryAuthors.contains(author),
-                    tint: Design.annotationAccent
-                ) {
-                    toggleLibraryAuthorFilter(author)
                 }
             }
 
@@ -315,7 +303,7 @@ extension ContentView {
     }
 
     var selectedLibraryFilterCount: Int {
-        selectedLibraryPlatforms.count + selectedLibraryAuthors.count + libraryStore.selectedTags.count
+        selectedLibraryPlatforms.count + libraryStore.selectedTags.count
     }
 
     func libraryCompactFilterChip(
@@ -503,10 +491,6 @@ extension ContentView {
         isLibraryTagEditing = false
     }
 
-    func sourceAuthorName(for video: VideoItem) -> String? {
-        libraryStore.videoSourceAuthorName(for: video)
-    }
-
     func toggleLibraryPlatformFilter(_ platform: String) {
         if selectedLibraryPlatforms.contains(platform) {
             selectedLibraryPlatforms.remove(platform)
@@ -515,12 +499,11 @@ extension ContentView {
         }
     }
 
-    func toggleLibraryAuthorFilter(_ author: String) {
-        if selectedLibraryAuthors.contains(author) {
-            selectedLibraryAuthors.remove(author)
-        } else {
-            selectedLibraryAuthors.insert(author)
+    func clearHiddenAuthorFilterState() {
+        if !selectedLibraryAuthors.isEmpty {
+            selectedLibraryAuthors.removeAll()
         }
+        isTagFilterMenuPresented = false
     }
 
     var importDateVideoSections: [VideoDateSection] {
@@ -582,7 +565,9 @@ extension ContentView {
             }
         } label: {
             libraryToolbarIcon(
-                systemName: selectedLibraryFilterCount == 0 ? "tag" : "tag.fill",
+                systemName: selectedLibraryFilterCount == 0
+                    ? "line.3.horizontal.decrease.circle"
+                    : "line.3.horizontal.decrease.circle.fill",
                 size: 12,
                 tint: isLibrarySidebarFilterAreaPresented || selectedLibraryFilterCount > 0
                     ? Design.neutralStrongAccent

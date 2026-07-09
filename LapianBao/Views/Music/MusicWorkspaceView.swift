@@ -67,6 +67,7 @@ struct MusicWorkspaceView: View {
                         .padding(.bottom, 12)
                     }
                     .fadingVerticalScrollIndicators()
+                    .accessibilityIdentifier("music_workspace_scroll_view")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
@@ -841,6 +842,8 @@ struct MusicWorkspaceView: View {
                     )
                 }
 
+                Spacer(minLength: 0)
+
                 recognizedMusicActionColumn(asset: asset, fileURLs: downloadedFileURLs)
                     .frame(
                         width: MusicRowMetrics.sideActionWidth,
@@ -946,6 +949,8 @@ struct MusicWorkspaceView: View {
                         waveformHeight: MusicRowMetrics.waveformHeight
                     )
                 }
+
+                Spacer(minLength: 0)
 
                 localMusicActionColumn(group: group, fileURLs: fileURLs)
                     .frame(
@@ -1269,7 +1274,7 @@ struct MusicWorkspaceView: View {
     private func musicDownloadDragProvider(from jobs: [MusicDownloadJob]) -> (() -> NSItemProvider)? {
         let preferredJob = MusicDownloadJob.DownloadType.allCases.compactMap { type in
             jobs.first { job in
-                job.type == type && completedMusicFileURL(for: job) != nil
+                job.type == type && libraryStore.completedMusicDownloadFileURL(for: job) != nil
             }
         }
         .first

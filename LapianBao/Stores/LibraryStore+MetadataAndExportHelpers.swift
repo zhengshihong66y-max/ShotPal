@@ -1073,6 +1073,12 @@ extension LibraryStore {
         return await sceneThumbnailImage(from: generator, at: CMTime(seconds: max(0, seconds), preferredTimescale: 600))
     }
 
+    nonisolated static var sceneRepresentativeFrameTimeOffset: Double { 0.08 }
+
+    nonisolated static func sceneRepresentativeFrameTime(forCutTime cutTime: Double) -> Double {
+        max(0, cutTime + sceneRepresentativeFrameTimeOffset)
+    }
+
     nonisolated static func jpegData(from image: NSImage) -> Data? {
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let bitmap = NSBitmapImageRep(cgImage: cgImage)

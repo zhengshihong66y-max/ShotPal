@@ -238,11 +238,11 @@ struct MusicRecognitionActionColumn: View {
     }
 
     private var completedDownloadJobs: [MusicDownloadJob] {
-        downloadJobs.filter { completedMusicFileURL(for: $0) != nil }
+        downloadJobs.filter { completedFileURL(for: $0) != nil }
     }
 
     private var completedFileURLs: [URL] {
-        completedDownloadJobs.compactMap(completedMusicFileURL)
+        completedDownloadJobs.compactMap(completedFileURL)
     }
 
     var body: some View {
@@ -299,7 +299,7 @@ struct MusicRecognitionActionColumn: View {
             .buttonStyle(.plain)
             .contextMenu {
                 ForEach(completedDownloadJobs) { job in
-                    if let url = completedMusicFileURL(for: job) {
+                    if let url = completedFileURL(for: job) {
                         Button {
                             NSWorkspace.shared.activateFileViewerSelecting([url])
                         } label: {
@@ -323,6 +323,10 @@ struct MusicRecognitionActionColumn: View {
                 }
             }
         }
+    }
+
+    private func completedFileURL(for job: MusicDownloadJob) -> URL? {
+        libraryStore.completedMusicDownloadFileURL(for: job)
     }
 
     private func actionIcon(
@@ -349,6 +353,7 @@ struct MusicRecognitionActionColumn: View {
 
 struct ExportMusicRecognitionActionColumn: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @State private var isDownloadOptionsPresented = false
 
     let song: MusicRecognitionItem
     let downloadJobs: [MusicDownloadJob]
@@ -407,20 +412,9 @@ struct ExportMusicRecognitionActionColumn: View {
     }
 
     private var downloadMenu: some View {
-        Menu {
-            ForEach(MusicDownloadJob.DownloadType.allCases, id: \.self) { type in
-                let job = job(for: type)
-                let isDownloaded = completedFileURL(for: job) != nil
-
-                Button {
-                    libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)
-                } label: {
-                    Label(isDownloaded ? "已下载\(type.label)" : "下载\(type.label)", systemImage: "arrow.down.circle")
-                }
-                .accessibilityLabel(isDownloaded ? "已下载\(type.label)" : "下载\(type.label)")
-                .accessibilityIdentifier("export_music_download_\(musicDownloadTypeAccessibilityKey(type))_menu_item")
-                .disabled(isDownloaded)
-            }
+        Button {
+            guard !allDownloadsCompleted else { return }
+            isDownloadOptionsPresented.toggle()
         } label: {
             actionIcon(
                 "arrow.down.circle",
@@ -429,8 +423,7 @@ struct ExportMusicRecognitionActionColumn: View {
                 glyphHeight: 16
             )
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .frame(
             width: MusicRecognitionLayout.actionButtonSize,
             height: MusicRecognitionLayout.actionButtonSize
@@ -439,6 +432,39 @@ struct ExportMusicRecognitionActionColumn: View {
         .accessibilityLabel(allDownloadsCompleted ? "音乐下载已完成" : "选择下载音乐")
         .accessibilityIdentifier("export_music_download_menu_button")
         .disabled(allDownloadsCompleted)
+        .popover(isPresented: $isDownloadOptionsPresented, arrowEdge: .trailing) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(MusicDownloadJob.DownloadType.allCases, id: \.self) { type in
+                    downloadOptionButton(for: type)
+                }
+            }
+            .padding(8)
+            .frame(width: 154, alignment: .leading)
+        }
+    }
+
+    private func downloadOptionButton(for type: MusicDownloadJob.DownloadType) -> some View {
+        let job = job(for: type)
+        let isDownloaded = completedFileURL(for: job) != nil
+        let title = isDownloaded ? "已下载\(type.label)" : "下载\(type.label)"
+
+        return Button {
+            libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)
+            isDownloadOptionsPresented = false
+        } label: {
+            Label(title, systemImage: "arrow.down.circle")
+                .font(.caption.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(isDownloaded ? Color.clear : Color.primary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityLabel(title)
+        .accessibilityIdentifier("export_music_download_\(musicDownloadTypeAccessibilityKey(type))_menu_item")
+        .disabled(isDownloaded)
     }
 
     private func job(for type: MusicDownloadJob.DownloadType) -> MusicDownloadJob? {
@@ -482,7 +508,14 @@ struct ExportMusicRecognitionRow: View {
 
     var body: some View {
         let downloadJobs = musicDownloadJobs(for: song, in: libraryStore.musicDownloadJobs, recognitionID: song.id)
-        let rowDragProvider = musicDownloadRowDragProvider(from: downloadJobs)
+        let preferredDragJob = MusicDownloadJob.DownloadType.allCases.compactMap { type in
+            downloadJobs.first { job in
+                job.type == type && libraryStore.completedMusicDownloadFileURL(for: job) != nil
+            }
+        }
+        .first
+        let rowDragProvider = musicDownloadFileDragProvider(for: preferredDragJob)
+        let rowAccessibilityIdentifier = rowDragProvider == nil ? "export_music_row_\(song.id.uuidString)" : "export_music_drag_row_\(song.id.uuidString)"
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 9) {
@@ -510,6 +543,8 @@ struct ExportMusicRecognitionRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .itemProviderDrag(rowDragProvider)
+                .accessibilityIdentifier(rowAccessibilityIdentifier)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 ExportMusicRecognitionActionColumn(song: song, downloadJobs: downloadJobs)
@@ -522,6 +557,7 @@ struct ExportMusicRecognitionRow: View {
         .background(.white.opacity(0.055))
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .itemProviderDrag(rowDragProvider)
+        .accessibilityIdentifier(rowAccessibilityIdentifier)
     }
 
     private var artwork: some View {
@@ -622,12 +658,23 @@ nonisolated func musicDownloadJobs(
 }
 
 struct MusicDownloadExtensionStack: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+
     let downloadJobs: [MusicDownloadJob]
 
+    private var visibleDownloadJobs: [MusicDownloadJob] {
+        downloadJobs.filter { job in
+            if case .succeeded = job.status {
+                return libraryStore.completedMusicDownloadFileURL(for: job) != nil
+            }
+            return true
+        }
+    }
+
     var body: some View {
-        if !downloadJobs.isEmpty {
+        if !visibleDownloadJobs.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
-                ForEach(downloadJobs) { job in
+                ForEach(visibleDownloadJobs) { job in
                     MusicDownloadStatusView(job: job, isCompact: true)
                 }
             }
@@ -664,7 +711,7 @@ struct MusicDownloadControlsAndWaveform: View {
     }
 
     private var selectedJobIsDownloaded: Bool {
-        completedMusicFileURL(for: selectedJob) != nil
+        completedFileURL(for: selectedJob) != nil
     }
 
     private var selectedLocalAssetDuration: Double {
@@ -702,8 +749,8 @@ struct MusicDownloadControlsAndWaveform: View {
     }
 
     private var preferredType: MusicDownloadJob.DownloadType {
-        if completedMusicFileURL(for: job(for: .original)) != nil { return .original }
-        if completedMusicFileURL(for: job(for: .instrumental)) != nil { return .instrumental }
+        if completedFileURL(for: job(for: .original)) != nil { return .original }
+        if completedFileURL(for: job(for: .instrumental)) != nil { return .instrumental }
         if job(for: .original) != nil { return .original }
         if job(for: .instrumental) != nil { return .instrumental }
         return .original
@@ -805,6 +852,20 @@ struct MusicDownloadControlsAndWaveform: View {
         downloadJobs.first { $0.type == type }
     }
 
+    private func completedFileURL(for job: MusicDownloadJob?) -> URL? {
+        guard let job else { return nil }
+        return libraryStore.completedMusicDownloadFileURL(for: job)
+    }
+
+    private func displayJob(for job: MusicDownloadJob?, isDownloaded: Bool) -> MusicDownloadJob? {
+        guard let job else { return nil }
+        if isDownloaded { return job }
+        if case .succeeded = job.status {
+            return nil
+        }
+        return job
+    }
+
     private func syncSelectionIfNeeded(force: Bool) {
         if force || selectedJob == nil {
             let nextType = preferredType
@@ -817,14 +878,14 @@ struct MusicDownloadControlsAndWaveform: View {
 
         let preferredJob = job(for: preferredType)
         let selectedJobIsActive = selectedJob.map { LibraryStore.isActiveDownloadStatus($0.status) } ?? false
-        if completedMusicFileURL(for: preferredJob) != nil, !selectedJobIsDownloaded, !selectedJobIsActive {
+        if completedFileURL(for: preferredJob) != nil, !selectedJobIsDownloaded, !selectedJobIsActive {
             selectedAudioTimeText = nil
             selectedType = preferredType
         }
     }
 
     private func requestDownloadedMediaInfoIfNeeded() {
-        for job in downloadJobs where completedMusicFileURL(for: job) != nil {
+        for job in downloadJobs where completedFileURL(for: job) != nil {
             if let filePath = job.filePath {
                 libraryStore.ensureMusicFileDurationIfNeeded(filePath: filePath)
             }
@@ -835,9 +896,10 @@ struct MusicDownloadControlsAndWaveform: View {
         type: MusicDownloadJob.DownloadType,
         job: MusicDownloadJob?
     ) -> some View {
-        let isDownloaded = completedMusicFileURL(for: job) != nil
+        let isDownloaded = completedFileURL(for: job) != nil
         let isActive = job.map { LibraryStore.isActiveDownloadStatus($0.status) } ?? false
         let isPreviewing = job.map { libraryStore.activeMusicPreviewJobID == $0.id } ?? false
+        let displayJob = displayJob(for: job, isDownloaded: isDownloaded)
         let textOpacity: Double = isPreviewing ? 0.94 : (isActive ? 0.82 : (isDownloaded ? 0.74 : 0.56))
         let fillOpacity: Double = isPreviewing ? 0.16 : (isActive ? 0.09 : (isDownloaded ? 0.075 : 0.045))
         let strokeOpacity: Double = isPreviewing ? 0.26 : (isActive ? 0.13 : (isDownloaded ? 0.12 : 0.07))
@@ -855,9 +917,9 @@ struct MusicDownloadControlsAndWaveform: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: job))
+                Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: displayJob))
                     .font(.system(size: 11, weight: .semibold))
-                Text(musicDownloadTitle(type: type, job: job))
+                Text(musicDownloadTitle(type: type, job: displayJob))
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
@@ -872,10 +934,10 @@ struct MusicDownloadControlsAndWaveform: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isPreviewing ? "暂停已下载\(type.label)" : musicDownloadHelp(type: type, job: job))
+        .accessibilityLabel(isPreviewing ? "暂停已下载\(type.label)" : musicDownloadHelp(type: type, job: displayJob))
         .accessibilityIdentifier("music_download_\(musicDownloadTypeAccessibilityKey(type))_button")
         .contextMenu {
-            if let url = completedMusicFileURL(for: job) {
+            if let url = completedFileURL(for: job) {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 } label: {
@@ -919,7 +981,8 @@ struct MusicDownloadWaveformPanel: View {
     }
 
     private var previewFileURL: URL? {
-        completedMusicFileURL(for: job)
+        guard let job else { return nil }
+        return libraryStore.completedMusicDownloadFileURL(for: job)
     }
 
     private var canPreviewAudio: Bool {
@@ -1428,7 +1491,7 @@ struct MusicDownloadStatusView: View {
     @State private var loadedAudioDuration: Double = 0
 
     private var previewFileURL: URL? {
-        completedMusicFileURL(for: job)
+        libraryStore.completedMusicDownloadFileURL(for: job)
     }
 
     private var canPreviewAudio: Bool {
@@ -1501,6 +1564,22 @@ struct MusicDownloadStatusView: View {
         return musicPreviewTimeText(duration: duration, progress: progress, isActive: isPreviewActive)
     }
 
+    private func localMusicAsset(for job: MusicDownloadJob) -> LocalMusicAsset? {
+        guard let filePath = job.filePath else { return nil }
+        let normalizedPath = LibraryStore.normalizedLocalFilePath(filePath)
+        return libraryStore.localMusicAssets.first {
+            LibraryStore.normalizedLocalFilePath($0.filePath) == normalizedPath
+        }
+    }
+
+    private func waveformSamples(for job: MusicDownloadJob) -> [Double]? {
+        if let samples = job.waveformSamples, !samples.isEmpty {
+            return samples
+        }
+        guard let localAsset = localMusicAsset(for: job) else { return nil }
+        return libraryStore.localMusicWaveformSamplesByPath[localAsset.filePath]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: isCompact ? 5 : 7) {
             switch job.status {
@@ -1562,16 +1641,7 @@ struct MusicDownloadStatusView: View {
                     }
                 }
 
-                if job.isPreparingWaveform {
-                    GenerationProgressRow(
-                        message: "正在生成波形",
-                        progress: nil,
-                        tint: .white,
-                        systemImage: "waveform",
-                        compact: true,
-                        showPercent: false
-                    )
-                } else if let samples = job.waveformSamples, !samples.isEmpty {
+                if let samples = waveformSamples(for: job), !samples.isEmpty {
                     DownloadedMusicWaveformView(
                         samples: samples,
                         isCompact: isCompact,
@@ -1590,6 +1660,15 @@ struct MusicDownloadStatusView: View {
                             previewProgress = progress
                             seekAudioPreview(to: progress)
                         }
+                    )
+                } else if job.isPreparingWaveform {
+                    GenerationProgressRow(
+                        message: "正在生成波形",
+                        progress: nil,
+                        tint: .white,
+                        systemImage: "waveform",
+                        compact: true,
+                        showPercent: false
                     )
                 }
             case let .failed(message):
@@ -1701,7 +1780,7 @@ struct MusicDownloadStatusView: View {
     }
 
     private func requestDownloadedMediaInfoIfNeeded() {
-        guard completedMusicFileURL(for: job) != nil else { return }
+        guard libraryStore.completedMusicDownloadFileURL(for: job) != nil else { return }
         libraryStore.ensureMusicDownloadWaveformIfNeeded(job)
         if let filePath = job.filePath {
             libraryStore.ensureMusicFileDurationIfNeeded(filePath: filePath)
@@ -1939,41 +2018,48 @@ struct DownloadedMusicWaveformView: View {
         let cache = DownloadedMusicWaveformRenderCache.shared
         let _ = cacheRenderRevision
 
-        if
-            displaySize.width > 0,
-            displaySize.height > 0,
-            let baseImage = cache.cachedMemoryImage(
-                for: displaySamples,
-                signature: sampleSignature,
-                size: renderSize,
-                scale: scale,
-                isCompact: isCompact,
-                layer: isActive ? .activeBase : .inactiveBase
-            )
-        {
+        let preferredBaseLayer: DownloadedMusicWaveformRenderLayer = isActive ? .activeBase : .inactiveBase
+        let baseImage = cache.cachedMemoryImage(
+            for: displaySamples,
+            signature: sampleSignature,
+            size: renderSize,
+            scale: scale,
+            isCompact: isCompact,
+            layer: preferredBaseLayer
+        ) ?? (isActive ? cache.cachedMemoryImage(
+            for: displaySamples,
+            signature: sampleSignature,
+            size: renderSize,
+            scale: scale,
+            isCompact: isCompact,
+            layer: .inactiveBase
+        ) : nil)
+
+        if displaySize.width > 0,
+           displaySize.height > 0,
+           let baseImage {
             ZStack(alignment: .leading) {
                 Image(decorative: baseImage.cgImage, scale: baseImage.scale, orientation: .up)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: displaySize.width, height: displaySize.height)
 
-                if
-                    isActive,
-                    let playedImage = cache.cachedMemoryImage(
+                if isActive {
+                    if let playedImage = cache.cachedMemoryImage(
                         for: displaySamples,
                         signature: sampleSignature,
                         size: renderSize,
                         scale: scale,
                         isCompact: isCompact,
                         layer: .activePlayed
-                    )
-                {
-                    Image(decorative: playedImage.cgImage, scale: playedImage.scale, orientation: .up)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: displaySize.width, height: displaySize.height)
-                        .frame(width: displaySize.width * CGFloat(clampedProgress), alignment: .leading)
-                        .clipped()
+                    ) {
+                        Image(decorative: playedImage.cgImage, scale: playedImage.scale, orientation: .up)
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: displaySize.width, height: displaySize.height)
+                            .frame(width: displaySize.width * CGFloat(clampedProgress), alignment: .leading)
+                            .clipped()
+                    }
 
                     RoundedRectangle(cornerRadius: 1, style: .continuous)
                         .fill(Color.white.opacity(0.96))

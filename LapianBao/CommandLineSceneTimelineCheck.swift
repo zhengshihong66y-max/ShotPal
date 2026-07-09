@@ -66,6 +66,9 @@ enum CommandLineSceneTimelineCheck {
             sceneImageCount: 16,
             frameImageCount: 16
         )
+        let sceneRepresentativeDragUsesPreviewFrame = abs(
+            LibraryStore.sceneRepresentativeFrameTime(forCutTime: 2.0) - 2.08
+        ) < 0.0001
         let succeeded = zeroBoundaryFiltered
             && progressGenerated
             && splitTimelineUsesFrameFallback
@@ -74,9 +77,10 @@ enum CommandLineSceneTimelineCheck {
             && denseTimelineUsesMaxZoom
             && clusteredTimelineUsesActualSceneBoundary
             && emptyCutsDoNotSplit
+            && sceneRepresentativeDragUsesPreviewFrame
 
         let report = """
-        {"status":"\(succeeded ? "succeeded" : "failed")","progresses":\(progresses),"zeroBoundaryFiltered":\(zeroBoundaryFiltered),"splitTimelineUsesFrameFallback":\(splitTimelineUsesFrameFallback),"splitTimelineDoesNotRequireExactSceneImages":\(splitTimelineDoesNotRequireExactSceneImages),"openingZoomUsesFifteenSceneWindow":\(openingZoomUsesFifteenSceneWindow),"denseTimelineUsesMaxZoom":\(denseTimelineUsesMaxZoom),"clusteredTimelineUsesActualSceneBoundary":\(clusteredTimelineUsesActualSceneBoundary)}
+        {"status":"\(succeeded ? "succeeded" : "failed")","progresses":\(progresses),"zeroBoundaryFiltered":\(zeroBoundaryFiltered),"splitTimelineUsesFrameFallback":\(splitTimelineUsesFrameFallback),"splitTimelineDoesNotRequireExactSceneImages":\(splitTimelineDoesNotRequireExactSceneImages),"openingZoomUsesFifteenSceneWindow":\(openingZoomUsesFifteenSceneWindow),"denseTimelineUsesMaxZoom":\(denseTimelineUsesMaxZoom),"clusteredTimelineUsesActualSceneBoundary":\(clusteredTimelineUsesActualSceneBoundary),"sceneRepresentativeDragUsesPreviewFrame":\(sceneRepresentativeDragUsesPreviewFrame)}
         """
         FileHandle.standardOutput.write(Data(report.utf8))
         FileHandle.standardOutput.write(Data("\n".utf8))

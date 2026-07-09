@@ -108,81 +108,6 @@ struct SavedFrameImagePreview: View {
     }
 }
 
-private struct FrameBoardImageTile<OverlayControl: View>: View {
-    let image: NSImage?
-    var numberText: String? = nil
-    let onTap: () -> Void
-    let dragItemProvider: (() -> NSItemProvider)?
-    @ViewBuilder let overlayControl: (_ isHovered: Bool) -> OverlayControl
-
-    @State private var isHovered = false
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Button(action: onTap) {
-                GeometryReader { proxy in
-                    ZStack(alignment: .bottomLeading) {
-                        imageContent
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
-
-                        if let numberText, !numberText.isEmpty {
-                            LinearGradient(
-                                colors: [.clear, .black.opacity(0.56)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                            .frame(height: 48)
-                            .frame(maxHeight: .infinity, alignment: .bottom)
-                            .allowsHitTesting(false)
-
-                            Text(numberText)
-                                .font(Design.numericFont(size: 13, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.96))
-                                .shadow(color: .black.opacity(0.72), radius: 2, y: 1)
-                                .padding(.leading, 9)
-                                .padding(.bottom, 7)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                        }
-                    }
-                }
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(tileShape)
-            }
-            .buttonStyle(.plain)
-            .fullResolutionImageDrag(dragItemProvider)
-
-            overlayControl(isHovered)
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
-                .animation(.easeInOut(duration: 0.12), value: isHovered)
-                .padding(8)
-        }
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.12)) {
-                isHovered = hovering
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    @ViewBuilder
-    private var imageContent: some View {
-        if let image {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.medium)
-                .scaledToFill()
-        } else {
-            Color.black.opacity(0.26)
-        }
-    }
-
-    private var tileShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
-    }
-}
-
 private struct FrameCardTagMenuButton: View {
     let tags: [String]
     let suggestedTags: [String]
@@ -692,6 +617,7 @@ struct FramesWorkspaceView: View {
         }
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
+        .accessibilityIdentifier("frames_tag_filter_chip_\(frameTagAccessibilityKey(title))")
     }
 
     private func editableFrameTagFilterChip(
@@ -787,6 +713,18 @@ struct FramesWorkspaceView: View {
 
     private func frameTagFilterNSForeground(isSelected: Bool) -> NSColor {
         isSelected ? NSColor.white.withAlphaComponent(0.94) : .secondaryLabelColor
+    }
+
+    private func frameTagAccessibilityKey(_ tag: String) -> String {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in normalized.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
     }
 
     @ViewBuilder
@@ -1568,6 +1506,7 @@ struct FramesWorkspaceView: View {
                 onDelete: { deleteFrame(frame) }
             )
         }
+        .accessibilityIdentifier("frames_collection_frame_tile")
     }
 
     private func showFrameInFinder(_ frame: SampledFrame) {
@@ -1589,16 +1528,24 @@ struct FramesWorkspaceView: View {
 
     private func presentFrameDetail(_ frame: SampledFrame) {
         stopDetailPlayback()
+        let currentFrame = latestFrame(frame)
+        prepareDetailPlayback(for: video(for: currentFrame.videoPath))
         detailStoryboardItem = nil
-        selectedFrameID = frame.id
-        detailFrame = latestFrame(frame)
+        selectedFrameID = currentFrame.id
+        detailFrame = currentFrame
     }
 
     private func presentStoryboardDetail(_ item: FrameStoryboardItem) {
         stopDetailPlayback()
+        prepareDetailPlayback(for: item.video)
         selectedFrameID = nil
         detailFrame = nil
         detailStoryboardItem = item
+    }
+
+    private func prepareDetailPlayback(for video: VideoItem) {
+        previewController.libraryStore = libraryStore
+        libraryStore.loadCachedSceneCuts(for: video)
     }
 
     private func storyboardCardTitle(for item: FrameStoryboardItem, index: Int) -> String {
@@ -1615,6 +1562,24 @@ struct FramesWorkspaceView: View {
                 Color.black.opacity(0.44)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: dismiss)
+
+                VStack {
+                    HStack {
+                        Button(action: dismiss) {
+                            Color.clear
+                                .frame(width: 36, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("关闭图片详情")
+                        .accessibilityIdentifier("frame_detail_dismiss_hotspot")
+
+                        Spacer(minLength: 0)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, Design.railWidth + 18)
+                .padding(.top, 18)
 
                 content()
             }
@@ -1783,12 +1748,14 @@ struct FramesWorkspaceView: View {
                 frameDetailIconButton(
                     systemName: "arrowshape.turn.up.left.fill",
                     accessibilityLabel: "回到原视频位置",
+                    accessibilityIdentifier: "frame_detail_jump_to_video_button",
                     action: onJumpToVideo
                 )
 
                 frameDetailIconButton(
                     systemName: "folder",
                     accessibilityLabel: "在访达中显示",
+                    accessibilityIdentifier: "frame_detail_show_in_finder_button",
                     action: onShowInFinder
                 )
             }
@@ -1805,12 +1772,14 @@ struct FramesWorkspaceView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isPlaying ? "暂停播放" : "播放")
+            .accessibilityIdentifier("frame_detail_play_button")
             .frame(maxWidth: .infinity, alignment: .center)
 
             HStack {
                 frameDetailIconButton(
                     systemName: "trash",
                     accessibilityLabel: "删除图片",
+                    accessibilityIdentifier: "frame_detail_delete_button",
                     tint: .red.opacity(0.92),
                     action: onDelete
                 )
@@ -1824,6 +1793,7 @@ struct FramesWorkspaceView: View {
     private func frameDetailIconButton(
         systemName: String,
         accessibilityLabel: String,
+        accessibilityIdentifier: String,
         tint: Color = .white.opacity(0.86),
         action: (() -> Void)?
     ) -> some View {
@@ -1841,6 +1811,7 @@ struct FramesWorkspaceView: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 
     private func selectedFrameDetailPreview(_ frame: SampledFrame, fallbackImage: NSImage? = nil) -> some View {
@@ -2019,9 +1990,9 @@ struct FramesWorkspaceView: View {
         } else {
             fallback()
                 .contentShape(Rectangle())
-                .onTapGesture {
+                .highPriorityGesture(TapGesture().onEnded {
                     playDetailSegment(video: video, startTime: startTime, key: key)
-                }
+                })
         }
     }
 
@@ -2048,8 +2019,7 @@ struct FramesWorkspaceView: View {
     }
 
     private func playDetailSegment(video: VideoItem, startTime: Double, key: String) {
-        previewController.libraryStore = libraryStore
-        libraryStore.loadCachedSceneCuts(for: video)
+        prepareDetailPlayback(for: video)
         guard hasKnownSceneCuts(for: video) else { return }
 
         detailPlaybackTask?.cancel()
@@ -2061,19 +2031,16 @@ struct FramesWorkspaceView: View {
         previewController.loadVideo(video, autoplay: false, preserveIfAlreadyLoaded: true)
 
         detailPlaybackTask = Task { @MainActor in
-            for attempt in 0 ..< 8 {
+            for attempt in 0 ..< 20 {
                 guard !Task.isCancelled, activeDetailPlaybackKey == key else { return }
-                if let endTime = detailPlaybackEndTime(for: video, after: startTime) {
-                    previewController.playSegment(from: startTime, to: endTime)
+                if let endTime = detailPlaybackEndTime(for: video, after: startTime),
+                   previewController.playSegment(from: startTime, to: endTime) {
                     await hideDetailPlaybackPlaceholderWhenReady(key: key)
                     return
                 }
 
-                if attempt == 0 {
-                    await Task.yield()
-                } else {
-                    try? await Task.sleep(nanoseconds: 80_000_000)
-                }
+                if attempt == 0 { await Task.yield() }
+                else { try? await Task.sleep(nanoseconds: 80_000_000) }
             }
 
             if !Task.isCancelled, activeDetailPlaybackKey == key {

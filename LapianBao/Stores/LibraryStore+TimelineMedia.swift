@@ -1472,11 +1472,19 @@ extension LibraryStore {
     }
 
     func imageExportURLsToDelete(for frame: SampledFrame, excludingFrameIDs excludedFrameIDs: Set<UUID>) -> [URL] {
+        imageExportURLsToDelete(for: frame, excludingFrameIDs: excludedFrameIDs, in: sampledFrames)
+    }
+
+    func imageExportURLsToDelete(
+        for frame: SampledFrame,
+        excludingFrameIDs excludedFrameIDs: Set<UUID>,
+        in allFrames: [SampledFrame]
+    ) -> [URL] {
         let baseName = imageExportBaseName(for: frame)
         let matchingURLs = imageExportURLs(for: frame)
         guard !matchingURLs.isEmpty else { return [] }
 
-        let remainingRecordCount = sampledFrames.filter {
+        let remainingRecordCount = allFrames.filter {
             !excludedFrameIDs.contains($0.id) && imageExportBaseName(for: $0) == baseName
         }.count
         guard matchingURLs.count > remainingRecordCount else { return [] }

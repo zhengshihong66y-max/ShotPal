@@ -62,6 +62,7 @@ struct FrameDetailTagStrip: View {
                     onRemove: { tag in onRemove?(tag) }
                 )
                 .fixedSize(horizontal: true, vertical: false)
+                .accessibilityIdentifier("frame_detail_tag_add_button")
             }
         }
     }

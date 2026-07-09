@@ -295,6 +295,24 @@ enum PreviewKeyboardEventRouter {
         }
         return false
     }
+
+    static func isInteractiveControlResponder(_ responder: Any?) -> Bool {
+        if let control = responder as? NSControl {
+            return control.isEnabled && !control.isHidden
+        }
+        return false
+    }
+
+    static func hasInteractiveControlAncestor(_ view: NSView?) -> Bool {
+        var current = view
+        while let view = current {
+            if isInteractiveControlResponder(view) {
+                return true
+            }
+            current = view.superview
+        }
+        return false
+    }
 }
 
 final class PreviewKeyboardWindow: NSWindow {
@@ -495,6 +513,7 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
             let location = event.locationInWindow
             guard let hitView = window.contentView?.hitTest(location) else { return }
             guard !Self.hasEditableTextAncestor(hitView) else { return }
+            guard !Self.hasInteractiveControlAncestor(hitView) else { return }
             window.makeFirstResponder(captureView)
         }
 
@@ -512,6 +531,10 @@ struct PreviewKeyboardHandler: NSViewRepresentable {
 
         static func hasEditableTextAncestor(_ view: NSView?) -> Bool {
             PreviewKeyboardEventRouter.hasEditableTextAncestor(view)
+        }
+
+        static func hasInteractiveControlAncestor(_ view: NSView?) -> Bool {
+            PreviewKeyboardEventRouter.hasInteractiveControlAncestor(view)
         }
 
     }

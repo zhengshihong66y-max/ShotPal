@@ -4,6 +4,7 @@
 //
 
 import Darwin
+import AppKit
 import Foundation
 
 enum CommandLineAnnotationSaveCheck {
@@ -15,6 +16,7 @@ enum CommandLineAnnotationSaveCheck {
         var markedDirtyWhileLoading: Bool
         var pendingAnnotationMerged: Bool
         var emptyUpdateRejected: Bool
+        var controlHitTargetProtected: Bool
         var failures: [String]
     }
 
@@ -73,6 +75,7 @@ enum CommandLineAnnotationSaveCheck {
         let emptyUpdateRejected = store.annotations.first.map {
             store.updateAnnotation($0, text: "   ") == false
         } ?? false
+        let controlHitTargetProtected = PreviewKeyboardEventRouter.hasInteractiveControlAncestor(NSButton())
 
         if !addReturnedSuccess {
             failures.append("adding a non-empty annotation must return success")
@@ -86,6 +89,9 @@ enum CommandLineAnnotationSaveCheck {
         if !emptyUpdateRejected {
             failures.append("empty annotation update must be rejected")
         }
+        if !controlHitTargetProtected {
+            failures.append("keyboard focus restoration must skip clicked NSControl hit targets")
+        }
 
         return Report(
             status: failures.isEmpty ? "succeeded" : "failed",
@@ -93,6 +99,7 @@ enum CommandLineAnnotationSaveCheck {
             markedDirtyWhileLoading: markedDirtyWhileLoading,
             pendingAnnotationMerged: pendingAnnotationMerged,
             emptyUpdateRejected: emptyUpdateRejected,
+            controlHitTargetProtected: controlHitTargetProtected,
             failures: failures
         )
     }

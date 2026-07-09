@@ -465,14 +465,14 @@ struct ScenePanelView: View, Equatable {
 
         if let sample = item.sample {
             return {
-                libraryStore.fullResolutionFrameProvider(for: sample)
+                libraryStore.savedFrameImageProvider(for: sample)
             }
         }
 
         return {
             libraryStore.fullResolutionFrameProvider(
                 video: video,
-                time: item.time,
+                time: LibraryStore.sceneRepresentativeFrameTime(forCutTime: item.time),
                 kind: .sceneRepresentative,
                 fallbackImage: item.thumbnailImage
             )

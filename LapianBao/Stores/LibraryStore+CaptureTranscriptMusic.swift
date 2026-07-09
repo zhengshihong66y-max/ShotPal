@@ -1011,7 +1011,11 @@ extension LibraryStore {
                 }
             }
             updateMusicDownloadJob(id: jobID) { j in
-                j.waveformSamples = samples ?? []
+                if let samples, !samples.isEmpty {
+                    j.waveformSamples = samples
+                } else if j.waveformSamples?.isEmpty != false {
+                    j.waveformSamples = nil
+                }
                 j.isPreparingWaveform = false
             }
             musicDownloadWaveformProgressByID.removeValue(forKey: jobID)
@@ -1126,7 +1130,11 @@ extension LibraryStore {
                 guard let store,
                       let index = store.musicDownloadJobs.firstIndex(where: { $0.id == jobID })
                 else { return }
-                store.musicDownloadJobs[index].waveformSamples = samples ?? []
+                if let samples, !samples.isEmpty {
+                    store.musicDownloadJobs[index].waveformSamples = samples
+                } else if store.musicDownloadJobs[index].waveformSamples?.isEmpty != false {
+                    store.musicDownloadJobs[index].waveformSamples = nil
+                }
                 store.musicDownloadJobs[index].isPreparingWaveform = false
                 store.musicDownloadWaveformProgressByID.removeValue(forKey: jobID)
                 store.saveProjectData()

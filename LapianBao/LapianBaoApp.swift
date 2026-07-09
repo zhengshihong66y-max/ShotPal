@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CommandLineDownloadProgressCheck.runIfRequested()
         CommandLineSceneTimelineCheck.runIfRequested()
         CommandLineDragProviderCheck.runIfRequested()
+        CommandLineDeletedVideoImageCleanupCheck.runIfRequested()
         CommandLineMusicRuntimeCheck.runIfRequested()
         runCommandLineMusicWaveformCachePrewarmIfRequested()
         runCommandLineSelfCheckIfRequested()

@@ -309,15 +309,16 @@ final class PreviewController: ObservableObject {
         seekToSeconds(seconds, snapToFrame: snapToFrame, clearsForwardPlaybackLimit: true)
     }
 
-    func playSegment(from startSeconds: Double, to endSeconds: Double) {
-        let d = effectiveDuration; guard let d, d > 0 else { return }
-        guard let item = player.currentItem else { return }
+    @discardableResult
+    func playSegment(from startSeconds: Double, to endSeconds: Double) -> Bool {
+        let d = effectiveDuration; guard let d, d > 0 else { return false }
+        guard let item = player.currentItem else { return false }
 
         let start = nearestFrameTime(min(d, max(0, startSeconds)), duration: d)
         let end = min(d, max(0, endSeconds))
         guard end > start + max(0.01, frameDuration / 2) else {
             seekToSeconds(end)
-            return
+            return true
         }
 
         clearForwardPlaybackLimit()
@@ -334,6 +335,7 @@ final class PreviewController: ObservableObject {
                 self?.beginPlayback(at: 1)
             }
         }
+        return true
     }
 
     private func seekToSeconds(
@@ -460,7 +462,14 @@ final class PreviewController: ObservableObject {
     // MARK: – 工具
 
     var effectiveDuration: Double? {
-        duration > 0 ? duration : playerDuration()
+        if duration > 0 { return duration }
+        if let playerDuration = playerDuration() { return playerDuration }
+        if let path = currentVideoPath,
+           let storeDuration = libraryStore?.durationByVideoPath[path],
+           storeDuration > 0 {
+            return storeDuration
+        }
+        return nil
     }
 
     private func playerDuration() -> Double? {

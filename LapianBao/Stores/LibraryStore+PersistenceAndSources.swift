@@ -471,16 +471,38 @@ extension LibraryStore {
     }
 
     func applyProjectData(_ decoded: ProjectDataFile) {
-        sampledFrames = decoded.sampledFrames
-        annotations = decoded.annotations
-        audioClips = decoded.audioClips
-        transcriptSegmentsByVideoPath = decoded.transcripts
-        transcriptExports = decoded.transcriptExports ?? []
-        musicsByVideoPath = decoded.musicsByVideoPath ?? [:]
-        musicDownloadJobs = reconciledMusicDownloadJobs(decoded.musicDownloadJobs ?? [])
+        let pruned = projectDataRemovingMissingVideoImageExports(decoded)
+        sampledFrames = pruned.sampledFrames
+        annotations = pruned.annotations
+        audioClips = pruned.audioClips
+        transcriptSegmentsByVideoPath = pruned.transcripts
+        transcriptExports = pruned.transcriptExports ?? []
+        musicsByVideoPath = pruned.musicsByVideoPath ?? [:]
+        musicDownloadJobs = reconciledMusicDownloadJobs(pruned.musicDownloadJobs ?? [])
         reconcileMusicDownloadJobsWithLocalAssets(localMusicAssets)
         enrichMusicTagsIfNeeded(includeLocalAssets: false)
         runStartupAutomationIfNeeded()
+    }
+
+    func projectDataRemovingMissingVideoImageExports(_ decoded: ProjectDataFile) -> ProjectDataFile {
+        let liveVideoPaths = Set(videos.map(\.url.path))
+        let framesToRemove = decoded.sampledFrames.filter { !liveVideoPaths.contains($0.videoPath) }
+        guard !framesToRemove.isEmpty else { return decoded }
+
+        let frameIDsToRemove = Set(framesToRemove.map(\.id))
+        for frame in framesToRemove {
+            for url in imageExportURLsToDelete(
+                for: frame,
+                excludingFrameIDs: frameIDsToRemove,
+                in: decoded.sampledFrames
+            ) {
+                _ = trashLibraryFileIfPresent(url, context: "missing-video image export")
+            }
+        }
+
+        var pruned = decoded
+        pruned.sampledFrames.removeAll { !liveVideoPaths.contains($0.videoPath) }
+        return pruned
     }
 
     func migrateProjectDataVideoPaths(_ decoded: ProjectDataFile) -> ProjectDataFile {

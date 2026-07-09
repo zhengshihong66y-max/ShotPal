@@ -569,10 +569,51 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
         and "FileManager.default.fileExists" not in music_download_status_preview_url,
         "Music row view state must trust prepared download status and must not synchronously check file existence while rendering.",
     )
+    music_recognition_action_column = section_between(
+        audio_components,
+        "struct MusicRecognitionActionColumn",
+        "struct ExportMusicRecognitionActionColumn",
+    )
+    music_download_extension_stack = section_between(
+        audio_components,
+        "struct MusicDownloadExtensionStack",
+        "enum MusicDownloadSelectorLayout",
+    )
+    export_music_row = section_between(
+        audio_components,
+        "struct ExportMusicRecognitionRow: View",
+        "struct MusicRecognitionRow: View",
+    )
+    music_download_drag_provider = section_between(
+        music_workspace,
+        "private func musicDownloadDragProvider",
+        "private func runAppleMusicSearch",
+    )
+    require(
+        "libraryStore.completedMusicDownloadFileURL(for: job)" in music_recognition_action_column
+        and "visibleDownloadJobs" in music_download_extension_stack
+        and "if case .succeeded = job.status" in music_download_extension_stack
+        and "return libraryStore.completedMusicDownloadFileURL(for: job) != nil" in music_download_extension_stack
+        and "libraryStore.completedMusicDownloadFileURL(for: job) != nil" in export_music_row
+        and "libraryStore.completedMusicDownloadFileURL(for: job) != nil" in music_download_drag_provider,
+        "Missing downloaded music files must be treated as undownloaded in recognized music rows, export rows, and drag providers.",
+    )
     music_download_controls = section_between(
         audio_components,
         "struct MusicDownloadControlsAndWaveform: View",
         "private var waveformPanel: some View",
+    )
+    music_download_selector_button = section_between(
+        audio_components,
+        "private func selectorButton(",
+        "struct MusicDownloadWaveformPanel",
+    )
+    require(
+        "displayJob(for: job, isDownloaded: isDownloaded)" in music_download_selector_button
+        and "musicDownloadTitle(type: type, job: displayJob)" in music_download_selector_button
+        and "musicDownloadIcon(type: type, job: displayJob)" in music_download_selector_button
+        and "musicDownloadHelp(type: type, job: displayJob)" in music_download_selector_button,
+        "Missing downloaded music files must make music download buttons render their undownloaded title, icon, and help text.",
     )
     require(
         "HStack(alignment: .top, spacing: elementSpacing)" in music_download_controls
@@ -1159,7 +1200,7 @@ def require_frame_tag_popover_spacing_guardrails(sources: dict[str, str]) -> Non
     require(
         "private func presentFrameDetail(_ frame: SampledFrame)" in detail_overlay_presentation
         and "detailStoryboardItem = nil" in detail_overlay_presentation
-        and "selectedFrameID = frame.id" in detail_overlay_presentation
+        and "selectedFrameID = currentFrame.id" in detail_overlay_presentation
         and "private func presentStoryboardDetail(_ item: FrameStoryboardItem)" in detail_overlay_presentation
         and "detailFrame = nil" in detail_overlay_presentation
         and "detailStoryboardItem = item" in detail_overlay_presentation,
@@ -1313,10 +1354,45 @@ def require_frame_tag_filter_edit_guardrails(sources: dict[str, str]) -> None:
 
 def require_frame_detail_playback_guardrails(sources: dict[str, str]) -> None:
     frames = sources.get("LapianBao/Views/Frames/FramesWorkspaceView.swift", "")
+    preview_controller = sources.get("LapianBao/PreviewController.swift", "")
+    frame_board_tile = sources.get("LapianBao/Views/Frames/FrameBoardImageTile.swift", "")
+    present_detail = section_between(
+        frames,
+        "private func presentFrameDetail",
+        "private func storyboardCardTitle",
+    )
+    detail_surface = section_between(
+        frames,
+        "private func detailPlaybackSurface",
+        "private func isDetailPlaybackVisible",
+    )
     detail_playback_toggle = section_between(
         frames,
         "private func toggleDetailPlayback",
         "private func playDetailSegment",
+    )
+    detail_playback_segment = section_between(
+        frames,
+        "private func playDetailSegment",
+        "private func hideDetailPlaybackPlaceholderWhenReady",
+    )
+    require(
+        "Button(action: onTap)" not in frame_board_tile
+        and ".highPriorityGesture(TapGesture().onEnded { onTap() })" in frame_board_tile
+        and ".fullResolutionImageDrag(dragItemProvider)" in frame_board_tile,
+        "Frame board image clicks must use a high-priority tap separate from drag export so opening preview stays responsive.",
+    )
+    require(
+        "prepareDetailPlayback(for: video(for: currentFrame.videoPath))" in present_detail
+        and "prepareDetailPlayback(for: item.video)" in present_detail
+        and "private func prepareDetailPlayback(for video: VideoItem)" in present_detail
+        and "libraryStore.loadCachedSceneCuts(for: video)" in present_detail,
+        "Opening a frame detail preview must preload scene cuts for the backing video before playback is requested.",
+    )
+    require(
+        ".highPriorityGesture(TapGesture().onEnded {" in detail_surface
+        and "playDetailSegment(video: video, startTime: startTime, key: key)" in detail_surface,
+        "Frame detail image preview taps must be high-priority so drag export does not swallow play-to-next-cut clicks.",
     )
     require(
         "detailPlaybackResumeTime(video: video, startTime: startTime, key: key)" in detail_playback_toggle
@@ -1325,6 +1401,15 @@ def require_frame_detail_playback_guardrails(sources: dict[str, str]) -> None:
         and "return currentTime >= endTime - endTolerance ? startTime : currentTime" in detail_playback_toggle
         and "playDetailSegment(video: video, startTime: resumeTime, key: key)" in detail_playback_toggle,
         "Frame detail playback must restart from the image anchor after a segment finishes instead of treating the end time as the next segment start.",
+    )
+    require(
+        "func playSegment(from startSeconds: Double, to endSeconds: Double) -> Bool" in preview_controller
+        and "guard let d, d > 0 else { return false }" in preview_controller
+        and "guard let item = player.currentItem else { return false }" in preview_controller
+        and "let storeDuration = libraryStore?.durationByVideoPath[path]" in preview_controller
+        and "previewController.playSegment(from: startTime, to: endTime)" in detail_playback_segment
+        and "for attempt in 0 ..< 20" in detail_playback_segment,
+        "Frame detail segment playback must wait for player duration/readiness instead of silently failing on the first tap.",
     )
 
 
@@ -1375,6 +1460,7 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
     annotation_store = sources.get("LapianBao/Stores/LibraryStore+Annotations.swift", "")
     persistence = sources.get("LapianBao/Stores/LibraryStore+PersistenceAndSources.swift", "")
     app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
+    app_chrome = sources.get("LapianBao/AppChrome.swift", "")
     command_check = sources.get("LapianBao/CommandLineAnnotationSaveCheck.swift", "")
     agents = read("AGENTS.md")
     annotation_editor = section_between(
@@ -1391,6 +1477,11 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
         annotation_editor,
         'title: "保存"',
         'saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)',
+    )
+    annotation_action_row = section_between(
+        annotation_editor,
+        "HStack(spacing: 12)",
+        ".zIndex(2)",
     )
     require(
         "static let annotationEditorWidth: CGFloat = 336" in preview_panel
@@ -1415,16 +1506,42 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
         "AnnotationEditorActionButton(" in annotation_editor
         and 'accessibilityIdentifier: "annotation_editor_save_button"' in save_button
         and "saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)" in annotation_editor
-        and "Button(action: action)" in timeline_details
-        and ".buttonStyle(AnnotationEditorHitTargetButtonStyle())" in timeline_details
-        and ".contentShape(Rectangle())" in timeline_details
+        and "AnnotationEditorNativeActionButton(" in timeline_details
+        and "private struct AnnotationEditorNativeActionButton: NSViewRepresentable" in timeline_details
+        and "private final class AnnotationEditorNSButton: NSButton" in timeline_details
+        and "override func acceptsFirstMouse" in timeline_details
+        and "button.target = context.coordinator" in timeline_details
+        and "button.action = #selector(Coordinator.performAction)" in timeline_details
+        and "button.setAccessibilityIdentifier(accessibilityIdentifier)" in timeline_details
         and ".accessibilityAction(named: Text(title), action)" in timeline_details
-        and "private struct AnnotationEditorHitTargetButtonStyle: PrimitiveButtonStyle" in timeline_details
-        and "configuration.trigger()" in timeline_details
         and "func currentAnnotationEditorText()" in timeline_details
         and "NSApp.keyWindow?.firstResponder as? NSTextView" in timeline_details
         and "guard !trimmedText.isEmpty else { return }" in timeline_details,
-        "Annotation editor save control must have a fixed clickable hit target and explicitly read the live NSTextView content before saving.",
+        "Annotation editor save control must use a native AppKit button hit target and explicitly read the live NSTextView content before saving.",
+    )
+    require(
+        "Spacer()" not in annotation_action_row
+        and ".frame(maxWidth: .infinity)" in annotation_action_row
+        and ".frame(maxWidth: .infinity)" in section_between(
+            timeline_details,
+            "var body: some View",
+            ".accessibilityLabel(title)",
+        )
+        and "底部按钮行必须在内容区内等宽铺开" in agents
+        and "不能用前置 `Spacer()`" in agents,
+        "Annotation editor action buttons must be evenly distributed inside the content width instead of being pushed off-center by a leading Spacer.",
+    )
+    require(
+        "AnnotationEditorHitTargetButtonStyle" not in timeline_details
+        and "configuration.trigger()" not in timeline_details,
+        "Annotation editor action buttons must not rely on SwiftUI high-priority tap gestures; they can lose clicks while NSTextView owns focus.",
+    )
+    require(
+        "static func hasInteractiveControlAncestor(_ view: NSView?) -> Bool" in app_chrome
+        and "isInteractiveControlResponder(view)" in app_chrome
+        and "guard !Self.hasInteractiveControlAncestor(hitView) else { return }" in app_chrome
+        and "PreviewKeyboardEventRouter.hasInteractiveControlAncestor(view)" in app_chrome,
+        "Preview keyboard focus restoration must skip clicked NSControl ancestors so annotation action buttons receive mouse events.",
     )
     require(
         ".stroke(.white.opacity(0.16), lineWidth: 0.8)" in timeline_layout
@@ -1458,13 +1575,16 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
         "--lapianbao-annotation-save-check" in command_check
         and "pendingProjectDataEditsSnapshot(resolvingRelativeTo:" in command_check
         and "loading save" in command_check
+        and "controlHitTargetProtected" in command_check
+        and "PreviewKeyboardEventRouter.hasInteractiveControlAncestor(NSButton())" in command_check
         and "CommandLineAnnotationSaveCheck.runIfRequested()" in app_delegate,
         "Formal app executable must keep a command-line smoke check for annotation saves during project-data loading.",
     )
     require(
         "批注编辑弹层要保留舒适的输入区左右内边距" in agents
         and "回车用于输入换行" in agents
-        and "不能作为保存批注的默认动作" in agents,
+        and "不能作为保存批注的默认动作" in agents
+        and "局部预览键盘焦点恢复不能在鼠标命中 `NSControl` 时抢 first responder" in agents,
         "AGENTS must record annotation editor spacing and Return-key behavior.",
     )
 
@@ -1782,7 +1902,7 @@ def require_music_preview_playback_guardrails(sources: dict[str, str]) -> None:
         "struct MusicDownloadWaveformPanel",
     )
     require(
-        'Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: job))' in selector_button,
+        'Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: displayJob))' in selector_button,
         "Original and instrumental music row buttons must show a pause icon while their preview is playing.",
     )
     require(
@@ -1815,6 +1935,7 @@ def require_music_preview_playback_guardrails(sources: dict[str, str]) -> None:
         "MusicDownloadExtensionStack(downloadJobs: downloadJobs)" in export_music_row
         and "MusicDownloadControlsAndWaveform(" not in export_music_row
         and "exportMusicWaveformRenderPrewarmProbe(songs: songs)" in preview_export_panel
+        and "libraryStore.completedMusicDownloadFileURL(for: job) != nil" in preview_export_panel
         and "DownloadedMusicWaveformRenderPrewarmQueue.shared.prewarm(requests)" in preview_export_panel,
         "Export-panel music rows must keep the original download-status layout while prewarming rendered waveform images before scrolling.",
     )
@@ -2105,6 +2226,7 @@ def require_music_recognition_download_scope_guardrails(sources: dict[str, str])
 def require_drag_export_provider_guardrails(sources: dict[str, str]) -> None:
     drag_helpers = sources.get("LapianBao/Views/Shared/ViewDragHelpers.swift", "")
     metadata_helpers = sources.get("LapianBao/Stores/LibraryStore+MetadataAndExportHelpers.swift", "")
+    export_panel = sources.get("LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift", "")
     app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
     command_check = sources.get("LapianBao/CommandLineDragProviderCheck.swift", "")
     frame_provider = section_between(
@@ -2116,6 +2238,16 @@ def require_drag_export_provider_guardrails(sources: dict[str, str]) -> None:
         metadata_helpers,
         "nonisolated static func savedFrameDataItemProvider",
         "nonisolated static func writeSavedFrameDragFile",
+    )
+    export_frame_row = section_between(
+        export_panel,
+        "func exportFrameRow(",
+        "func exportFramePreview(",
+    )
+    export_audio_row = section_between(
+        export_panel,
+        "func exportAudioClipRow(",
+        "func exportTranscriptProgressRow(",
     )
 
     require(
@@ -2136,11 +2268,73 @@ def require_drag_export_provider_guardrails(sources: dict[str, str]) -> None:
         "Generated frame drag exports must expose a real file path, not only a file promise or JPEG data.",
     )
     require(
+        "libraryStore.savedFrameImageProvider(for: frame)" in export_frame_row
+        and "libraryStore.fullResolutionFrameProvider(for: frame)" not in export_frame_row
+        and ".highPriorityGesture(TapGesture().onEnded {" in export_frame_row
+        and ".itemProviderDrag(dragProvider)" in export_frame_row,
+        "Export panel image rows must drag the saved image file path and keep tap handling separate from drag export.",
+    )
+    require(
+        "let dragProvider = audioClipDragProvider(for: clip)" in export_audio_row
+        and export_audio_row.count(".itemProviderDrag(dragProvider)") == 1
+        and ".highPriorityGesture(TapGesture().onEnded {" in export_audio_row,
+        "Export panel audio rows must expose one real audio file drag provider and keep play taps separate from drag export.",
+    )
+    require(
         "--lapianbao-drag-provider-check" in command_check
         and "dragProviderCanExposeFilePath" in command_check
         and "legacyFilenamesPasteboardTypeIdentifier" in command_check
         and "CommandLineDragProviderCheck.runIfRequested()" in app_delegate,
         "Formal app executable must keep a command-line smoke check for external drag-import provider types.",
+    )
+
+
+def require_deleted_video_image_cleanup_guardrails(sources: dict[str, str]) -> None:
+    video_store = sources.get("LapianBao/Stores/LibraryStore+VideoLibraryAndTags.swift", "")
+    persistence = sources.get("LapianBao/Stores/LibraryStore+PersistenceAndSources.swift", "")
+    timeline_media = sources.get("LapianBao/Stores/LibraryStore+TimelineMedia.swift", "")
+    command_check = sources.get("LapianBao/CommandLineDeletedVideoImageCleanupCheck.swift", "")
+    app_delegate = sources.get("LapianBao/LapianBaoApp.swift", "")
+    remove_video = section_between(
+        video_store,
+        "func removeVideo(_ video: VideoItem)",
+        "private static func trashVideoFileIfPresent",
+    )
+    project_prune = section_between(
+        persistence,
+        "func projectDataRemovingMissingVideoImageExports",
+        "func migrateProjectDataVideoPaths",
+    )
+    require(
+        "let framesToRemove = sampledFrames.filter { $0.videoPath == path }" in remove_video
+        and "let frameIDsToRemove = Set(framesToRemove.map(\\.id))" in remove_video
+        and "imageExportURLsToDelete(for: frame, excludingFrameIDs: frameIDsToRemove)" in remove_video
+        and 'context: "video-related image export"' in remove_video
+        and "sampledFrames.removeAll { $0.videoPath == path }" in remove_video,
+        "Deleting a video from the app must delete both generated image files and sampled-frame records for that video.",
+    )
+    require(
+        "let pruned = projectDataRemovingMissingVideoImageExports(decoded)" in persistence
+        and "sampledFrames = pruned.sampledFrames" in persistence
+        and "let liveVideoPaths = Set(videos.map(\\.url.path))" in project_prune
+        and "let framesToRemove = decoded.sampledFrames.filter { !liveVideoPaths.contains($0.videoPath) }" in project_prune
+        and 'context: "missing-video image export"' in project_prune
+        and "pruned.sampledFrames.removeAll { !liveVideoPaths.contains($0.videoPath) }" in project_prune,
+        "Loading project data after videos disappear from disk must prune orphan generated image files and frame records.",
+    )
+    require(
+        "in allFrames: [SampledFrame]" in timeline_media
+        and "let remainingRecordCount = allFrames.filter" in timeline_media,
+        "Image export deletion must compare against a supplied frame set so missing-video cleanup protects live duplicate filenames.",
+    )
+    require(
+        "--lapianbao-deleted-video-image-cleanup-check" in command_check
+        and "store.removeVideo(video)" in command_check
+        and "store.applyProjectData(ProjectDataFile(" in command_check
+        and "appDeleteRemovedImageFile" in command_check
+        and "missingVideoLoadRemovedImageFile" in command_check
+        and "CommandLineDeletedVideoImageCleanupCheck.runIfRequested()" in app_delegate,
+        "Formal app executable must keep a command-line smoke check for deleted-video image cleanup.",
     )
 
 
@@ -2308,6 +2502,7 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
     require_audio_clip_export_performance_guardrails(sources)
     require_music_recognition_download_scope_guardrails(sources)
     require_drag_export_provider_guardrails(sources)
+    require_deleted_video_image_cleanup_guardrails(sources)
     require_regex_allowlist(
         sources,
         r"NotificationCenter\.default",
