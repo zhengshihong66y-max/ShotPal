@@ -102,7 +102,10 @@ extension LibraryStore {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return [] }
 
-        let attempts = ytdlpYouTubeArgumentAttempts()
+        // 与视频下载一致:配置了 cookies.txt 时 cookie 尝试排最前,
+        // 避免每首歌都先烧完整梯子被风控拦下的匿名尝试。
+        let attempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: configuredYouTubeCookieFileURL())
+            + ytdlpYouTubeArgumentAttempts()
         func expandedSources(name: String, target: String) -> [MusicDownloadSource] {
             attempts.map { attempt in
                 MusicDownloadSource(
@@ -164,7 +167,9 @@ extension LibraryStore {
         query: String,
         processRegistry: ToolProcessRegistry
     ) async -> URL? {
-        let attempt = ytdlpYouTubeArgumentAttempts().first ?? YTDLPArgumentAttempt(arguments: [])
+        let attempt = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: configuredYouTubeCookieFileURL()).first
+            ?? ytdlpYouTubeArgumentAttempts().first
+            ?? YTDLPArgumentAttempt(arguments: [])
         return await Task.detached(priority: .utility) { () -> URL? in
             var arguments = [
                 "--no-playlist",

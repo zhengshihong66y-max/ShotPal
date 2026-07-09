@@ -436,7 +436,10 @@ extension LibraryStore {
         else { return [] }
 
         let clientArguments = ytdlpYouTubeClientArguments()
-        let cookieArguments = ["--cookies", cookieFileURL.path]
+        // 每次调用使用一次性副本:yt-dlp 退出时会回写轮换后的 cookie,
+        // 并发的视频/歌曲/探测进程共用同一份文件会互相覆盖并导致会话失效。
+        let workingCookieURL = throwawayCookieCopyURL(of: cookieFileURL) ?? cookieFileURL
+        let cookieArguments = ["--cookies", workingCookieURL.path]
         var attempts: [YTDLPArgumentAttempt] = []
 
         attempts.append(YTDLPArgumentAttempt(label: "cookies.txt", arguments: cookieArguments))
@@ -457,6 +460,17 @@ extension LibraryStore {
               FileManager.default.fileExists(atPath: url.path)
         else { return nil }
         return url
+    }
+
+    nonisolated static func throwawayCookieCopyURL(of cookieFileURL: URL) -> URL? {
+        let copyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lapianbao-cookies-\(UUID().uuidString).txt")
+        do {
+            try FileManager.default.copyItem(at: cookieFileURL, to: copyURL)
+            return copyURL
+        } catch {
+            return nil
+        }
     }
 
     nonisolated static func ytdlpYouTubeSelfCheckArgumentAttempts() -> [YTDLPArgumentAttempt] {
