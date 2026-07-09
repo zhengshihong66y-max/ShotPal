@@ -593,13 +593,12 @@ extension ContentView {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                     .frame(height: 16)
-
-                Spacer(minLength: 0)
-
-                importActiveProgressBar(for: job)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .frame(height: 56)
+            .frame(height: 56, alignment: .top)
+            .overlay(alignment: .bottomLeading) {
+                importActiveProgressBar(for: job)
+            }
 
             importJobActions(for: job)
                 .frame(height: 56, alignment: .top)
@@ -764,7 +763,8 @@ extension ContentView {
             importJobCover(for: job, width: 100, height: 56)
 
             VStack(alignment: .leading, spacing: 5) {
-                // 标题贴封面顶边、信息行贴封面底边,文字块与封面等高对齐
+                // 标题贴封面顶边、信息行用 overlay 钉在封面底边,文字块与封面等高;
+                // 不在 LazyVStack 行内用 Spacer 撑高度,避免懒加载测量崩溃
                 VStack(alignment: .leading, spacing: 5) {
                     Text(importStatusTitle(for: job))
                         .font(.caption.weight(.semibold))
@@ -778,9 +778,10 @@ extension ContentView {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
-
-                    Spacer(minLength: 0)
-
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: 56, alignment: .top)
+                .overlay(alignment: .bottomLeading) {
                     if let detailText = importHistoryFileDetailText(for: job) {
                         Text(detailText)
                             .font(.caption2)
@@ -790,7 +791,6 @@ extension ContentView {
                             .textSelection(.enabled)
                     }
                 }
-                .frame(height: 56, alignment: .topLeading)
 
                 if let video = importedVideo(for: job) {
                     importJobTagStrip(for: video)
