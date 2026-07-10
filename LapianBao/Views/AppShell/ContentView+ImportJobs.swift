@@ -631,6 +631,9 @@ extension ContentView {
                         .frame(width: max(4, width * CGFloat(progress)))
                 }
             }
+            // 进度稀疏到达(节流+网络突发),每次前跳一大截;用短线性动画
+            // 让宽度滑过去,消除"跳动"观感。仅进度条自身,不影响时间线高频路径。
+            .animation(.linear(duration: 0.3), value: progress)
         }
         .frame(height: 4)
         .padding(.top, 5)

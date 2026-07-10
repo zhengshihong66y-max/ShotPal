@@ -971,7 +971,10 @@ extension LibraryStore {
             do {
                 let result = try await Self.performSceneDetection(for: video.url) { progress in
                     Task { @MainActor in
-                        self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
+                        // 每条进度独立 Task 派发,MainActor 执行顺序不保证;取 max
+                        // 丢弃乱序旧值,进度条只前进不抖动(与下载一致)。
+                        let normalized = Self.normalizedProgress(progress)
+                        self?.sceneDetectionProgress[path] = max(self?.sceneDetectionProgress[path] ?? 0, normalized)
                     }
                 }
 
@@ -1064,7 +1067,8 @@ extension LibraryStore {
                 do {
                     let result = try await Self.performSceneDetection(for: video.url) { [weak self] progress in
                         Task { @MainActor [weak self] in
-                            self?.sceneDetectionProgress[path] = Self.normalizedProgress(progress)
+                            let normalized = Self.normalizedProgress(progress)
+                            self?.sceneDetectionProgress[path] = max(self?.sceneDetectionProgress[path] ?? 0, normalized)
                             self?.updateSceneBatchProgress(completed: completed, currentProgress: progress)
                         }
                     }
