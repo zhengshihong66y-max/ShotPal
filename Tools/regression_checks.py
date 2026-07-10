@@ -2051,10 +2051,12 @@ def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None
     require(
         "importActiveProgressBar(for: job)" in active_status
         and "func importActiveProgressBar(for job: RemoteImportJob) -> some View" in import_jobs
-        and ".frame(height: 4)" in active_progress_bar
-        and "RoundedRectangle(cornerRadius: 2" in active_progress_bar
+        # 2026-07-10:下载条改用原生 ProgressView(与音乐一致,自带前跳平滑),
+        # 取代原自绘 RoundedRectangle(隐式动画在整行高频重建下吃不上会跳动)。
+        and "ProgressView(value: progress)" in active_progress_bar
+        and ".progressViewStyle(.linear)" in active_progress_bar
         and "accessibilityLabel(\"下载进度\")" in active_progress_bar,
-        "Active import job cards must render a visible compact progress bar below the source URL.",
+        "Active import job cards must render a visible download ProgressView below the source URL.",
     )
     require(
         "func importStatusDetail" not in import_jobs

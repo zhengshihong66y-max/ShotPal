@@ -618,27 +618,15 @@ extension ContentView {
         let progress = normalizedImportProgress(for: job)
         let tint = importStatusTint(for: job)
 
-        return GeometryReader { proxy in
-            let width = max(0, proxy.size.width)
-
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(.white.opacity(0.075))
-
-                if progress > 0 {
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(tint.opacity(0.90))
-                        .frame(width: max(4, width * CGFloat(progress)))
-                }
-            }
-            // 进度稀疏到达(节流+网络突发),每次前跳一大截;用短线性动画
-            // 让宽度滑过去,消除"跳动"观感。仅进度条自身,不影响时间线高频路径。
-            .animation(.linear(duration: 0.3), value: progress)
-        }
-        .frame(height: 4)
-        .padding(.top, 5)
-        .accessibilityLabel("下载进度")
-        .accessibilityValue(progressPercentText(progress))
+        // 用原生 ProgressView(和音乐进度一致):系统自带前跳平滑,自绘
+        // RoundedRectangle 的隐式动画在整行高频重建下吃不上,才会一跳一跳。
+        return ProgressView(value: progress)
+            .progressViewStyle(.linear)
+            .controlSize(.mini)
+            .tint(tint)
+            .padding(.top, 5)
+            .accessibilityLabel("下载进度")
+            .accessibilityValue(progressPercentText(progress))
     }
 
     func importActiveTitleText(for job: RemoteImportJob) -> String {

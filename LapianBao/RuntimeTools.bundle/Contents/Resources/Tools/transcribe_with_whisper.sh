@@ -16,6 +16,12 @@ WHISPER_DIR="$SCRIPT_DIR/whisper.cpp"
 WHISPER_CLI="$WHISPER_DIR/build/bin/whisper-cli"
 MODEL_PATH="$WHISPER_DIR/models/ggml-large-v3-turbo-q5_0.bin"
 
+# whisper-cli/ggml 的动态库用 @rpath 且编译时烧入了绝对路径;项目移动后
+# 那些 rpath 失效会导致 dyld 加载失败(字幕识别整个起不来)。这里按运行时
+# 的 WHISPER_DIR 补上库搜索路径,一劳永逸,再移动也不受影响。
+WHISPER_BUILD="$WHISPER_DIR/build"
+export DYLD_FALLBACK_LIBRARY_PATH="$WHISPER_BUILD/src:$WHISPER_BUILD/ggml/src:$WHISPER_BUILD/ggml/src/ggml-blas:$WHISPER_BUILD/ggml/src/ggml-metal:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+
 if [[ -x "$SCRIPT_DIR/bin/ffmpeg" ]]; then
   FFMPEG_BIN="$SCRIPT_DIR/bin/ffmpeg"
 elif command -v ffmpeg >/dev/null 2>&1; then
