@@ -365,29 +365,28 @@ extension ContentView {
     }
 
     var activeImportOverallProgress: Double? {
-        guard !activeImportJobs.isEmpty else { return nil }
-        let progressValues = activeImportJobs.map { job in
+        let progressValues = activeImportJobs.compactMap { job in
             normalizedImportProgress(for: job)
         }
+        guard !progressValues.isEmpty else { return nil }
         return progressValues.reduce(0, +) / Double(progressValues.count)
     }
 
-    func normalizedImportProgress(for job: RemoteImportJob) -> Double {
+    // 进度只显示真实测量值:下载阶段是 yt-dlp 字节进度,转码阶段是 ffmpeg
+    // 分数。任务在跑但拿不到真实值时返回 nil,由不确定态进度条表达,
+    // 不再编造 92%/98% 这类假百分比。
+    func normalizedImportProgress(for job: RemoteImportJob) -> Double? {
         if let progress = job.downloadProgress {
             return normalizedProgressFraction(progress)
         }
 
         switch job.status {
-        case .idle, .paused, .importing:
+        case .idle, .paused, .failed:
             return 0
-        case .transcoding:
-            return 0.92
-        case .finalizing:
-            return 0.98
+        case .importing, .transcoding, .finalizing:
+            return nil
         case .succeeded:
             return 1
-        case .failed:
-            return 0
         }
     }
 
@@ -571,7 +570,17 @@ extension ContentView {
     }
 
     func importProgressBadgeText(for job: RemoteImportJob) -> String {
-        progressPercentText(normalizedImportProgress(for: job))
+        guard let progress = normalizedImportProgress(for: job) else {
+            switch job.status {
+            case .transcoding:
+                return "转码"
+            case .finalizing:
+                return "整理"
+            default:
+                return "…"
+            }
+        }
+        return progressPercentText(progress)
     }
 
     func importActiveJobStatus(_ job: RemoteImportJob) -> some View {
@@ -620,13 +629,14 @@ extension ContentView {
 
         // 用原生 ProgressView(和音乐进度一致):系统自带前跳平滑,自绘
         // RoundedRectangle 的隐式动画在整行高频重建下吃不上,才会一跳一跳。
+        // value 为 nil 时显示不确定态动画:任务在跑但没有真实测量值。
         return ProgressView(value: progress)
             .progressViewStyle(.linear)
             .controlSize(.mini)
             .tint(tint)
             .padding(.top, 5)
             .accessibilityLabel("下载进度")
-            .accessibilityValue(progressPercentText(progress))
+            .accessibilityValue(progress.map(progressPercentText) ?? "处理中")
     }
 
     func importActiveTitleText(for job: RemoteImportJob) -> String {

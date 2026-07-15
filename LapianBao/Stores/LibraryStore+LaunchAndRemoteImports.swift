@@ -410,13 +410,27 @@ extension LibraryStore {
                 }
             }
         }
-        // 转码回调：下载结束、VP9→H.264 转码即将开始时触发
+        // 转码回调：下载结束、VP9→H.264 转码即将开始时触发。
+        // 转码是独立阶段:进度显示 ffmpeg 的真实分数,从 0 重新起算,
+        // 阶段内取 max 单调;不把真实分数映射进假想尾段。
         let transcodingCallback: @Sendable (Double?) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     guard Self.remoteImportJobCanReceiveWorkerProgress(job.status) else { return }
+                    // 收尾已开始时,迟到的转码进度行不再把状态拨回去
+                    if case .finalizing = job.status { return }
+                    let wasTranscoding: Bool
+                    if case .transcoding = job.status { wasTranscoding = true } else { wasTranscoding = false }
                     job.status = .transcoding
-                    job.downloadProgress = progress.map(Self.normalizedProgress)
+                    if let progress {
+                        job.downloadProgress = max(
+                            wasTranscoding ? (job.downloadProgress ?? 0) : 0,
+                            Self.normalizedProgress(progress)
+                        )
+                    } else if !wasTranscoding {
+                        // 阶段入口:清掉下载阶段的百分比,真实转码进度到来前显示不确定态
+                        job.downloadProgress = nil
+                    }
                     job.downloadSpeed = nil
                 }
             }

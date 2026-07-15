@@ -2880,9 +2880,24 @@ def main() -> None:
         "Remote import progress must apply monotonically (max) so out-of-order MainActor tasks can't jitter the bar, and speed-only lines preserve the last percent.",
     )
     require(
-        "finalizingCallback?(1)\n        let finalURL" in library_store
+        "finalizingCallback?(1)\n        let finalURL" not in remote_download
+        and "let finalURL = await transcodeToH264IfNeeded" in remote_download
+        and "finalizingCallback?(1)\n        return DownloadedVideoResult" in remote_download
         and "job.downloadProgress = Self.normalizedProgress(progress)" in library_store,
-        "Remote import finalizing must keep determinate progress instead of clearing the bar.",
+        "Finalizing(1) must fire only after transcode ends; firing before transcode fakes 100% and then restarts the bar.",
+    )
+    import_jobs_view = swift_sources.get("LapianBao/Views/AppShell/ContentView+ImportJobs.swift", "")
+    require(
+        "func normalizedImportProgress(for job: RemoteImportJob) -> Double?" in import_jobs_view
+        and "return 0.92" not in import_jobs_view
+        and "return 0.98" not in import_jobs_view
+        and 'progress.map(progressPercentText) ?? "处理中"' in import_jobs_view
+        and "if case .finalizing = job.status { return }" in launch_imports
+        and "wasTranscoding ? (job.downloadProgress ?? 0) : 0" in launch_imports
+        and "saturating" not in remote_download_types
+        and "unknown-total downloads must not fabricate progress percentages" in download_progress_check
+        and "unknown-total downloads must still surface real download speed" in download_progress_check,
+        "Download progress must stay truthful: only real measurements are shown, no fabricated percentages (0.92/0.98 fallbacks or byte-based saturation curves); missing measurements render the indeterminate bar, and transcoding restarts as its own real phase with in-phase monotonic writes.",
     )
     require(
         "struct ExternalServiceSelfCheckItem" in library_store

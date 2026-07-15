@@ -179,8 +179,9 @@ extension LibraryStore {
             throw RemoteImportError.downloaderFailed("所有下载方式均失败，请确认链接是否可公开访问")
         }
 
-        // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264
-        finalizingCallback?(1)
+        // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264。
+        // 收尾信号只在转码结束后发一次:转码前抢发 finalizing(1) 会让进度条
+        // 先假装 100% 再被转码进度拽回去。
         let finalURL = await transcodeToH264IfNeeded(downloadedURL, progressCallback: transcodingCallback) ?? downloadedURL
         finalizingCallback?(1)
         return DownloadedVideoResult(

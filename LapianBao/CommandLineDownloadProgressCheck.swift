@@ -20,6 +20,7 @@ enum CommandLineDownloadProgressCheck {
         var multipartKnownSizesFirstPartProgress: Double?
         var multipartObservedSizesSecondPartProgress: Double?
         var postProcessingProgress: Double?
+        var unknownTotalsProgress: Double?
         var failures: [String]
     }
 
@@ -140,6 +141,26 @@ enum CommandLineDownloadProgressCheck {
             failures.append("multipart progress must resume byte-weighted values once they exceed the earlier estimate")
         }
 
+        // 真实性契约:total 与 total_estimate 全缺、又无部件权重时,禁止按已下
+        // 字节编造百分比;进度必须为空(UI 显示不确定态),速度照常透传。
+        let unknownTotalsTracker = LibraryStore.YTDLPProgressTracker(
+            expectedPartCount: 1,
+            downloadCompletionProgress: 0.96,
+            postProcessingProgress: 0.98,
+            allowsEstimatedMultipartProgress: false,
+            reportsPostProcessingProgress: true
+        )
+        let unknownTotalsUpdate = unknownTotalsTracker.update(
+            from: "lapianbao-progress downloaded=5242880 total=NA total_estimate=NA speed=1048576"
+        )
+        let unknownTotalsProgress = unknownTotalsUpdate?.progress
+        if unknownTotalsProgress != nil {
+            failures.append("unknown-total downloads must not fabricate progress percentages")
+        }
+        if unknownTotalsUpdate?.speed == nil {
+            failures.append("unknown-total downloads must still surface real download speed")
+        }
+
         return Report(
             status: failures.isEmpty ? "succeeded" : "failed",
             singlePartHalfProgress: singlePartHalfProgress,
@@ -151,6 +172,7 @@ enum CommandLineDownloadProgressCheck {
             multipartKnownSizesFirstPartProgress: multipartKnownSizesFirstPartProgress,
             multipartObservedSizesSecondPartProgress: multipartObservedSizesSecondPartProgress,
             postProcessingProgress: postProcessingProgress,
+            unknownTotalsProgress: unknownTotalsProgress,
             failures: failures
         )
     }
