@@ -23,3 +23,6 @@ DerivedData/
 # Local distribution and assistant state
 Dist/
 .claude/
+
+# Large local runtime model (prepared separately for distribution builds)
+LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/whisper.cpp/models/ggml-large-v3-turbo-q5_0.bin
