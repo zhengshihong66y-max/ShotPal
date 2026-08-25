@@ -19,3 +19,7 @@ output/
 *.xcworkspace/xcuserdata/
 *.xcuserstate
 DerivedData/
+
+# Local distribution and assistant state
+Dist/
+.claude/

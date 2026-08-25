@@ -530,12 +530,12 @@ extension LibraryStore {
         if let path = selectedVideo?.url.path {
             preserved.insert(path)
         }
-        preserved.formUnion(waveformTasks.keys)
-        preserved.formUnion(frameStripTasks.keys)
-        preserved.formUnion(sceneDetectionTasks.keys)
-        preserved.formUnion(sceneThumbnailHydrationTasks.keys)
-        preserved.formUnion(musicDetectionTasks.keys)
-        preserved.formUnion(transcriptTasks.keys)
+        preserved.formUnion(waveformTasks.keys(of: String.self))
+        preserved.formUnion(frameStripTasks.keys(of: String.self))
+        preserved.formUnion(sceneDetectionTasks.keys(of: String.self))
+        preserved.formUnion(sceneThumbnailHydrationTasks.keys(of: String.self))
+        preserved.formUnion(musicDetectionTasks.keys(of: String.self))
+        preserved.formUnion(transcriptTasks.keys(of: String.self))
         return preserved
     }
 
@@ -858,7 +858,7 @@ extension LibraryStore {
             musicFileDurationsByPath.removeValue(forKey: normalizedPath)
             musicFileDurationTasks.cancel(normalizedPath)
 
-            let enrichmentKeys = musicTagEnrichmentTasks.keys.filter { $0.hasPrefix("\(path)|") }
+            let enrichmentKeys = musicTagEnrichmentTasks.keys(of: String.self).filter { $0.hasPrefix("\(path)|") }
             for key in enrichmentKeys {
                 musicTagEnrichmentTasks.cancel(key)
             }

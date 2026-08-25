@@ -69,8 +69,8 @@ struct SettingsWorkspaceView: View {
         return settingsCompactRow(
             icon: youtubeCookieCardIcon(isConfigured: isConfigured),
             iconTint: youtubeCookieCardIconTint(isConfigured: isConfigured),
-            title: "YouTube cookies",
-            description: "仅在 YouTube 要求登录验证时使用,点击刷新可从 Chrome 一键配置。",
+            title: "浏览器 cookies",
+            description: "用于 YouTube、小红书、Bilibili、抖音风控；仅保留这些平台的 Chrome cookies。",
             detail: youtubeCookieFileDetailText,
             detailColor: youtubeCookieDetailColor(isConfigured: isConfigured),
             actionIcon: "arrow.clockwise",
@@ -83,11 +83,11 @@ struct SettingsWorkspaceView: View {
     private var youtubeCookieFileDetailText: String {
         switch youtubeCookieStore.refreshPhase {
         case .running:
-            return "正在从 Chrome 读取并验证…首次会弹出钥匙串授权,请点\"允许\""
+            return "正在从 Chrome 同步…首次会弹出钥匙串授权，请点\"允许\""
         case .failed(let message):
             return message
         case .succeeded:
-            return "\(youtubeCookieConfiguredFileName ?? "cookies.txt") · 已验证通过"
+            return "\(youtubeCookieConfiguredFileName ?? "cookies.txt") · 已同步"
         case .idle:
             return youtubeCookieConfiguredFileName.map { "\($0) · 已配置" } ?? "未配置"
         }

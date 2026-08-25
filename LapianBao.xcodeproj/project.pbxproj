@@ -190,6 +190,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -253,6 +254,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "拉片宝";
 				INFOPLIST_KEY_CFBundleName = "拉片宝";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
 				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
 				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
@@ -282,13 +284,16 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = F74D79WXAT;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "拉片宝";
 				INFOPLIST_KEY_CFBundleName = "拉片宝";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
 				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
 				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";

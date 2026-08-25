@@ -1,148 +1,110 @@
-# 拉片宝（英文名：ShotPal）
+<p align="center">
+  <img src="docs/assets/github/icon-assemble.gif" width="720" alt="拉片宝图标组装动画">
+</p>
 
-最后更新：2026-06-19
+<h1 align="center">拉片宝 · ShotPal</h1>
 
-当前阶段：收尾前稳定版。这个版本已经具备完整的本地拉片主流程，后续重点应放在稳定性、分发、验收和少量必要修补上。
+<p align="center"><strong>把看过的视频，变成下一次创作。</strong></p>
 
-## 软件定位
+<p align="center">
+  一款面向创作者的 macOS 本地视频拆解与素材管理工具。<br>
+  收进来、拆开看，把画面、声音、字幕与音乐直接带回创作流程。
+</p>
 
-拉片宝是一个 macOS 原生 SwiftUI 应用，英文名为 ShotPal，用来把视频素材导入本地素材库，并围绕同一条视频时间线完成看片、场景识别、画面采样、声音截取、字幕转写、音乐识别和资产导出。
+<p align="center">
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?style=flat-square&logo=apple&logoColor=white">
+  <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-native-F05138?style=flat-square&logo=swift&logoColor=white">
+  <img alt="Version 1.2" src="https://img.shields.io/badge/version-Pro%201.2-5B5BD6?style=flat-square">
+  <img alt="Local first" src="https://img.shields.io/badge/data-local--first-18A058?style=flat-square">
+</p>
 
-它适合个人创作者、剪辑师或需要拆解视频素材的人使用。核心目标是把拉片过程中产生的画面、声音、字幕、音乐、批注和场景切点保存下来，并且保留回到原视频时间点的能力。
+<p align="center">
+  <img src="docs/assets/github/hero.webp" width="1200" alt="拉片宝产品总览">
+</p>
 
-## 当前界面结构
+## 一支片子，真正拆开看
 
-主窗口由左侧工作区入口、素材区和主工作区组成。当前可见工作区包括：
+拉片宝把散落在文件夹和平台里的视频收进同一个本地素材库，并围绕原始时间线完成播放、场景识别、画面采样、声音截取、字幕转写、音乐识别和资产导出。所有结果都保留来源视频与时间点，需要时可以随时回到原片继续看片。
 
-- **主页：** 用于播放视频、查看时间线、识别场景、截图、批注、截取声音、导出字幕和查看音乐识别入口。
-- **画面：** 用于浏览截图和场景代表帧，按视频查看分镜板，预览大图、编辑图片标签并回到原视频时间点。
-- **声音：** 用于管理已导出的声音片段，支持播放、筛选、标签和回到原视频时间点。
-- **音乐：** 用于查看音乐识别结果、下载原曲或伴奏、管理本地音乐素材和音乐标签。
-- **设置：** 用于下载器自检、批量画面切分、批量字幕识别、批量音乐下载和快捷键查看。
+<p align="center">
+  <img src="docs/assets/github/overview.webp" width="1000" alt="拉片宝时间线与素材总览">
+</p>
 
-当前左侧只保留以上五个工作区。字幕识别、字幕浏览和字幕导出集中在主页时间线与导出面板里。
+## 从视频到可复用素材
 
-## 当前可用能力
+| 01 · 收进来 | 02 · 拆开看 | 03 · 组织好 | 04 · 直接拖走 |
+|:---:|:---:|:---:|:---:|
+| 导入本地视频或公开链接 | 识别分镜、字幕、画面与声音 | 按来源、标签和媒体类型管理 | 导出或拖入后续创作软件 |
 
-### 素材库与导入
+### 自动分镜
 
-- 支持打开本地视频素材库文件夹。
-- 支持递归扫描 `mp4`、`mov`、`m4v`、`mkv`、`avi`、`webm`。
-- 支持视频封面、时长、帧率、分辨率、文件大小和播放兼容状态读取。
-- 支持视频标签、平台来源、作者信息、搜索、筛选、排序和三档素材网格密度。
-- 支持网络视频链接导入，当前入口面向 Instagram、YouTube、小红书、Bilibili、抖音等常见平台。
-- 网络导入只处理用户手动粘贴的公开视频链接，不读取平台账号登录态，也不拉取收藏列表。
-- 网络导入优先使用 `yt-dlp`；部分平台有原生解析或回退下载路径。
-- 不兼容播放的编码会转为 H.264，导入完成后会重新读取封面和媒体参数。
-- 导入任务支持进度、暂停、继续、删除、失败提示和跳转到导入结果。
+在本地识别场景切点，把长视频展开成可浏览、可定位、可导出的分镜板。每张代表帧都能回到原视频的准确时间点。
 
-### 主页时间线与拉片
+<p align="center">
+  <img src="docs/assets/github/storyboard.webp" width="1000" alt="拉片宝自动分镜">
+</p>
 
-- 主页播放器使用 `AVPlayerLayer` 承载画面，避免系统 `VideoPlayer` 悬停控制层压暗视频。
-- 时间线支持视频帧带、波形、场景切点、截图、批注、字幕片段和声音 In/Out 区间。
-- 场景识别使用 TransNetV2，本地缓存切点和代表帧。
-- 截图和场景代表帧会保存为图片资产，并保留来源视频、时间点、备注和标签。
-- 声音片段可按 In/Out 导出为 `.m4a`，并保存波形和来源时间区间。
-- Whisper 转写结果会保存为字幕片段，可在时间线中查看、定位和删除。
-- 字幕可导出为 Markdown，内容按分镜时间区间组织，并附带完整原脚本。
-- 音乐识别结果包含歌名、作者、封面、Apple Music 链接、出现时间和独立音乐标签。
+### 画面素材库
 
-### 画面工作区
+把截图和场景代表帧沉淀为可搜索、可筛选的视觉素材；保留来源、标签、批注与色彩信息，不再让灵感消失在截图文件夹里。
 
-- 支持在“图片”和“分镜”两种模式之间切换。
-- 图片模式展示所有已收集截图和场景代表帧，支持搜索、图片标签筛选和网格大小调整。
-- 分镜模式按单条视频展示场景切点和截图；未识别场景的视频可从画面页触发识别。
-- 图片详情支持大图预览、色卡查看、拖拽导出、标签编辑、在访达中显示、删除和回到原视频时间点。
+<p align="center">
+  <img src="docs/assets/github/image-library.webp" width="920" alt="拉片宝画面素材库">
+</p>
 
-### 声音工作区
+### 声音与音乐
 
-- 声音片段来自主页时间线的 In/Out 导出。
-- 支持播放、波形显示、搜索、标签筛选、标签编辑和删除。
-- 每个声音片段保留来源视频和时间区间，可跳回原视频位置继续看片。
+沿时间线截取声音片段，查看波形并回到来源位置；识别视频中的音乐，统一管理原曲、伴奏、封面和流派标签。
 
-### 音乐工作区
+<p align="center">
+  <img src="docs/assets/github/music-library.webp" width="920" alt="拉片宝音乐素材库">
+</p>
 
-- 音乐识别结果按视频保存，并可在音乐工作区统一浏览。
-- 支持音乐搜索、标签筛选、排序、封面显示、Apple Music 链接和回到原视频时间点。
-- 支持下载原曲和伴奏，并把完成的下载同步为本地音乐资产。
-- 本地音乐资产支持播放、波形、角色区分、标签管理和文件定位。
+## 核心能力
 
-### 设置与批量任务
+- **本地素材库：** 递归扫描常见视频格式，统一管理封面、时长、帧率、来源、作者和标签。
+- **网络导入：** 处理用户主动粘贴的公开视频链接，并在需要时完成兼容转码。
+- **时间线拉片：** 同屏查看帧带、波形、场景切点、截图、批注、字幕和声音选区。
+- **本地分析：** 使用 TransNetV2 识别场景，使用 Whisper 完成字幕转写。
+- **资产回溯：** 图片、声音、字幕和音乐结果都保留来源视频与时间区间。
+- **创作导出：** 输出图片、声音、Markdown 字幕与音乐文件，并支持拖拽到后续软件。
 
-- 支持检查 `yt-dlp` 可用性和版本状态。
-- 支持批量补齐场景识别、字幕识别和音乐下载任务。
-- 批量字幕识别支持暂停和继续。
-- 设置页保留快捷键参考，用于收尾测试和单人交付时快速上手。
+## Local-first
 
-### 导出
+拉片宝优先在本机完成素材管理和媒体分析。网络导入只处理用户主动提供的链接，不读取平台账号收藏；项目数据、识别结果和导出资产均保存在用户选择的本地位置。
 
-- 图片导出到 `LapianBaoExports/图片`。
-- 声音片段导出到 `LapianBaoExports/音效`。
-- Whisper 字幕导出为 Markdown，包含时间区间、分镜字幕索引和完整原脚本。
-- 音乐原曲或伴奏导出到 `LapianBaoExports/音乐`。
-- 已导出的图片、声音、字幕和音乐都可以从界面里跳转或拖拽到其他软件继续使用。
+## 开发环境
 
-## 当前版本的重点改进
-
-- **启动稳定：** App 启动、窗口创建、菜单安装、素材库恢复和诊断标记已经拆到独立启动模块，减少“进程存在但没有窗口”的风险。
-- **架构收拢：** `LibraryStore`、`ContentView`、播放器、设置、事件通知、项目 JSON 和外部命令执行已经按职责拆分，后续更适合做收尾维护。
-- **导入链路增强：** 网络导入状态、转码、下载器检查、`yt-dlp` 自修复、小红书公开链接解析和终态保护都有更明确的状态处理。
-- **时间线更顺：** 播放时钟、帧带、波形、场景切点和 shuttle 快捷键路径经过收敛，减少高频 UI 刷新带来的卡顿。
-- **音乐工作区完善：** 音乐识别、下载、波形、标签、排序和本地音乐资产管理被整理成独立工作区能力。
-- **声音工作区拆分：** 声音片段列表、筛选、预览、控制区和行组件已经拆开，便于最后阶段修 bug。
-- **标签边界清楚：** 视频、图片、音效和音乐标签不再混用，避免不同资产类型之间互相污染。
-- **项目文件更干净：** 当前项目级说明只保留 `README.md` 和 `AGENTS.md`；旧测试导出、一次性计划和多余说明文档已经清理。
-
-## 运行时依赖
-
-分发包会内嵌主要本地工具；可写运行时放在用户的 Application Support 中：
-
-- `RuntimeTools.bundle`：内嵌 Whisper CLI、Whisper 模型、`ffmpeg`、`ffprobe`、音乐识别脚本和场景识别脚本。
-- `yt-dlp`：由 App 自检流程下载安装到 `~/Library/Application Support/LapianBao`，仍保留 PATH fallback。
-- `music-env` / `transnet-env`：首次使用对应功能时，用 bundle 内置 Python 3.11 和 requirements 自动创建到 `~/Library/Application Support/LapianBao/PythonRuntimes/`。
-- Python 依赖首次安装需要网络连接；目标 Mac 不需要预装 Python。
-
-## 运行和验证
-
-在 Xcode 中打开 `LapianBao.xcodeproj`，选择 `LapianBao` scheme 运行。
-
-命令行构建检查：
+- macOS 14 或更高版本
+- Xcode（打开 `LapianBao.xcodeproj`）
+- Swift / SwiftUI / AppKit / AVFoundation
+- 内嵌或按需准备的 FFmpeg、Whisper、TransNetV2 等运行时工具
 
 ```bash
-xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -configuration Debug -destination 'platform=macOS' build
-```
+# Debug 构建
+xcodebuild -project LapianBao.xcodeproj \
+  -scheme LapianBao \
+  -configuration Debug \
+  -destination 'platform=macOS' build
 
-轻量回归检查：
-
-```bash
+# 轻量回归检查
 python3 Tools/regression_checks.py
 ```
 
-启动窗口检查：
+## 项目地图
 
-```bash
-Tools/check_launch_window.sh
+```text
+LapianBao/               App 主代码
+├── AppStartup/          启动与窗口协调
+├── Stores/              素材、下载与识别领域逻辑
+├── Views/               各工作区和复用视图
+├── RuntimeTools.bundle/ 本地媒体分析运行时
+Tools/                   构建、检测与回归脚本
+IconDrafts/              图标源文件
 ```
 
-改到启动、窗口、AppKit 桥接、快捷键、工程配置或外部服务自检时，构建检查和启动窗口检查都应通过。
+## 当前状态
 
-## 分发给单个用户
+当前工作分支为 **Pro 1.2**。项目已进入稳定性、分发、验收和必要修补阶段，暂不扩张大型功能或新增工作区。
 
-源码分发可以继续使用当前 GitHub 私有仓库，只邀请对方为 collaborator。这样对方能看到代码和提交历史，但不会公开项目。
-
-只分发 App 时，可以打 Release 包后压缩：
-
-```bash
-rm -rf build
-xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -configuration Release -derivedDataPath build build
-ditto -c -k --keepParent build/Build/Products/Release/拉片宝.app ~/Desktop/拉片宝.zip
-```
-
-如果没有 Developer ID 签名和 notarization，对方首次打开时可能遇到 macOS 安全提示。正式分发前应补齐签名、公证和一次干净机器验收。
-
-## 收尾阶段建议
-
-- 只修影响真实使用的 bug、打包问题、首次启动问题、导入失败问题和数据保存问题。
-- 不再新增大型工作区、新的识别整理流程或新的平台下载分支。
-- 每次收尾改动都要保持本地 Git 可回退，并在提交前跑 `python3 Tools/regression_checks.py` 和 Xcode Debug 构建。
-- 对外发包前至少验证本地导入、网络导入、播放、截图、声音导出、字幕导出、音乐识别和 App 重启恢复。
+> 本仓库为私有开发仓库。源码、构建产物和访问权限仅供受邀协作者使用。

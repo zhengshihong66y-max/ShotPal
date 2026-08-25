@@ -286,11 +286,9 @@ extension LibraryStore {
                 totalBytes: initialTotalBytes
             )
 
-            var advancedPart = false
             if hasSeenProgress,
                shouldAdvancePart(rawProgress: rawProgress, downloadedBytes: initialDownloadedBytes) {
                 partIndex += 1
-                advancedPart = true
             }
 
             let activeTotalBytes = resolvedTotalBytes(for: partIndex, updateTotalBytes: update.totalBytes)

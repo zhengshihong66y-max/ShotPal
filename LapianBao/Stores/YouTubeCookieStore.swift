@@ -2,8 +2,8 @@
 //  YouTubeCookieStore.swift
 //  LapianBao
 //
-//  设置页 "YouTube cookies" 的一键配置/更新:从 Chrome 读取 cookie、
-//  用公开视频验证能通过 YouTube 登录验证,成功才写入配置。
+//  设置页 "浏览器 cookies" 的一键配置/更新:由用户手动授权从 Chrome
+//  导出会话,供 YouTube、小红书、Bilibili、抖音遇到平台风控时使用。
 //  触发方式仅两种:设置页按钮手动点击;或用户已启用 cookie 方案后,
 //  下载遇到 YouTube 登录验证失败时按冷却自动更新一次并重试。
 //  这是全仓库唯一允许使用 --cookies-from-browser 的地方,
@@ -34,7 +34,7 @@ final class YouTubeCookieStore: ObservableObject {
     private var lastAutoRefreshAttemptAt: Date?
 
     nonisolated static let browserSourceName = "chrome"
-    nonisolated static let validationVideoURL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+    nonisolated static let cookieExportProbeURL = "https://example.com/"
     // 首次运行会弹钥匙串授权("访问 Chrome Safe Storage"),给用户留足确认时间。
     nonisolated static let refreshTimeout: TimeInterval = 240
     // 只防快速死循环,不能挡正常自愈:Chrome 活跃浏览 YouTube 时
@@ -101,7 +101,7 @@ final class YouTubeCookieStore: ObservableObject {
     nonisolated static func managedCookieFileURL() -> URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("LapianBao", isDirectory: true)
-            .appendingPathComponent("youtube-cookies.txt")
+            .appendingPathComponent("browser-cookies.txt")
     }
 
     nonisolated static func runRefresh(ytdlp: URL, exportURL: URL) -> RefreshOutcome {
@@ -128,15 +128,17 @@ final class YouTubeCookieStore: ObservableObject {
                     "--socket-timeout", "20",
                     "--retries", "1",
                     "--extractor-retries", "1",
-                    "--print", "title",
+                    "--simulate",
+                    "--ignore-errors",
                     "--no-warnings"
-                ] + extraArguments + [validationVideoURL],
+                ] + extraArguments + [cookieExportProbeURL],
                 environment: LibraryStore.downloaderProcessEnvironment(),
                 timeout: refreshTimeout
             )
 
-            if result.succeeded, FileManager.default.fileExists(atPath: tempURL.path) {
+            if let filteredCookies = filteredBrowserCookieContents(at: tempURL) {
                 do {
+                    try filteredCookies.write(to: tempURL, atomically: true, encoding: .utf8)
                     if FileManager.default.fileExists(atPath: exportURL.path) {
                         _ = try FileManager.default.replaceItemAt(exportURL, withItemAt: tempURL)
                     } else {
@@ -152,6 +154,56 @@ final class YouTubeCookieStore: ObservableObject {
         return .failure(lastFailure)
     }
 
+    nonisolated static func filteredBrowserCookieContents(at fileURL: URL) -> String? {
+        guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return nil }
+        let allowedDomains = [
+            "youtube.com", "googlevideo.com",
+            "xiaohongshu.com", "xhslink.com",
+            "bilibili.com", "b23.tv",
+            "douyin.com", "iesdouyin.com",
+            "tiktok.com"
+        ]
+        var outputLines = ["# Netscape HTTP Cookie File", "# Filtered by LapianBao to supported platform domains."]
+        var keptCookieCount = 0
+
+        for rawLine in contents.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine)
+            let fieldsLine: String
+            if line.hasPrefix("#HttpOnly_") {
+                fieldsLine = String(line.dropFirst("#HttpOnly_".count))
+            } else if line.hasPrefix("#") || line.trimmingCharacters(in: .whitespaces).isEmpty {
+                continue
+            } else {
+                fieldsLine = line
+            }
+
+            let fields = fieldsLine.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count >= 7 else { continue }
+            let domain = String(fields[0]).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            guard allowedDomains.contains(where: { domain == $0 || domain.hasSuffix(".\($0)") }) else {
+                continue
+            }
+            outputLines.append(line)
+            keptCookieCount += 1
+        }
+
+        guard keptCookieCount > 0 else { return nil }
+        return outputLines.joined(separator: "\n") + "\n"
+    }
+
+    nonisolated static func hasExportedBrowserCookies(at fileURL: URL) -> Bool {
+        guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return false }
+        return contents.split(whereSeparator: \.isNewline).contains { rawLine in
+            var line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("#HttpOnly_") {
+                line.removeFirst("#HttpOnly_".count)
+            } else if line.hasPrefix("#") {
+                return false
+            }
+            return !line.isEmpty && line.split(separator: "\t").count >= 7
+        }
+    }
+
     nonisolated static func refreshFailureMessage(_ result: ExternalProcessRunner.Result) -> String {
         if result.didTimeOut {
             return "读取超时:如果系统弹出了钥匙串授权,请点\"允许\"后再试一次"
@@ -160,10 +212,10 @@ final class YouTubeCookieStore: ObservableObject {
         let errorText = result.errorText
         let lowercased = errorText.lowercased()
         if lowercased.contains("could not find") && lowercased.contains("cookies") {
-            return "未找到 Chrome 的 cookie 数据,请确认 Chrome 已安装并打开过 youtube.com"
+            return "未找到 Chrome 的 cookie 数据，请确认 Chrome 已安装并至少打开过一个目标平台"
         }
         if lowercased.contains("sign in to confirm") || lowercased.contains("not a bot") {
-            return "Chrome 里的 YouTube 会话未通过验证,请先在 Chrome 打开并登录 youtube.com 再重试"
+            return "Chrome 会话读取失败，请先在 Chrome 打开目标平台后再重试"
         }
         if lowercased.contains("unable to download") || lowercased.contains("timed out") {
             return "网络验证失败,请确认代理可用后重试"

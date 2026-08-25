@@ -242,8 +242,8 @@ final class LibraryStore: ObservableObject {
     var videoSourcePlatformCache: [String: String?] = [:]
     var videoSourceAuthorCache: [String: String?] = [:]
     var videoSourceTitleCache: [String: String?] = [:]
-    let waveformTasks = KeyedTaskRunner<String>()
-    let audioClipWaveformTasks = KeyedTaskRunner<UUID>()
+    let waveformTasks = KeyedTaskRunner()
+    let audioClipWaveformTasks = KeyedTaskRunner()
     var pendingAudioClipWaveformIDs: [UUID] = []
     var pendingAudioClipWaveformIDSet = Set<UUID>()
     var localWaveformCacheByKey: [String: LocalWaveformCacheEntry] = [:]
@@ -251,26 +251,26 @@ final class LibraryStore: ObservableObject {
     var localWaveformCacheHydrationTask: Task<Void, Never>?
     var localWaveformCacheSaveTask: Task<Void, Never>?
     var localWaveformCacheNeedsSave = false
-    let localMusicWaveformTasks = KeyedTaskRunner<String>()
+    let localMusicWaveformTasks = KeyedTaskRunner()
     var queuedLocalMusicWaveformAssets: [LocalMusicAsset] = []
-    let musicFileDurationTasks = KeyedTaskRunner<String>()
-    let frameStripTasks = KeyedTaskRunner<String>()
+    let musicFileDurationTasks = KeyedTaskRunner()
+    let frameStripTasks = KeyedTaskRunner()
     var frameStripEmptyRetryCountsByPath: [String: Int] = [:]
-    let sceneDetectionTasks = KeyedTaskRunner<String>()
-    let sceneThumbnailHydrationTasks = KeyedTaskRunner<String>()
+    let sceneDetectionTasks = KeyedTaskRunner()
+    let sceneThumbnailHydrationTasks = KeyedTaskRunner()
     var sceneThumbnailHydrationNeeded = Set<String>()
     var transcriptBatchTask: Task<Void, Never>?
     var isTranscriptBatchPaused = false
     var sceneBatchTask: Task<Void, Never>?
     var isSceneBatchPaused = false
-    let musicDetectionTasks = KeyedTaskRunner<String>()
+    let musicDetectionTasks = KeyedTaskRunner()
     var localMusicRecognitionTask: Task<Void, Never>?
     var musicDownloadBatchTask: Task<Void, Never>?
-    let musicDownloadTasks = KeyedTaskRunner<UUID>()
-    let musicTagEnrichmentTasks = KeyedTaskRunner<String>()
+    let musicDownloadTasks = KeyedTaskRunner()
+    let musicTagEnrichmentTasks = KeyedTaskRunner()
     // 识别完成后预搜索到的 YouTube 播放页,点下载时直接命中(会话内缓存)
     var musicSearchURLBySongKey: [String: URL] = [:]
-    let musicSearchPrefetchTasks = KeyedTaskRunner<String>()
+    let musicSearchPrefetchTasks = KeyedTaskRunner()
     var resourceLibraryScanTask: Task<Void, Never>?
     var resourceLibraryScanTaskLibraryPath: String?
     var resourceLibraryScanGeneration = 0
@@ -283,7 +283,7 @@ final class LibraryStore: ObservableObject {
     var pendingVideoPathRemap: [String: String] = [:]
     var pendingVideoFolderTagsByPath: [String: [String]] = [:]
     var persistedVideoTagPaths = Set<String>()
-    let remoteImportTasks = KeyedTaskRunner<UUID>()
+    let remoteImportTasks = KeyedTaskRunner()
     var remoteImportProcesses: [UUID: Process] = [:]
     var scopedLibraryURL: URL?
     var sceneCutCache: [String: SceneCutCacheEntry] = [:]
@@ -314,7 +314,7 @@ final class LibraryStore: ObservableObject {
     var transientMediaCacheAccessTickByPath: [String: Int] = [:]
     var transientMediaCacheAccessTick = 0
     var transientMediaCacheTrimTask: Task<Void, Never>?
-    let transcriptTasks = KeyedTaskRunner<String>()
+    let transcriptTasks = KeyedTaskRunner()
 
     nonisolated static let sceneDetectorVersion = "transnetv2+hardcut-rescue@2026-05-25.1"
     nonisolated static let sceneDetectorCacheCompatibleVersions: Set<String> = [

@@ -6,7 +6,7 @@
 - 本仓库已经进入收尾阶段。默认不新增大型功能、不重做视觉体系、不引入新的平台分支，优先处理稳定性、分发、验收、文档和少量必要修补。
 - 原"交付版"从 2026-07 起统一改称 **Pro 版**。历史分支 `交付版1.0`、`交付版1.1` 保持原名，新分支、文档和提交说明使用 `Pro X.Y` 命名（当前工作分支 `Pro1.2`）。
 - 例外：项目所有者已批准在 `Pro1.2` 分支进行架构优化，目标是渐进拆分 `LibraryStore` 巨型对象、收敛手工 Task 字典。该工作按领域小步推进，每步必须通过验证命令，不改变用户可见行为。
-- 项目级 Markdown 只保留 `AGENTS.md` 和 `README.md`。`AGENTS.md` 给 Codex 和后续开发者读，`README.md` 给用户和项目所有者读。
+- 项目级 Markdown 只保留 `AGENTS.md`（给 AI 与接手开发者读）。`README.md` 是项目交付时才写给用户的成品说明，进行中一律不写；需要照着走的流程另开手册。
 - `Tools/whisper.cpp` 是第三方 submodule，里面的 README 不属于本项目文档清理范围，除非明确更新 submodule，不要改写其中内容。
 - 删除文件前先确认它不是源码、脚本、Xcode 工程配置、submodule 指针或仍被代码引用的测试夹具。
 - 不提交 `.DS_Store`、`.codex-derived/`、`__pycache__/`、`*.pyc`、虚拟环境、旧导出测试或一次性计划文件。
@@ -20,7 +20,6 @@
 
 ## 架构护栏和收尾边界
 
-- `README.md` 是用户视角的软件说明，不再承载 AI 接手手册、调试历史或长篇内部规则。
 - `AGENTS.md` 是内部规则入口。新增 AI/开发护栏先写到这里，再按需同步到 `Tools/regression_checks.py`。
 - `LibraryStore.swift` 只能保留状态壳、共享常量、轻量 helper 和门面入口。新增下载、转码、解析、持久化、导入、场景、字幕、音乐逻辑时，优先放到已有 `Stores/LibraryStore+*.swift` 边界里。
 - `ContentView.swift` 只能保留主布局壳、全局 overlay、workspace 切换和跨工作区跳转。复杂导入面板、筛选、资产列表、播放行、分析视图继续拆在 `Views/*` 子目录。

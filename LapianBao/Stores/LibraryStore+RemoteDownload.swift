@@ -58,15 +58,22 @@ extension LibraryStore {
             let isYouTubeSource = isYouTubeURL(sourceURL)
             // 配置了 cookies.txt 时优先带 cookie 请求;被风控的出口 IP 上匿名尝试必然失败,
             // 先跑完匿名再退 cookie 会让每次下载都白等一轮重试。
-            let cookieFileURL = isYouTubeSource ? configuredYouTubeCookieFileURL() : nil
+            let cookieFileURL = usesBrowserCookieJar(for: sourceURL)
+                ? configuredBrowserCookieFileURL()
+                : nil
             let didStartCookieAccess = cookieFileURL?.startAccessingSecurityScopedResource() ?? false
             defer {
                 if didStartCookieAccess {
                     cookieFileURL?.stopAccessingSecurityScopedResource()
                 }
             }
-            let attempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
-                + ytdlpArgumentAttempts(for: sourceURL)
+            let cookieAttempts = isYouTubeSource
+                ? ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
+                : ytdlpBrowserCookieFileArgumentAttempts(
+                    cookieFileURL: cookieFileURL,
+                    sourceURL: sourceURL
+                )
+            let attempts = cookieAttempts + ytdlpArgumentAttempts(for: sourceURL)
             var sawYouTubeLoginVerification = false
             // YouTube 走免探测快速启动:单进程一次解析直接开下,命名与进度
             // 信息由下载进程自己的打印行提供;其他平台保持原有探测行为。

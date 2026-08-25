@@ -36,7 +36,7 @@ extension LibraryStore {
             from: html,
             noteID: noteID
         ) else {
-            throw RemoteImportError.downloaderFailed("小红书：未找到视频信息，该笔记可能不是视频或需要登录")
+            throw RemoteImportError.downloaderFailed("小红书：未找到视频信息。请确认是视频笔记；若网页要求验证，请先在 Chrome 打开该链接，再到设置同步浏览器 cookies。")
         }
         let noteObj = parsed.note
         let videoObj = parsed.video
@@ -119,13 +119,17 @@ extension LibraryStore {
 
     nonisolated static func xiaohongshuNoteHTML(from sourceURL: URL) async throws -> String {
         try await Task.detached(priority: .utility) {
+            var headers = [
+                ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+                ("referer", "https://www.xiaohongshu.com/"),
+                ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
+            ]
+            if let cookieHeader = xiaohongshuBrowserCookieHeader() {
+                headers.append(("cookie", cookieHeader))
+            }
             let result = try runCurlFetch(
                 urlString: sourceURL.absoluteString,
-                headers: [
-                    ("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
-                    ("referer", "https://www.xiaohongshu.com/"),
-                    ("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
-                ],
+                headers: headers,
                 timeout: 30
             )
             guard (200..<300).contains(result.statusCode),
@@ -135,6 +139,38 @@ extension LibraryStore {
             }
             return html
         }.value
+    }
+
+    nonisolated static func xiaohongshuBrowserCookieHeader() -> String? {
+        guard let cookieFileURL = configuredBrowserCookieFileURL(),
+              let contents = try? String(contentsOf: cookieFileURL, encoding: .utf8)
+        else { return nil }
+
+        let now = Int(Date().timeIntervalSince1970)
+        let cookiePairs = contents
+            .split(whereSeparator: \.isNewline)
+            .compactMap { rawLine -> String? in
+                var line = String(rawLine)
+                if line.hasPrefix("#HttpOnly_") {
+                    line.removeFirst("#HttpOnly_".count)
+                } else if line.hasPrefix("#") {
+                    return nil
+                }
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+                guard fields.count >= 7 else { return nil }
+                let domain = fields[0].lowercased()
+                guard domain == "xiaohongshu.com"
+                        || domain.hasSuffix(".xiaohongshu.com")
+                        || domain == "xhslink.com"
+                        || domain.hasSuffix(".xhslink.com")
+                else { return nil }
+                if let expiry = Int(fields[4]), expiry > 0, expiry <= now { return nil }
+                let name = fields[5]
+                guard !name.isEmpty else { return nil }
+                return "\(name)=\(fields[6])"
+            }
+        guard !cookiePairs.isEmpty else { return nil }
+        return cookiePairs.joined(separator: "; ")
     }
 
     nonisolated static func sanitizedXiaohongshuInitialStateJSON(_ rawValue: String) -> String {

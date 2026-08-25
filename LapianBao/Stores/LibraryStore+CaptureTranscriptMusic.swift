@@ -827,7 +827,7 @@ extension LibraryStore {
             localMusicWaveformProgressByPath.removeValue(forKey: path)
             knownLocalResourcePaths.remove(path)
 
-            let enrichmentKeys = musicTagEnrichmentTasks.keys.filter { $0.hasPrefix("\(path)|") }
+            let enrichmentKeys = musicTagEnrichmentTasks.keys(of: String.self).filter { $0.hasPrefix("\(path)|") }
             for key in enrichmentKeys {
                 musicTagEnrichmentTasks.cancel(key)
             }

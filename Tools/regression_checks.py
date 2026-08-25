@@ -2588,6 +2588,8 @@ def main() -> None:
     music_runtime_check = swift_sources.get("LapianBao/CommandLineMusicRuntimeCheck.swift", "")
     download_progress_check = swift_sources.get("LapianBao/CommandLineDownloadProgressCheck.swift", "")
     xiaohongshu_download = swift_sources.get("LapianBao/Stores/LibraryStore+XiaohongshuDownload.swift", "")
+    browser_cookie_store = swift_sources.get("LapianBao/Stores/YouTubeCookieStore.swift", "")
+    settings_workspace = swift_sources.get("LapianBao/Views/Settings/SettingsWorkspaceView.swift", "")
     requirements_music = read("Tools/requirements-music.txt")
     bundled_requirements_music = read("LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/requirements-music.txt")
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
@@ -2838,6 +2840,20 @@ def main() -> None:
         and '--cookie", cookieFileURL.path' in launch_imports
         and "cookieFileURL:" not in xiaohongshu_download,
         "Plain Xiaohongshu page fetch must not pass account cookies.",
+    )
+    require(
+        "func ytdlpBrowserCookieFileArgumentAttempts(" in ytdlp_download
+        and "func configuredBrowserCookieFileURL()" in ytdlp_download
+        and "func usesBrowserCookieJar(for sourceURL: URL)" in ytdlp_download
+        and "xiaohongshuBrowserCookieHeader()" in xiaohongshu_download
+        and "isDouyinFreshCookieFailure" in ytdlp_download
+        and 'title: "浏览器 cookies"' in settings_workspace
+        and 'appendingPathComponent("browser-cookies.txt")' in browser_cookie_store
+        and "filteredBrowserCookieContents" in browser_cookie_store
+        and '"xiaohongshu.com", "xhslink.com"' in browser_cookie_store
+        and '"bilibili.com", "b23.tv"' in browser_cookie_store
+        and '"douyin.com", "iesdouyin.com"' in browser_cookie_store,
+        "Chinese-platform imports must reuse the user-triggered browser cookie export for Xiaohongshu, Bilibili, and Douyin anti-bot fallbacks.",
     )
     require(
         "func ytdlpBilibiliArgumentAttempts()" in ytdlp_download

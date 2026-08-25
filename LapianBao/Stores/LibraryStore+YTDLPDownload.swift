@@ -664,11 +664,42 @@ extension LibraryStore {
         return uniqueYTDLPArgumentAttempts(attempts)
     }
 
-    nonisolated static func configuredYouTubeCookieFileURL() -> URL? {
+    nonisolated static func ytdlpBrowserCookieFileArgumentAttempts(
+        cookieFileURL: URL?,
+        sourceURL: URL
+    ) -> [YTDLPArgumentAttempt] {
+        guard let cookieFileURL,
+              FileManager.default.fileExists(atPath: cookieFileURL.path)
+        else { return [] }
+
+        let workingCookieURL = throwawayCookieCopyURL(of: cookieFileURL) ?? cookieFileURL
+        let cookieArguments = ["--cookies", workingCookieURL.path]
+        return ytdlpArgumentAttempts(for: sourceURL).map { attempt in
+            let suffix = attempt.label.isEmpty ? "" : " · \(attempt.label)"
+            return YTDLPArgumentAttempt(
+                label: "浏览器 cookies\(suffix)",
+                arguments: cookieArguments + attempt.arguments
+            )
+        }
+    }
+
+    nonisolated static func usesBrowserCookieJar(for sourceURL: URL) -> Bool {
+        guard let platform = platformName(for: sourceURL) else { return false }
+        return platform == "YouTube"
+            || platform == "小红书"
+            || platform == "Bilibili"
+            || platform == "抖音"
+    }
+
+    nonisolated static func configuredBrowserCookieFileURL() -> URL? {
         guard let url = AppSettings.resolvedYouTubeCookieFileURL(),
               FileManager.default.fileExists(atPath: url.path)
         else { return nil }
         return url
+    }
+
+    nonisolated static func configuredYouTubeCookieFileURL() -> URL? {
+        configuredBrowserCookieFileURL()
     }
 
     nonisolated static func throwawayCookieCopyURL(of cookieFileURL: URL) -> URL? {
@@ -919,7 +950,10 @@ extension LibraryStore {
     ) -> String {
         let concise = conciseYTDLPError(message, fallback: fallback)
         if isBilibiliURL(sourceURL), isBilibiliPreconditionFailure(concise) {
-            return "Bilibili 返回 412 风控：已使用公开 Origin/Referer 请求头，仍失败时请确认链接可公开访问、代理出口稳定，或稍后重试。"
+            return "Bilibili 返回 412 风控：请先在 Chrome 打开 bilibili.com，再到设置同步浏览器 cookies 后重试；也可更换网络出口。"
+        }
+        if isDouyinURL(sourceURL), isDouyinFreshCookieFailure(concise) {
+            return "抖音要求新鲜会话：请先在 Chrome 打开 douyin.com，再到设置同步浏览器 cookies 后重试。"
         }
 
         guard isYouTubeURL(sourceURL),
@@ -946,6 +980,13 @@ extension LibraryStore {
             || lowercased.contains("precondition failed")
     }
 
+    nonisolated static func isDouyinFreshCookieFailure(_ message: String) -> Bool {
+        let lowercased = message.lowercased()
+        return lowercased.contains("fresh cookies")
+            || (lowercased.contains("douyin") && lowercased.contains("cookies"))
+            || lowercased.contains("抖音要求新鲜会话")
+    }
+
     nonisolated static func isYouTubeURL(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
         return host == "youtube.com" || host == "www.youtube.com"
@@ -962,6 +1003,13 @@ extension LibraryStore {
     nonisolated static func isBilibiliURL(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
         return host.contains("bilibili.com") || host == "b23.tv"
+    }
+
+    nonisolated static func isDouyinURL(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "douyin.com" || host.hasSuffix(".douyin.com")
+            || host == "iesdouyin.com" || host.hasSuffix(".iesdouyin.com")
+            || host == "tiktok.com" || host.hasSuffix(".tiktok.com")
     }
 
     nonisolated static func remoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
@@ -1048,9 +1096,16 @@ extension LibraryStore {
         let environment = downloaderProcessEnvironment()
         // 与正式下载一致:配置了 cookies.txt 时探测也 cookie 优先,
         // 否则在被风控的出口上标题和封面要等匿名尝试全部失败才出现。
-        let cookieFileURL = isYouTubeURL(sourceURL) ? configuredYouTubeCookieFileURL() : nil
-        let probeAttempts = ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
-            + ytdlpArgumentAttempts(for: sourceURL)
+        let cookieFileURL = usesBrowserCookieJar(for: sourceURL)
+            ? configuredBrowserCookieFileURL()
+            : nil
+        let cookieAttempts = isYouTubeURL(sourceURL)
+            ? ytdlpYouTubeCookieFileArgumentAttempts(cookieFileURL: cookieFileURL)
+            : ytdlpBrowserCookieFileArgumentAttempts(
+                cookieFileURL: cookieFileURL,
+                sourceURL: sourceURL
+            )
+        let probeAttempts = cookieAttempts + ytdlpArgumentAttempts(for: sourceURL)
         let info = probeAttempts
             .lazy
             .compactMap { attempt in
@@ -1088,9 +1143,6 @@ extension LibraryStore {
         guard let ytdlp = localYTDLPURL() else { return nil }
 
         return await Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = ytdlp
-            process.environment = downloaderProcessEnvironment()
             let downloaderSourceURL = ytdlpSourceURL(for: sourceURL)
             var arguments = ytdlpPlaylistSelectionArguments(for: sourceURL) + [
                 "--skip-download",
@@ -1107,51 +1159,16 @@ extension LibraryStore {
             arguments += [
                 downloaderSourceURL.absoluteString
             ]
-            process.arguments = arguments
+            let result = ExternalProcessRunner.run(
+                executableURL: ytdlp,
+                arguments: arguments,
+                environment: downloaderProcessEnvironment(),
+                qualityOfService: .utility,
+                timeout: 20
+            )
+            guard result.succeeded else { return nil }
 
-            let outputPipe = Pipe()
-            let errorPipe = Pipe()
-            let outputCollector = PipeDataCollector()
-            let errorCollector = PipeDataCollector()
-            process.standardOutput = outputPipe
-            process.standardError = errorPipe
-            outputPipe.fileHandleForReading.readabilityHandler = { handle in
-                outputCollector.append(handle.availableData)
-            }
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                errorCollector.append(handle.availableData)
-            }
-
-            do {
-                try process.run()
-            } catch {
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-                return nil
-            }
-
-            let semaphore = DispatchSemaphore(value: 0)
-            DispatchQueue.global(qos: .utility).async {
-                process.waitUntilExit()
-                semaphore.signal()
-            }
-
-            if semaphore.wait(timeout: .now() + 20) == .timedOut {
-                if process.isRunning {
-                    process.terminate()
-                }
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-                return nil
-            }
-
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-            errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
-            guard process.terminationStatus == 0 else { return nil }
-
-            let lines = (String(data: outputCollector.data, encoding: .utf8) ?? "")
+            let lines = result.outputText
                 .split(whereSeparator: \.isNewline)
                 .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                 .map { $0 == "NA" ? "" : $0 }
