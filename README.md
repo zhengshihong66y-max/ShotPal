@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/github/shotpal-feature-trio.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+  <img src="docs/assets/github/shotpal-feature-trio-1440-12fps.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
 </p>
 
 <p align="center">
