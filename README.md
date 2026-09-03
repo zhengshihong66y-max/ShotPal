@@ -2,14 +2,6 @@
   <img src="docs/assets/github/shotpal-pro-reveal.gif" width="760" alt="ShotPal Pro icon reveal">
 </p>
 
-<h1 align="center">ShotPal Pro</h1>
-
-<p align="center"><strong>Break down great films. Build better edits.</strong></p>
-
-<p align="center">
-  A local-first filmmaking workspace for studying shots, frames, sound, subtitles, and music—without losing the source.
-</p>
-
 <p align="center">
   <img src="docs/assets/github/release-strip.svg" width="820" alt="ShotPal Pro version 1.2.1 for macOS 14, Apple silicon, 968.14 MB">
 </p>
