@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/github/shotpal-feature-trio-1440-25fps-v17.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+  <img src="docs/assets/github/shotpal-feature-trio-1440-25fps-v17.webp" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
 </p>
 
 <p align="center">
@@ -11,35 +11,35 @@
 <a name="showcase"></a>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-download-en-1440-25fps-v1.gif" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-download-en-1440-25fps-v1.gif" width="1100" loading="lazy" alt="Download — Paste a public link to import the film and its source details into your library.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-scene-en-1440-25fps-v1.gif" width="1100" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-scene-en-1440-25fps-v1.webp" width="1100" loading="lazy" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-capture-en-1440-25fps-v1.webp" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-capture-en-1440-25fps-v1.webp" width="1100" loading="lazy" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-audio-en-1440-25fps-v1.gif" width="1100" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-audio-en-1440-25fps-v1.webp" width="1100" loading="lazy" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-subtitle-en-1440-25fps-v1.gif" width="1100" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-subtitle-en-1440-25fps-v1.webp" width="1100" loading="lazy" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-storyboard-en-1440-25fps-v1.gif" width="1100" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-storyboard-en-1440-25fps-v1.webp" width="1100" loading="lazy" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-drag-en-1440-25fps-v2.gif" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-drag-en-1440-25fps-v2.webp" width="1100" loading="lazy" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-music-en-1440-25fps-v1.gif" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-music-en-1440-25fps-v1.webp" width="1100" loading="lazy" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
 </p>
 
 ## Using ShotPal Pro

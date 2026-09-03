@@ -3,7 +3,12 @@
 
 Requires gif2webp (libwebp) and Pillow. Example:
   python3 Tools/export_readme_webp.py --only capture
-  python3 Tools/export_readme_webp.py --check-only
+  python3 Tools/export_readme_webp.py --replace --skip download
+  python3 Tools/export_readme_webp.py --check-only --skip download
+
+The Download GIF is intentionally retained: it is smaller than its WebP
+versions. Quality 82, sharp YUV conversion, and method 4 were visually reviewed
+at README display size. Originals remain available for re-export or rollback.
 """
 
 import argparse
@@ -12,6 +17,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+from tempfile import TemporaryDirectory
 
 from PIL import Image, ImageChops, ImageStat
 
@@ -79,23 +85,32 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", default="", help="Filter source filename")
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--quality", type=int, default=82)
+    parser.add_argument("--replace", action="store_true", help="Regenerate existing WebP files")
+    parser.add_argument("--skip", default="", help="Exclude a filename fragment")
     parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
+    if not 0 <= args.quality <= 100:
+        parser.error("Quality must be between 0 and 100")
     sources = list(dict.fromkeys(
         (ROOT / name).with_suffix(".gif")
         for name in re.findall(r'src="([^\"]+\.(?:gif|webp))"', (ROOT / "README.md").read_text())
-        if args.only in name
+        if args.only in name and (not args.skip or args.skip not in name)
     ))
     if not sources:
         parser.error("No matching README animation")
 
     def convert(source):
         output = source.with_suffix(".webp")
-        if not args.check_only and not output.exists():
-            subprocess.run([
-                "gif2webp", "-lossy", "-q", "90", "-m", "4", "-mt", "-sharp_yuv",
-                "-metadata", "none", str(source), "-o", str(output),
-            ], check=True)
+        if not args.check_only and (args.replace or not output.exists()):
+            with TemporaryDirectory(prefix=".webp-export-", dir=output.parent) as temporary:
+                candidate = Path(temporary) / output.name
+                subprocess.run([
+                    "gif2webp", "-lossy", "-q", str(args.quality), "-m", "4", "-mt", "-sharp_yuv",
+                    "-metadata", "none", str(source), "-o", str(candidate),
+                ], check=True)
+                verify(source, candidate)
+                candidate.replace(output)
         result = verify(source, output)
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return result
