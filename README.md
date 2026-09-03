@@ -6,6 +6,12 @@
   <img src="docs/assets/github/release-strip.svg" width="820" alt="ShotPal Pro version 1.2.1 for macOS 14, Apple silicon, 968.14 MB">
 </p>
 
+<h1 align="center">One film in. Reusable material out.</h1>
+
+<p align="center">
+  <img src="docs/assets/github/workflow-modules.svg" width="1100" alt="Download, analyze, and output with ShotPal Pro">
+</p>
+
 <p align="center">
   <a href="https://shotpal.newtybei.com"><strong>Official website</strong></a>
   &nbsp;·&nbsp;
@@ -20,12 +26,6 @@ ShotPal keeps the player, scene cuts, frame strip, waveform, subtitles, music, a
 
 <p align="center">
   <img src="docs/assets/github/overview.webp" width="1000" alt="ShotPal timeline and source-linked material overview">
-</p>
-
-<h1 align="center">One film in. Reusable material out.</h1>
-
-<p align="center">
-  <img src="docs/assets/github/workflow-modules.svg" width="1100" alt="Download, analyze, and output with ShotPal Pro">
 </p>
 
 ## Keep the parts worth studying
