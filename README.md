@@ -6,10 +6,8 @@
   <img src="docs/assets/github/release-strip.svg" width="820" alt="ShotPal Pro version 1.2.1 for macOS 14, Apple silicon, 968.14 MB">
 </p>
 
-<h1 align="center">One film in. Reusable material out.</h1>
-
 <p align="center">
-  <img src="docs/assets/github/workflow-modules.svg" width="1100" alt="Download, analyze, and output with ShotPal Pro">
+  <img src="docs/assets/github/feature-pipeline.svg" width="1100" alt="One film in. Reusable material out. Download, analyze, and output with ShotPal Pro">
 </p>
 
 <p align="center">
@@ -17,8 +15,6 @@
   &nbsp;·&nbsp;
   <a href="#one-film-in-reusable-material-out">See how it works</a>
 </p>
-
----
 
 ## See the whole film without losing the thread
 
