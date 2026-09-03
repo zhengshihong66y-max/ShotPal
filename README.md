@@ -9,61 +9,49 @@
 <p align="center">
   <a href="https://shotpal.newtybei.com"><strong>Official website</strong></a>
   &nbsp;·&nbsp;
-  <a href="#see-the-whole-film-without-losing-the-thread">See how it works</a>
+  <a href="#showcase">See how it works</a>
 </p>
 
-## See the whole film without losing the thread
-
-ShotPal keeps the player, scene cuts, frame strip, waveform, subtitles, music, and saved material around one source timeline. Every result remembers where it came from, so you can return to the exact moment that inspired it.
+<a name="showcase"></a>
 
 <p align="center">
-  <img src="docs/assets/github/overview.webp" width="1000" alt="ShotPal timeline and source-linked material overview">
+  <img src="docs/assets/github/showcase/shotpal-showcase-download-en-1440-25fps-v1.gif" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
 </p>
-
-## Keep the parts worth studying
-
-### Automatic storyboards
-
-Turn a long video into a navigable storyboard. ShotPal detects scene changes locally, places representative frames in order, and lets every card jump back to its exact source time.
 
 <p align="center">
-  <img src="docs/assets/github/storyboard.webp" width="1000" alt="Automatic storyboard generated from a source film">
+  <img src="docs/assets/github/showcase/shotpal-showcase-scene-en-1440-25fps-v1.gif" width="1100" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
 </p>
-
-### Frames that keep their origin
-
-Save the frame you are looking at—not a nearby approximation. Source video, timecode, tags, notes, and color information stay attached, making the visual library useful long after the first viewing.
 
 <p align="center">
-  <img src="docs/assets/github/image-library.webp" width="940" alt="Source-linked frame library">
+  <img src="docs/assets/github/showcase/shotpal-showcase-capture-en-1440-25fps-v1.gif" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
 </p>
-
-### Sound, subtitles, and music in context
-
-Mark an audio range on the waveform, transcribe speech locally, and identify music without leaving the film. Exported material keeps the source and time range needed to find it again.
 
 <p align="center">
-  <img src="docs/assets/github/music-library.webp" width="940" alt="Music library with waveforms and source information">
+  <img src="docs/assets/github/showcase/shotpal-showcase-audio-en-1440-25fps-v1.gif" width="1100" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
 </p>
-
-## One workspace, six practical tools
 
 <p align="center">
-  <img src="docs/assets/github/capabilities.svg" width="1100" alt="ShotPal capability map">
+  <img src="docs/assets/github/showcase/shotpal-showcase-subtitle-en-1440-25fps-v1.gif" width="1100" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
 </p>
 
-## Your footage stays yours
+<p align="center">
+  <img src="docs/assets/github/showcase/shotpal-showcase-storyboard-en-1440-25fps-v1.gif" width="1100" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/shotpal-showcase-drag-en-1440-25fps-v1.gif" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/shotpal-showcase-music-en-1440-25fps-v1.gif" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
+</p>
 
 <p align="center">
   <img src="docs/assets/github/local-first.svg" width="1100" alt="Local-first processing and storage model">
 </p>
 
-Video analysis, scene detection, subtitle transcription, tags, and exported material stay on your Mac. Network access is used only when you explicitly import a public link or request online metadata.
-
-## Get ShotPal Pro
-
-| Version | Requires | Package |
-|:--|:--|:--|
-| **1.2.1** | macOS 14 or later · Apple silicon | DMG · 968.14 MB |
-
-Download information, product updates, and the privacy policy are available on the **[official ShotPal website](https://shotpal.newtybei.com)**.
+<p align="center">
+  <a href="https://shotpal.newtybei.com"><strong>Get ShotPal Pro</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://shotpal.newtybei.com/privacy">Privacy policy</a>
+</p>
