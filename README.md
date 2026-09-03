@@ -22,10 +22,10 @@ ShotPal keeps the player, scene cuts, frame strip, waveform, subtitles, music, a
   <img src="docs/assets/github/overview.webp" width="1000" alt="ShotPal timeline and source-linked material overview">
 </p>
 
-## One film in. Reusable material out.
+<h1 align="center">One film in. Reusable material out.</h1>
 
 <p align="center">
-  <img src="docs/assets/github/workflow.svg" width="1100" alt="Import, break down, organize, and reuse workflow">
+  <img src="docs/assets/github/workflow-modules.svg" width="1100" alt="Download, analyze, and output with ShotPal Pro">
 </p>
 
 ## Keep the parts worth studying

@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+  <title id="title">Download, analyze, and output with ShotPal Pro</title>
+  <desc id="desc">Three key ShotPal Pro modules: download source films, analyze them locally, and output reusable creative material.</desc>
+  <defs>
+    <radialGradient id="warm" cx="0" cy="0" r="1" gradientTransform="translate(36 36) rotate(40) scale(310 230)"><stop stop-color="#ff6655" stop-opacity=".20"/><stop offset="1" stop-color="#ff6655" stop-opacity="0"/></radialGradient>
+    <radialGradient id="mint" cx="0" cy="0" r="1" gradientTransform="translate(36 36) rotate(40) scale(310 230)"><stop stop-color="#58d9b8" stop-opacity=".18"/><stop offset="1" stop-color="#58d9b8" stop-opacity="0"/></radialGradient>
+    <radialGradient id="violet" cx="0" cy="0" r="1" gradientTransform="translate(36 36) rotate(40) scale(310 230)"><stop stop-color="#8978ee" stop-opacity=".20"/><stop offset="1" stop-color="#8978ee" stop-opacity="0"/></radialGradient>
+    <linearGradient id="downloadAccent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff6655"/><stop offset="1" stop-color="#ffbd49"/></linearGradient>
+    <linearGradient id="analyzeAccent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#75e59f"/><stop offset="1" stop-color="#5bc9f5"/></linearGradient>
+    <linearGradient id="outputAccent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5bc9f5"/><stop offset="1" stop-color="#ab7cf2"/></linearGradient>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="338" rx="30" fill="#111113" stroke="#2c2c2e"/>
+
+  <g font-family="SF Pro SC, SF Pro Display, SF Pro Text, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif">
+    <g transform="translate(36 30)">
+      <rect width="360" height="280" rx="26" fill="#1c1c1e" stroke="#343438"/>
+      <rect width="360" height="280" rx="26" fill="url(#warm)"/>
+      <text x="324" y="38" fill="#8e8e93" font-size="12" font-weight="600" text-anchor="end" letter-spacing="1.1">01</text>
+      <g transform="translate(28 28)">
+        <rect width="58" height="58" rx="18" fill="#2b1b18" stroke="#ff735f" stroke-opacity=".52"/>
+        <path d="M29 14v21m-8-8 8 8 8-8M18 43h22" fill="none" stroke="url(#downloadAccent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="28" y="138" fill="#f5f5f7" font-size="29" font-weight="600" letter-spacing=".12">Download</text>
+      <text x="28" y="177" fill="#a1a1a6" font-size="17" font-weight="400">Bring public links and local films</text>
+      <text x="28" y="203" fill="#a1a1a6" font-size="17" font-weight="400">into one source-aware library.</text>
+      <rect x="28" y="236" width="118" height="28" rx="14" fill="#2a2020" stroke="#50302d"/>
+      <text x="87" y="255" fill="#ff9a86" font-size="12" font-weight="600" text-anchor="middle">LINK OR FILE</text>
+    </g>
+
+    <g transform="translate(420 30)">
+      <rect width="360" height="280" rx="26" fill="#1c1c1e" stroke="#343438"/>
+      <rect width="360" height="280" rx="26" fill="url(#mint)"/>
+      <text x="324" y="38" fill="#8e8e93" font-size="12" font-weight="600" text-anchor="end" letter-spacing="1.1">02</text>
+      <g transform="translate(28 28)">
+        <rect width="58" height="58" rx="18" fill="#172522" stroke="#58d9b8" stroke-opacity=".52"/>
+        <rect x="13" y="15" width="32" height="28" rx="6" fill="none" stroke="url(#analyzeAccent)" stroke-width="2.5"/>
+        <path d="M18 34l5-7 5 4 5-10 7 13" fill="none" stroke="url(#analyzeAccent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="28" y="138" fill="#f5f5f7" font-size="29" font-weight="600" letter-spacing=".12">Analyze</text>
+      <text x="28" y="177" fill="#a1a1a6" font-size="17" font-weight="400">Find scenes, frames, sound, speech,</text>
+      <text x="28" y="203" fill="#a1a1a6" font-size="17" font-weight="400">and music locally on your Mac.</text>
+      <rect x="28" y="236" width="126" height="28" rx="14" fill="#182925" stroke="#285047"/>
+      <text x="91" y="255" fill="#80e2c9" font-size="12" font-weight="600" text-anchor="middle">LOCAL FIRST</text>
+    </g>
+
+    <g transform="translate(804 30)">
+      <rect width="360" height="280" rx="26" fill="#1c1c1e" stroke="#343438"/>
+      <rect width="360" height="280" rx="26" fill="url(#violet)"/>
+      <text x="324" y="38" fill="#8e8e93" font-size="12" font-weight="600" text-anchor="end" letter-spacing="1.1">03</text>
+      <g transform="translate(28 28)">
+        <rect width="58" height="58" rx="18" fill="#201b2b" stroke="#8978ee" stroke-opacity=".58"/>
+        <path d="M17 41h24V17H29m4-5h13v13m0-13L27 31" fill="none" stroke="url(#outputAccent)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="28" y="138" fill="#f5f5f7" font-size="29" font-weight="600" letter-spacing=".12">Output</text>
+      <text x="28" y="177" fill="#a1a1a6" font-size="17" font-weight="400">Export or drag useful material</text>
+      <text x="28" y="203" fill="#a1a1a6" font-size="17" font-weight="400">straight into your next edit.</text>
+      <rect x="28" y="236" width="138" height="28" rx="14" fill="#211d31" stroke="#40365f"/>
+      <text x="97" y="255" fill="#b4a6f7" font-size="12" font-weight="600" text-anchor="middle">READY TO USE</text>
+    </g>
+  </g>
+</svg>
