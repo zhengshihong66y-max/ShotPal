@@ -79,14 +79,14 @@
   },
   {
     "key": "drag",
-    "file": "shotpal-showcase-drag-en-1440-25fps-v1.gif",
+    "file": "shotpal-showcase-drag-en-1440-25fps-v2.gif",
     "width": 1440,
     "height": 1080,
     "fps": 25,
     "seconds": 7,
     "frames": 175,
-    "bytes": 18705102,
-    "sha256": "46ebbc0cc2d38537fb494c1fe021e4ae0c5045ab66ffdcdc3a7dceb259120ace",
+    "bytes": 17985213,
+    "sha256": "efbd13eb070b2643181d02495ba758643426c0f09bd53543f73e6e85bc038079",
     "title": "Your selects, ready to drag anywhere.",
     "description": "Select and drag frames, audio, or music straight into your editing software."
   },

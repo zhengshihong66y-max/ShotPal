@@ -39,7 +39,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-drag-en-1440-25fps-v1.gif" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-drag-en-1440-25fps-v2.gif" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
 </p>
 
 <p align="center">
