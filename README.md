@@ -73,6 +73,22 @@ Exported frames, audio, transcripts, storyboards, and downloaded music are saved
 
 Scene detection and subtitle transcription run locally on your Mac. Online imports and music lookups need an internet connection.
 
+## Open-source acknowledgements
+
+ShotPal Pro builds on the work of these open-source communities. Thank you to their maintainers and contributors.
+
+| Project | What it makes possible |
+| :-- | :-- |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Download video and audio from supported online sources. |
+| [FFmpeg and ffprobe](https://ffmpeg.org/) | Inspect and process media, convert formats, and extract audio. |
+| [Whisper](https://github.com/openai/whisper) and [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Transcribe dialogue into subtitles locally on your Mac. |
+| [TransNet V2](https://github.com/soCzech/TransNetV2) and its [PyTorch implementation](https://github.com/allenday/transnetv2_pytorch) | Detect shot boundaries for scene-by-scene film analysis. |
+| [ShazamIO](https://github.com/shazamio/ShazamIO) | Connect to the online Shazam service to identify music. |
+
+The supporting runtime also uses [Python](https://www.python.org/), [python-build-standalone](https://github.com/astral-sh/python-build-standalone), [Deno](https://github.com/denoland/deno), [PyTorch](https://pytorch.org/), and [NumPy](https://numpy.org/).
+
+These credits highlight the main projects, not every transitive dependency. Each project retains its own license and copyright notices.
+
 <p align="center">
   <a href="https://shotpal.newtybei.com"><strong>Get ShotPal Pro</strong></a>
   &nbsp;·&nbsp;
