@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/github/shotpal-pro-reveal.gif" width="760" alt="ShotPal Pro icon reveal">
+  <img src="docs/assets/github/shotpal-feature-trio.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
 </p>
 
 <p align="center">
@@ -7,13 +7,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/feature-workflow-ui.svg" width="1100" alt="Real ShotPal interface views for downloading, analyzing, and outputting reusable material">
-</p>
-
-<p align="center">
   <a href="https://shotpal.newtybei.com"><strong>Official website</strong></a>
   &nbsp;·&nbsp;
-  <a href="#one-film-in-reusable-material-out">See how it works</a>
+  <a href="#see-the-whole-film-without-losing-the-thread">See how it works</a>
 </p>
 
 ## See the whole film without losing the thread
