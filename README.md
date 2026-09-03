@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/feature-pipeline-premium.svg" width="1100" alt="One film in. Reusable material out. Download, analyze, and output with ShotPal Pro">
+  <img src="docs/assets/github/feature-workflow-ui.svg" width="1100" alt="Real ShotPal interface views for downloading, analyzing, and outputting reusable material">
 </p>
 
 <p align="center">
