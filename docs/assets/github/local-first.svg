@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">ShotPal Pro processes and stores film material locally</title>
+  <desc id="desc">Source films enter local analysis, then scenes, frames, sound, subtitles, music, and metadata are saved in the user's chosen library on their Mac.</desc>
+  <defs><linearGradient id="local" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#58d9b8"/><stop offset="1" stop-color="#8978ee"/></linearGradient></defs>
+  <rect x="1" y="1" width="1198" height="318" rx="30" fill="#0d1117" stroke="#30363d"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <text x="42" y="55" fill="#f0f6fc" font-size="25" font-weight="650">Your footage stays on your Mac.</text><text x="42" y="83" fill="#8b949e" font-size="15">Local analysis by default. Network access only when you ask for it.</text>
+    <g transform="translate(42 120)"><rect width="270" height="142" rx="22" fill="#161b22" stroke="#30363d"/><text x="24" y="38" fill="#8b949e" font-size="13" font-weight="700" letter-spacing="1.5">SOURCE</text><text x="24" y="77" fill="#f0f6fc" font-size="22" font-weight="650">Your films</text><text x="24" y="108" fill="#8b949e" font-size="14">Local files or links you choose</text></g>
+    <path d="M332 191H438" stroke="url(#local)" stroke-width="3" stroke-linecap="round"/><path d="m426 181 12 10-12 10" fill="none" stroke="#58d9b8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(458 120)"><rect width="284" height="142" rx="22" fill="#14231f" stroke="#58d9b8"/><text x="24" y="38" fill="#7ce5ca" font-size="13" font-weight="700" letter-spacing="1.5">ON-DEVICE</text><text x="24" y="77" fill="#f0f6fc" font-size="22" font-weight="650">ShotPal analysis</text><text x="24" y="108" fill="#9ac8bb" font-size="14">Scenes · speech · media metadata</text></g>
+    <path d="M762 191H868" stroke="url(#local)" stroke-width="3" stroke-linecap="round"/><path d="m856 181 12 10-12 10" fill="none" stroke="#8978ee" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(888 120)"><rect width="270" height="142" rx="22" fill="#1d192a" stroke="#8978ee"/><text x="24" y="38" fill="#ad9cf5" font-size="13" font-weight="700" letter-spacing="1.5">YOUR LIBRARY</text><text x="24" y="77" fill="#f0f6fc" font-size="22" font-weight="650">Reusable material</text><text x="24" y="108" fill="#aaa1c9" font-size="14">Files and readable metadata</text></g>
+  </g>
+</svg>
