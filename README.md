@@ -8,10 +8,6 @@
   </a>
 </p>
 
-<p align="center">
-  <a href="#showcase">See how it works</a>
-</p>
-
 <a name="showcase"></a>
 
 <p align="center">
