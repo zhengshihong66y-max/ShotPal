@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title desc">
+  <title id="title">One film in. Reusable material out.</title>
+  <desc id="desc">ShotPal Pro downloads source films, analyzes them locally, and outputs reusable creative material.</desc>
+  <defs>
+    <linearGradient id="warmCard" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5a302c"/><stop offset=".48" stop-color="#3f2928"/><stop offset="1" stop-color="#201b1e"/></linearGradient>
+    <linearGradient id="mintCard" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#25463e"/><stop offset=".48" stop-color="#263b38"/><stop offset="1" stop-color="#1a2023"/></linearGradient>
+    <linearGradient id="violetCard" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#41395f"/><stop offset=".48" stop-color="#323047"/><stop offset="1" stop-color="#1d1b27"/></linearGradient>
+    <radialGradient id="warmLight" cx="0" cy="0" r="1" gradientTransform="translate(24 10) rotate(34) scale(390 310)"><stop stop-color="#ff765f" stop-opacity=".31"/><stop offset=".56" stop-color="#ff8e62" stop-opacity=".09"/><stop offset="1" stop-color="#ff765f" stop-opacity="0"/></radialGradient>
+    <radialGradient id="mintLight" cx="0" cy="0" r="1" gradientTransform="translate(24 10) rotate(34) scale(390 310)"><stop stop-color="#65ddb5" stop-opacity=".27"/><stop offset=".56" stop-color="#5bc9f5" stop-opacity=".08"/><stop offset="1" stop-color="#65ddb5" stop-opacity="0"/></radialGradient>
+    <radialGradient id="violetLight" cx="0" cy="0" r="1" gradientTransform="translate(24 10) rotate(34) scale(390 310)"><stop stop-color="#9a86f5" stop-opacity=".30"/><stop offset=".56" stop-color="#5bc9f5" stop-opacity=".08"/><stop offset="1" stop-color="#9a86f5" stop-opacity="0"/></radialGradient>
+    <linearGradient id="downloadAccent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff876d"/><stop offset="1" stop-color="#ffd069"/></linearGradient>
+    <linearGradient id="analyzeAccent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#83efb1"/><stop offset="1" stop-color="#67d6ff"/></linearGradient>
+    <linearGradient id="outputAccent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#75d6ff"/><stop offset="1" stop-color="#bd9aff"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000" flood-opacity=".38"/></filter>
+    <filter id="warmGlow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="16"/></filter>
+  </defs>
+
+  <rect width="1200" height="470" rx="32" fill="#111113"/>
+
+  <g font-family="SF Pro SC, SF Pro Display, SF Pro Text, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif">
+    <text x="600" y="82" fill="#f5f5f7" font-size="52" font-weight="600" letter-spacing="-1.45" text-anchor="middle">One film in. Reusable material out.</text>
+
+    <g transform="translate(30 126)" filter="url(#shadow)">
+      <rect width="364" height="306" rx="32" fill="url(#warmCard)"/>
+      <rect width="364" height="306" rx="32" fill="url(#warmLight)"/>
+      <circle cx="76" cy="153" r="58" fill="#ff765f" opacity=".13" filter="url(#warmGlow)"/>
+      <path d="M76 97v73m-24-25 24 25 24-25M48 195h56" fill="none" stroke="url(#downloadAccent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="154" y="111" fill="#fff" font-size="39" font-weight="600" letter-spacing="-.55">Download</text>
+      <text x="154" y="157" fill="#d1cbcd" font-size="20" font-weight="400">Bring public links</text>
+      <text x="154" y="188" fill="#d1cbcd" font-size="20" font-weight="400">or local films into</text>
+      <text x="154" y="219" fill="#d1cbcd" font-size="20" font-weight="400">one source library.</text>
+    </g>
+
+    <g transform="translate(418 126)" filter="url(#shadow)">
+      <rect width="364" height="306" rx="32" fill="url(#mintCard)"/>
+      <rect width="364" height="306" rx="32" fill="url(#mintLight)"/>
+      <circle cx="75" cy="151" r="58" fill="#58d9b8" opacity=".12" filter="url(#warmGlow)"/>
+      <circle cx="68" cy="142" r="35" fill="none" stroke="url(#analyzeAccent)" stroke-width="6"/>
+      <path d="M93 167l31 31" fill="none" stroke="url(#analyzeAccent)" stroke-width="7" stroke-linecap="round"/>
+      <path d="M48 148l12-14 12 10 15-21" fill="none" stroke="url(#analyzeAccent)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="154" y="111" fill="#fff" font-size="39" font-weight="600" letter-spacing="-.55">Analyze</text>
+      <text x="154" y="157" fill="#cbd4d1" font-size="20" font-weight="400">Find scenes, frames,</text>
+      <text x="154" y="188" fill="#cbd4d1" font-size="20" font-weight="400">sound, speech, and</text>
+      <text x="154" y="219" fill="#cbd4d1" font-size="20" font-weight="400">music locally.</text>
+    </g>
+
+    <g transform="translate(806 126)" filter="url(#shadow)">
+      <rect width="364" height="306" rx="32" fill="url(#violetCard)"/>
+      <rect width="364" height="306" rx="32" fill="url(#violetLight)"/>
+      <circle cx="76" cy="151" r="58" fill="#8978ee" opacity=".14" filter="url(#warmGlow)"/>
+      <path d="M43 169v30h69V111H82" fill="none" stroke="url(#outputAccent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M65 101h48v48M113 101 60 154" fill="none" stroke="url(#outputAccent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="154" y="111" fill="#fff" font-size="39" font-weight="600" letter-spacing="-.55">Output</text>
+      <text x="154" y="157" fill="#d0cddd" font-size="20" font-weight="400">Export or drag</text>
+      <text x="154" y="188" fill="#d0cddd" font-size="20" font-weight="400">reusable material</text>
+      <text x="154" y="219" fill="#d0cddd" font-size="20" font-weight="400">into your next edit.</text>
+    </g>
+  </g>
+</svg>
