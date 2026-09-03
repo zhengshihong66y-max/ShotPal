@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/release-strip.svg" width="820" alt="ShotPal Pro 1.2.1 RC7 for macOS 14, Apple silicon, 968.14 MB">
+  <img src="docs/assets/github/release-strip.svg" width="820" alt="ShotPal Pro version 1.2.1 for macOS 14, Apple silicon, 968.14 MB">
 </p>
 
 <p align="center">
@@ -78,10 +78,8 @@ Video analysis, scene detection, subtitle transcription, tags, and exported mate
 
 ## Get ShotPal Pro
 
-| Current build | Requires | Package |
+| Version | Requires | Package |
 |:--|:--|:--|
-| **1.2.1 RC7** | macOS 14 or later · Apple silicon | DMG · 968.14 MB |
+| **1.2.1** | macOS 14 or later · Apple silicon | DMG · 968.14 MB |
 
 Download information, product updates, and the privacy policy are available on the **[official ShotPal website](https://shotpal.newtybei.com)**.
-
-> ShotPal Pro is currently in release-candidate validation. This repository is the private source workspace for invited collaborators.
