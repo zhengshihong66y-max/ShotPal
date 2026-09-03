@@ -3,12 +3,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/release-strip.svg" width="820" alt="ShotPal Pro version 1.2.1 for macOS 14, Apple silicon, 968.14 MB">
+  <a href="https://shotpal.newtybei.com">
+    <img src="docs/assets/github/release-strip.svg" width="820" alt="Visit the official ShotPal Pro website — Version 1.2.1, macOS 14+, Apple silicon, 968.14 MB">
+  </a>
 </p>
 
 <p align="center">
-  <a href="https://shotpal.newtybei.com"><strong>Official website</strong></a>
-  &nbsp;·&nbsp;
   <a href="#showcase">See how it works</a>
 </p>
 
