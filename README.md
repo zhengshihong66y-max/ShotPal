@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/github/icon-assemble.gif" width="720" alt="拉片宝图标组装动画">
+  <img src="docs/assets/github/shotpal-pro-reveal.gif" width="720" alt="拉片宝图标组装动画">
 </p>
 
 <h1 align="center">拉片宝 · ShotPal</h1>
