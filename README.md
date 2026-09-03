@@ -42,9 +42,36 @@
   <img src="docs/assets/github/showcase/shotpal-showcase-music-en-1440-25fps-v1.gif" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
 </p>
 
-<p align="center">
-  <img src="docs/assets/github/local-first.svg" width="1100" alt="Local-first processing and storage model">
-</p>
+## Using ShotPal Pro
+
+ShotPal Pro is a film-analysis and reference tool for filmmakers, not a video editor. Study cuts, save exact frames, extract sound, transcribe dialogue, identify music, and export storyboards. Take the material you select into your editing software to build your next project.
+
+### Quick start
+
+1. **Choose your library.** Open ShotPal Pro and select a folder on your Mac. This is where the app keeps your library and exported material.
+2. **Bring in a film.** Open a video from that folder, or use **+** to paste a supported public link and download it. Use material you have permission to work with.
+3. **Explore the timeline.** Use Scene Mode to detect cuts and navigate between shots. Generate subtitles to follow the dialogue, or open the Music tab to identify tracks.
+4. **Keep what you need.** Save frames, export an audio range, or create a storyboard. Drag saved frames, audio, and music from the export panel into compatible editing software.
+
+### Preview shortcuts
+
+These are the default shortcuts while the video preview is active.
+
+| Key | Action |
+| :-- | :-- |
+| `Space` | Play / pause |
+| `←` / `→` | Previous / next frame |
+| `↑` / `↓` | Previous / next detected cut |
+| `E` | Save the current frame |
+| `I` / `O` | Set the audio range's In / Out points |
+| `P` | Export the selected audio range |
+| `U` | Clear the audio selection |
+
+### Your files
+
+Exported frames, audio, transcripts, storyboards, and downloaded music are saved in subfolders of your chosen library. Keep the library folder, its metadata, and your original videos together when backing up your work.
+
+Scene detection and subtitle transcription run locally on your Mac. Online imports and music lookups need an internet connection.
 
 <p align="center">
   <a href="https://shotpal.newtybei.com"><strong>Get ShotPal Pro</strong></a>
