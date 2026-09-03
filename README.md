@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/github/showcase/shotpal-showcase-capture-en-1440-25fps-v1.gif" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
+  <img src="docs/assets/github/showcase/shotpal-showcase-capture-en-1440-25fps-v1.webp" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
 </p>
 
 <p align="center">
