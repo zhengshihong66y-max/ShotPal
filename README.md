@@ -1,11 +1,11 @@
 <p align="center">
-  <a href="https://shotpal.newtybei.com">
+  <a href="https://shotpal.newtybei.com/#overview-story">
     <img src="docs/assets/github/shotpal-feature-trio-github.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://shotpal.newtybei.com"><strong>▶ Watch the full product demo</strong></a><br>
+  <a href="https://shotpal.newtybei.com/#overview-story"><strong>▶ Watch the latest interactive product demo</strong></a><br>
   <sub>The first frame is a complete overview when animated images are disabled.</sub>
 </p>
 
