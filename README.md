@@ -1,4 +1,4 @@
-<p><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a526014cc8168e09aed615716afb59ca40316b67/docs/assets/github/language/en-active.svg" width="96" height="40" alt="EN — selected"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a526014cc8168e09aed615716afb59ca40316b67/docs/assets/github/language/zh-inactive.svg" width="96" height="40" alt="简中 — 切换至简体中文"></a></p>
+<p><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/en-active.svg" width="96" height="40" alt="EN — selected"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/zh-inactive.svg" width="96" height="40" alt="简中 — 切换至简体中文"></a></p>
 
 <a name="feature-previews"></a>
 <a name="showcase"></a>
