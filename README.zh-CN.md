@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/7f3bb2aa9cb3a8b57a0f9a4af7415279ff933b1d/docs/assets/github/zh-CN/release-strip.svg" width="1100" height="132" alt="下载 ShotPal Pro DMG — 版本与系统要求">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/d7535e84eb87a1ac3499c0174a69df17ab57bdbb/docs/assets/github/zh-CN/release-strip.svg" width="1100" height="132" alt="下载 拉片宝 Pro DMG — 版本与系统要求">
   </a>
 </p>
 
@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="ShotPal Pro：导入影片、分析视听语言，将画面与片段整理为可复用素材">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="拉片宝 Pro：导入影片、分析视听语言，将画面与片段整理为可复用素材">
   </a>
 </p>
 
@@ -47,15 +47,15 @@
   <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/63f4dde656162ecba2e73ea3a15df384582d865b/docs/assets/github/demos/zh-CN/music.%67if" width="1100" height="825" alt="音乐识别：识别曲目，并定位它们在影片中出现的时刻。">
 </p>
 
-## ShotPal 是什么？
+## 拉片宝是什么？
 
-ShotPal Pro（拉片宝）是一款原生 Mac 拉片工具，帮助你分析影片，将分镜、画面、声音与字幕整理成可重复使用的参考素材库。
+拉片宝 Pro是一款原生 Mac 拉片工具，帮助你分析影片，将分镜、画面、声音与字幕整理成可重复使用的参考素材库。
 
 **macOS 14+ · Apple 芯片 · 英文 / 简体中文**
 
 采用 [MIT 许可证](LICENSE)。欢迎参与改进，详见[贡献指南](.github/CONTRIBUTING.md)。
 
-## 为什么使用 ShotPal？
+## 为什么使用拉片宝？
 
 - **看懂影片。** 通过分镜识别、字幕与音乐识别，研究一段影片如何组织视听语言。
 - **保留素材来源。** 保存画面与音频时关联原片和时间码，随时回到准确的影片位置。
@@ -63,13 +63,13 @@ ShotPal Pro（拉片宝）是一款原生 Mac 拉片工具，帮助你分析影�
 
 分镜识别与字幕转写在 Mac 本地运行。在线导入与音乐识别需要联网。
 
-## 如何使用 ShotPal？
+## 如何使用拉片宝？
 
 DMG 包含应用及所需工具，也可以从本仓库的 **Releases → Assets** 找到。
 
 **当前版本：1.2.1 候选版。** 已完成 Developer ID 签名，Apple 公证与干净 Mac 验收仍在等待完成。如果 macOS 阻止安装，请等待公证完成后的版本。
 
-1. 公证完成后，打开 DMG，将 **ShotPal Pro** 拖入**应用程序**，再选择一个素材库文件夹。
+1. 公证完成后，打开 DMG，将 **拉片宝 Pro** 拖入**应用程序**，再选择一个素材库文件夹。
 2. 打开本地视频，或点击 **+** 导入支持的平台链接。
 3. 使用**分镜模式**、字幕或音乐识别分析影片。
 4. 保存画面、导出音频或生成分镜表，再将保存的素材拖入剪辑软件。
@@ -86,4 +86,4 @@ DMG 包含应用及所需工具，也可以从本仓库的 **Releases → Assets
 | U | 清除音频选区 |
 | P | 导出所选音频 |
 
-请将原始视频与素材库文件夹一起保存，确保 ShotPal 能找到源素材。
+请将原始视频与素材库文件夹一起保存，确保拉片宝 能找到源素材。
