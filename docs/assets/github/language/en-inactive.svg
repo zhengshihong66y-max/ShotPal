@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="96" height="40" viewBox="0 0 96 40" role="img" aria-label="English — switch language">
 <title>English — switch language</title>
 <defs><linearGradient id="selected" x2="0" y2="1"><stop stop-color="#39393d"/><stop offset="1" stop-color="#29292c"/></linearGradient></defs>
-<path d="M12 0.5H96V39.5H12Q0.5 39.5 0.5 28V12Q0.5 0.5 12 0.5Z" fill="#111113" stroke="#303034"/>
+<path d="M20 0.5H96V39.5H20A19.5 19.5 0 0 1 0.5 20A19.5 19.5 0 0 1 20 0.5Z" fill="#111113" stroke="#303034"/>
 
 <g fill="#98989f"><path transform="translate(38.40234375 25) scale(1 -1)" d="M1.217 0.000L7.602 0.000L7.602 1.483L2.980 1.483L2.980 4.307L7.349 4.307L7.349 5.708L2.980 5.708L2.980 8.381L7.602 8.381L7.602 9.864L1.217 9.864Z"/><path transform="translate(46.974609375 25) scale(1 -1)" d="M1.217 0.000L2.919 0.000L2.919 6.795L3.028 6.795L7.875 0.000L9.399 0.000L9.399 9.864L7.704 9.864L7.704 3.069L7.595 3.069L2.748 9.864L1.217 9.864Z"/></g>
 </svg>
