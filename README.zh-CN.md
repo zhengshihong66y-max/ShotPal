@@ -1,10 +1,10 @@
+<p align="center"><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/en-inactive.svg" width="96" height="40" alt="EN — switch to English"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/zh-active.svg" width="96" height="40" alt="简中 — 当前语言"></a></p>
+
 <p align="center">
   <a href="https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/7f3bb2aa9cb3a8b57a0f9a4af7415279ff933b1d/docs/assets/github/zh-CN/release-strip.svg" width="820" height="98" alt="下载 ShotPal Pro DMG — 版本与系统要求">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/7f3bb2aa9cb3a8b57a0f9a4af7415279ff933b1d/docs/assets/github/zh-CN/release-strip.svg" width="1100" height="132" alt="下载 ShotPal Pro DMG — 版本与系统要求">
   </a>
 </p>
-
-<p><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/en-inactive.svg" width="96" height="40" alt="EN — switch to English"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/zh-active.svg" width="96" height="40" alt="简中 — 当前语言"></a></p>
 
 <a name="feature-previews"></a>
 <a name="showcase"></a>
