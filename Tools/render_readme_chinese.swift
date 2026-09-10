@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import ImageIO
 import UniformTypeIdentifiers
 // Native renderer for the Chinese README graphics. Run on macOS:
@@ -10,9 +11,30 @@ try FileManager.default.createDirectory(at:output.appendingPathComponent("poster
 func color(_ hex:Int)->NSColor { NSColor(srgbRed:CGFloat((hex>>16)&255)/255,green:CGFloat((hex>>8)&255)/255,blue:CGFloat(hex&255)/255,alpha:1) }
 func drawText(_ s:String,_ r:NSRect,_ size:CGFloat,_ weight:NSFont.Weight = .semibold,_ tint:NSColor = color(0xf5f5f7),_ center:Bool = false) {
  let p=NSMutableParagraphStyle(); p.alignment=center ? .center : .left
- // SF system font supplies Latin glyphs; Core Text chooses the matching CJK fallback.
- let font=NSFont.systemFont(ofSize:size,weight:weight)
- (s as NSString).draw(in:r,withAttributes:[.font:font,.foregroundColor:tint,.paragraphStyle:p])
+ // SF Pro has no Han glyphs. Use an explicit CJK cascade with half-width
+ // punctuation advances, instead of relying on the system UI font fallback.
+ let suffix = weight == .regular ? "Regular" : "Semibold"
+ let cjk = CTFontDescriptorCreateWithAttributes([
+  kCTFontNameAttribute: "PingFangSC-" + suffix,
+  kCTFontFeatureSettingsAttribute: [[kCTFontOpenTypeFeatureTag: "halt", kCTFontOpenTypeFeatureValue: 1]]
+ ] as CFDictionary)
+ let sf = CTFontDescriptorCreateWithAttributes([
+  kCTFontNameAttribute: (size >= 24 ? "SFProDisplay-" : "SFProText-") + suffix,
+  kCTFontCascadeListAttribute: [cjk]
+ ] as CFDictionary)
+ let font = CTFontCreateWithFontDescriptor(sf,size,nil)
+ let text = NSMutableAttributedString(string:s,attributes:[.font:font,.foregroundColor:tint,.paragraphStyle:p])
+ // Apply the CJK descriptor explicitly so punctuation retains its spacing feature.
+ let chinese = CTFontCreateWithFontDescriptor(cjk,size,nil)
+ let ns = s as NSString
+ for i in 0..<ns.length {
+  let u = ns.character(at:i)
+  if (0x2E80...0x9FFF).contains(u) || (0xFF00...0xFFEF).contains(u) {
+   text.addAttribute(.font,value:chinese,range:NSRange(location:i,length:1))
+  }
+ }
+ if size >= 30 { text.addAttribute(.kern,value:-0.02*size,range:NSRange(location:0,length:text.length)) }
+ text.draw(in:r)
 }
 func render(_ w:Int,_ h:Int,_ body:()->Void)->CGImage {
  let rep=NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:w,pixelsHigh:h,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!
