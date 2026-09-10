@@ -8,9 +8,9 @@ A native macOS tool for studying films, capturing frames, extracting audio, and 
 
 ## Download and install
 
-> **Release candidate: 1.2.1, build 2026090901.** The installer is Developer ID–signed. Apple notarization and clean-Mac acceptance are pending, so this is not yet the final launch. Repository access is currently private; only authorized readers can download its assets.
+> **Release candidate: 1.2.1, build 2026090901.** The installer is Developer ID–signed. Apple notarization and clean-Mac acceptance are pending, so this is not yet the final launch. Public installer downloads are available in [ShotPal-Releases](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901). This source repository and its complete developer package remain private.
 
-1. Open the [1.2.1 release candidate](https://github.com/zhengshihong66y-max/LapianBao/releases/tag/v1.2.1-rc.2026090901).
+1. Open the [public 1.2.1 release candidate](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901).
 2. Under **Assets**, download `ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg` (about 918 MiB).
 3. Once the release has passed notarization, open the DMG, drag the app to **Applications**, then eject the disk image.
 4. Launch the app from Applications and choose a writable folder for your library. This candidate may be blocked by Gatekeeper until notarization is completed; do not disable macOS security to install it.
@@ -18,8 +18,8 @@ A native macOS tool for studying films, capturing frames, extracting audio, and 
 | Release asset | Who needs it |
 | :-- | :-- |
 | `ShotPal-Pro-…-macOS14-AppleSilicon.dmg` | Users: the complete application, including all required local runtimes and models. |
-| `ShotPal-Pro-…-Complete-Developer-Package.tar.gz` | Developers: source, Xcode project, tools, bundled runtime, models, dependency notices, and Whisper submodule source. |
-| `SHA256SUMS.txt` | Checksums for both uploaded packages. A checksum verifies file integrity, not Apple approval. |
+| `ShotPal-Pro-…-Complete-Developer-Package.tar.gz` | Authorized developers, via the private source release: source, Xcode project, tools, bundled runtime, models, dependency notices, and Whisper submodule source. |
+| `SHA256SUMS.txt` | The public release checksums the installer; the private source release checksums both complete packages. A checksum verifies file integrity, not Apple approval. |
 
 **Use the DMG to install.** GitHub's **Code → Download ZIP** and **Source code (zip/tar.gz)** links contain developer source files, not the application. You do not need Xcode, Git, Python, Homebrew, or a separate model download to use a complete release installer.
 
@@ -27,7 +27,7 @@ Intel Macs, Windows, Linux, and macOS versions below 14 are not supported by thi
 
 ### Installation help
 
-- **The Releases page shows 404:** this repository is private and requires an authorized GitHub account, or the address has changed. Check the [official website](https://shotpal.newtybei.com) for release updates.
+- **The source release shows 404:** the development repository is private. Use the [public installer release](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901) for downloads without an account.
 - **macOS rejects the app or reports it damaged:** download the official installer again. If it still fails, report the exact warning and your macOS version. A public release must pass signing and notarization checks; disabling Gatekeeper is not an installation step.
 - **The app cannot save files:** choose a local folder you can write to and allow access when macOS asks. Keep your original media and library metadata together when backing up.
 - **The app opens in the wrong language:** it follows your macOS preferred app language. Quit and reopen it after changing the language. English is the fallback for unsupported languages.
@@ -146,24 +146,77 @@ The native app uses SwiftUI and AppKit. `ContentView` hosts the interface; `Libr
 
 ### Architecture and ownership
 
+This map describes the complete Pro application at source revision `a2d1d082`, used for version 1.2.1, build 2026090901. The separate App Store clean edition is a different working tree and is not part of this release.
+
 ```mermaid
 flowchart TD
-    A[AppDelegate] --> B[AppStartupCoordinator]
-    B --> C[AppWindowManager]
-    C --> D[SwiftUI screens]
-    D --> E[LibraryStore and domain stores]
-    E --> F[ProjectRepository and MetadataPersistence]
+    A[AppDelegate / LapianBaoApp] --> B[AppStartupCoordinator]
+    B --> C[AppWindowManager / retained NSWindow]
+    C --> D[ContentView / SwiftUI workspaces]
+    D --> E[LibraryStore / domain extensions]
+    D --> F[DownloaderSelfCheckStore / YouTubeCookieStore]
+    D --> P[PreviewController / AVPlayerLayer]
     E --> G[KeyedTaskRunner]
-    E --> H[ExternalProcessRunner]
-    H --> I[Bundled media tools and local models]
-    F --> J[User-selected library folder]
+    E --> H[ProjectRepository / MetadataPersistence]
+    E --> I[ExternalProcessRunner]
+    E --> J[YTDLPRuntime / DownloaderReadiness]
+    J --> I
+    I --> K[Bundled Python / FFmpeg / yt-dlp / Deno]
+    I --> L[Whisper / TransNet / music recognition]
+    H --> M[User-selected library / exports / JSON caches]
+    K --> N[Online media providers]
+    L --> O[Local models / online music identification]
 ```
 
-UI code sends user intentions to stores. Persistence owns atomic JSON writes, failed-write retry, and protection of unreadable library data. Process execution owns pipes, cancellation, and child-process termination. `AppSettings` owns preferences; `AppEventBus` carries application notifications. New features should extend the existing domain boundary rather than add business logic to the window or view shells.
+#### Application layers
+
+| Layer | Source owners | Responsibility |
+| :-- | :-- | :-- |
+| Startup and windows | `LapianBaoApp.swift`, `AppStartup/` | AppKit lifecycle, menu, retained window, activation, keyboard monitoring, and deferred library restoration after the window appears. |
+| Workspace shell | `ContentView.swift`, `Views/AppShell/` | Workspace selection, layout, cross-workspace navigation, and overlays. |
+| User interface | `Views/Library/`, `Frames/`, `Music/`, `Preview/`, `Settings/`, `Components/`, `Shared/`, `Design/` | Library browsing, film analysis, reference assets, settings, reusable native controls, and visual constants. |
+| Playback | `PreviewController.swift`, `PlaybackTimelineAnimation.swift`, `Views/Preview/` | AVFoundation playback, preview controls, timeline presentation, and keyboard interaction. |
+| Application state | `LibraryStore.swift`, `Stores/LibraryStore+*.swift` | Observable state and domain operations. Domain extensions remain part of the same store; they are not independent services. |
+| Independent domain stores | `Stores/DownloaderSelfCheckStore.swift`, `Stores/YouTubeCookieStore.swift` | Downloader diagnostics and explicitly enabled cookie export. Injected with LibraryStore into the SwiftUI environment. |
+| Models and projections | `Models/`, `Stores/LibraryStore+PresentationProjection.swift` | Codable library records, media models, indexes, tags, and cached presentation data. |
+| Persistence | `ProjectRepository.swift`, `MetadataPersistence.swift` | Library JSON locations, atomic writes, metadata recovery, pending writes, and retry handling. |
+| Background execution | `KeyedTaskRunner.swift`, `ExternalProcessRunner.swift`, `ExternalProcessRunner+Termination.swift` | Per-key task ownership, generation tokens, cancellation, process pipes, timeouts, and descendant-process termination. |
+| Runtime integration | `YTDLPRuntime.swift`, `Stores/LibraryStore+LocalTools.swift`, `Stores/LibraryStore+PythonRuntimes.swift` | Prepared downloader readiness and isolated access to bundled tools and recognition dependencies. |
+| Preferences and events | `AppSettings.swift`, `AppEventBus.swift`, `L10n.swift`, `en.lproj/`, `zh-Hans.lproj/` | Preferences, application notifications, and English/Simplified Chinese interface resources. |
+
+#### Domain workflows
+
+| Workflow | Store extension owners | Processing and result |
+| :-- | :-- | :-- |
+| Open a library | `LaunchAndRemoteImports`, `LibraryFolders`, `PersistenceAndSources`, `IndexesAndBasics`, `VideoLibraryAndTags` | Restore the chosen folder, enumerate media, read project metadata, rebuild indexes, and present the library. |
+| Import online media | `RemoteDownload`, `RemoteDownloadTypes`, `YTDLPDownload`, `CobaltDownload`, `XiaohongshuDownload`, `RemoteTranscoding` | Track import jobs, call the selected provider/downloader, transcode when needed, and add resulting files to the library. |
+| Detect scenes | `SceneDetection`, `TimelineMedia`, `TranscriptExportAndSceneCache` | Run local TransNet inference, store cut times, and generate representative frames and timeline caches. |
+| Transcribe dialogue | `CaptureTranscriptMusic`, `TranscriptExportAndSceneCache` | Process audio using the bundled Whisper runtime/model, track transcript status, and export subtitles. |
+| Capture and export | `CaptureTranscriptMusic`, `Annotations`, `MetadataAndExportHelpers`, `TimelineMedia` | Save frames, annotations, audio ranges, and reference material with associated project records. |
+| Identify and organize music | `MusicDetection`, `MusicPackaging`, `CaptureTranscriptMusic` | Identify tracks through online music services, manage local assets and downloads, and preserve music metadata. |
+| Filter and render | `PresentationProjection`, `IndexesAndBasics`, `VideoLibraryAndTags` | Build filtered/indexed views and cached projections without making views own persistence or external processes. |
+
+All names in the workflow table refer to `Stores/LibraryStore+<name>.swift`. Online music catalog search is currently disabled in production; the music workspace searches the existing library. Music identification and existing download workflows remain available.
+
+#### Data, concurrency, and failure boundaries
+
+Library data stays in the folder chosen by the user. `ProjectRepository.FileName` defines `.lapianbao_project.json`, `.lapianbaotags.json`, `.lapianbao_sources.json`, `.lapianbao_scene_cuts.json`, `.lapianbao_waveforms.json`, `.lapianbao_videos_cache.json`, `.lapianbao_resource_cache.json`, `.lapianbao_music_workspace_cache.json`, and `.lapianbao_asset_tags.json`.
+
+Video, image, sound-effect, and music tags are independent domains. Display translations do not rename persisted identifiers or user content. Missing original media does not automatically delete saved frame records or exported images.
+
+Views send user intentions to stores. External processes and project writes have central owners. Project reads distinguish missing files from unreadable data; failed writes preserve pending changes for recovery. A shared write lock and cancellation checks protect atomic commits. Keyed task generations prevent an old completion from clearing a replacement task. Comprehensive active-job shutdown testing and a known waveform cancellation bookkeeping issue remain outstanding.
+
+#### Bundled dependencies and release artifacts
+
+`LapianBao/RuntimeTools.bundle/` contains the prepared media tools, Python runtime, dependency notices, recognition dependency closure, and models. yt-dlp/EJS, Deno, FFmpeg/ffprobe, Whisper, TransNet, and music-recognition dependencies support the workflows above. Scene detection and transcription run locally; online import and music identification require a network connection. First launch does not install dependencies through Homebrew or pip.
+
+`LapianBao.xcodeproj` builds the native app with scheme `LapianBao`. `Tools/` owns preparation, lock/manifest checks, regression checks, runtime verification, localization checks, and release packaging. `Tools/whisper.cpp` is a pinned third-party submodule. `docs/assets/github/` holds documentation media; `IconDrafts/` holds historical design material.
+
+The complete developer release archive contains the source, Xcode project, scripts, checked-out Whisper source, bundled runtime, models, dependency notices, and `PACKAGE-MANIFEST.json` with 25,576 file records and the source revision. The ordinary GitHub source ZIP omits ignored runtime payloads. Build caches, credentials, user libraries, and local installers are excluded. The user installer is a separate DMG containing the complete application.
 
 ### Build from the complete developer package
 
-Download `ShotPal-Pro-1.2.1-build2026090901-Complete-Developer-Package.tar.gz` from the same release. This archive includes the large Whisper model, the prepared recognition dependencies, and the checked-out Whisper submodule source. It excludes personal settings, credentials, build caches, Git history, and old installers. `PACKAGE-MANIFEST.json` records file hashes and the source revision.
+Authorized developers can download `ShotPal-Pro-1.2.1-build2026090901-Complete-Developer-Package.tar.gz` from the [private source release](https://github.com/zhengshihong66y-max/LapianBao/releases/tag/v1.2.1-rc.2026090901). This archive includes the large Whisper model, the prepared recognition dependencies, and the checked-out Whisper submodule source. It excludes personal settings, credentials, build caches, Git history, and old installers. `PACKAGE-MANIFEST.json` records file hashes and the source revision.
 
 Extract it on an Apple silicon Mac with Xcode installed, then open Terminal in the extracted directory:
 
