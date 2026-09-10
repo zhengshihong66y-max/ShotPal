@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="132" viewBox="0 0 1100 132" role="img" aria-labelledby="title desc">
-  <title id="title">ShotPal Pro — 访问官网</title>
+  <title id="title">ShotPal Pro — 下载 DMG</title>
   <desc id="desc">ShotPal Pro version 1.2.1 for macOS 14 and Apple 芯片. DMG size 968.14 megabytes. Select this card to visit the official website.</desc>
   <defs>
     <linearGradient id="brand" x1="0" y1="0.32" x2="1" y2="0.68">
@@ -36,7 +36,7 @@
 
     <rect x="866" y="42" width="210" height="48" rx="24" fill="url(#brand)" opacity="0.16" filter="url(#button-glow)"/>
     <rect x="866" y="42" width="210" height="48" rx="24" fill="#09090b" stroke="url(#brand)" stroke-width="1.2"/>
-    <text x="958" y="72" fill="#ffffff" font-size="17" font-weight="600" text-anchor="middle">访问官网</text>
-    <path d="M1030 60h9v9m0-9-12 12" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="958" y="72" fill="#ffffff" font-size="17" font-weight="600" text-anchor="middle">下载 DMG</text>
+    <path d="M1033 57v14m-5-5 5 5 5-5m-12 8h14" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>

@@ -116,5 +116,5 @@ for frame in 0..<count {
 assert(CGImageDestinationFinalize(dest));print("Rendered 8 posters and \(count) animated frames, duration \(elapsed) ms")
 
 var strip = try String(contentsOf:root.appendingPathComponent("docs/assets/github/release-strip.svg"),encoding:.utf8)
-for (en,zh) in [("Version 1.2.1","版本 1.2.1"),("REQUIRES","系统要求"),("PROCESSOR","处理器"),("Apple silicon","Apple 芯片"),("DOWNLOAD","下载大小"),("Visit website","访问官网")] {strip=strip.replacingOccurrences(of:en,with:zh)}
+for (en,zh) in [("Version 1.2.1","版本 1.2.1"),("REQUIRES","系统要求"),("PROCESSOR","处理器"),("Apple silicon","Apple 芯片"),("DOWNLOAD","下载大小"),("Download DMG","下载 DMG")] {strip=strip.replacingOccurrences(of:en,with:zh)}
 try strip.write(to:output.appendingPathComponent("release-strip.svg"),atomically:true,encoding:.utf8)
