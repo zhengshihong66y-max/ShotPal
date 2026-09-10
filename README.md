@@ -1,7 +1,7 @@
 <p align="center"><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/403f229c4b670a44e5cf6c930a19743ce65869d8/docs/assets/github/language/en-active.svg" width="96" height="40" alt="EN — selected"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/403f229c4b670a44e5cf6c930a19743ce65869d8/docs/assets/github/language/zh-inactive.svg" width="96" height="40" alt="简中 — 切换至简体中文"></a><a href="https://shotpal.newtybei.com" title="Official website"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/403f229c4b670a44e5cf6c930a19743ce65869d8/docs/assets/github/language/website-en.svg" width="160" height="40" alt="Official website"></a></p>
 
 <p align="center">
-  <a href="https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg">
+  <a href="https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg?v=680c080890a6">
     <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/1eefffdf52e05f70a331151b2215fed38b855ece/docs/assets/github/release-strip.svg" width="1100" height="132" alt="Download ShotPal Pro DMG — version and platform information">
   </a>
 </p>
