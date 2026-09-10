@@ -14,7 +14,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 2
       - name: Source regression checks
         run: python3 Tools/regression_checks.py
       - name: Whitespace checks
-        run: git show --format= --check HEAD
+        run: git diff --check HEAD^ HEAD

@@ -53,7 +53,7 @@ ShotPal Pro is a native Mac app for studying films and turning scenes, frames, s
 
 **macOS 14+ · Apple silicon · English / 简体中文**
 
-Contributions are welcome — see the [contribution guide](.github/CONTRIBUTING.md).
+[MIT-licensed](LICENSE). Contributions are welcome — see the [contribution guide](.github/CONTRIBUTING.md).
 
 ## Why use ShotPal?
 

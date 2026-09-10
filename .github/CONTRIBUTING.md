@@ -64,6 +64,8 @@ The pull-request workflow runs lightweight source regression checks. It does not
 
 Use the bug-report form with the app version, macOS version, reproduction steps, expected behavior, and actual behavior. Use the feature-request form for proposed improvements. Share small media samples only when you have permission to share them.
 
-## Third-party components
+## License and third-party components
+
+Original ShotPal source code is available under the [MIT License](../LICENSE). By submitting a contribution, you agree to license your contribution under the same terms.
 
 Preserve dependency licenses and notices. The project includes third-party tools and models with their own license terms; the project's license does not replace those terms. Film footage, music, trademarks, and other third-party demonstration content are not granted under the source-code license.

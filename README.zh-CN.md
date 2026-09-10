@@ -53,7 +53,7 @@ ShotPal Pro 是一款原生 Mac 拉片工具，帮助你分析影片，将分镜
 
 **macOS 14+ · Apple 芯片 · 英文 / 简体中文**
 
-欢迎参与改进，详见[贡献指南](.github/CONTRIBUTING.md)。
+采用 [MIT 许可证](LICENSE)。欢迎参与改进，详见[贡献指南](.github/CONTRIBUTING.md)。
 
 ## 为什么使用 ShotPal？
 
