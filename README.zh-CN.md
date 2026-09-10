@@ -5,46 +5,46 @@ Language: [EN](README.md) | 简中
 
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="ShotPal Pro：导入影片、分析视听语言，将画面与片段整理为可复用素材">
   </a>
 </p>
 
 <p align="center">
   <a href="https://shotpal.newtybei.com">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/release-strip.svg" width="820" height="98" alt="Visit the official ShotPal Pro website — version and platform information">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/release-strip.svg" width="820" height="98" alt="访问 ShotPal Pro 官网：版本、系统要求、处理器与下载大小">
   </a>
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/download.webp" width="1100" height="825" alt="Download — Paste a public link to import the film and its source details into your library.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/download.png" width="1100" height="825" alt="下载：粘贴公开链接，将影片与来源信息一同导入素材库。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/scene.webp" width="1100" height="825" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/scene.png" width="1100" height="825" alt="分镜识别：自动识别切点，使用上下方向键在镜头之间跳转。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/capture.webp" width="1100" height="825" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/capture.png" width="1100" height="825" alt="保存画面：按 E 保存当前画面，同时保留来源与时间码。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/audio.webp" width="1100" height="825" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/audio.png" width="1100" height="825" alt="声音选区：使用 I / O 设置入点和出点，按 P 导出音频。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/subtitle.webp" width="1100" height="825" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/subtitle.png" width="1100" height="825" alt="本地字幕：在 Mac 上转写字幕，并与影片播放保持同步。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/f9f00c185df035ac50d0a38c1496756dfee5e56e/docs/assets/github/showcase/posters/storyboard.webp" width="1100" height="825" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/storyboard.png" width="1100" height="825" alt="分镜表：将镜号、时间码、画面与字幕导出为一份表格。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/f9f00c185df035ac50d0a38c1496756dfee5e56e/docs/assets/github/showcase/posters/drag.webp" width="1100" height="825" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/drag.png" width="1100" height="825" alt="拖出素材：将画面、音频和音乐直接拖入剪辑软件。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/music.webp" width="1100" height="825" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/30ba5e61efd7203bac10c404034e44a3eec16c74/docs/assets/github/zh-CN/posters/music.png" width="1100" height="825" alt="音乐识别：识别曲目，并定位它们在影片中出现的时刻。">
 </p>
 
 # ShotPal Pro
