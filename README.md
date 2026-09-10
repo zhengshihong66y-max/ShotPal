@@ -1,11 +1,3 @@
-# ShotPal Pro
-
-A native macOS tool for studying films, capturing frames, extracting audio, and building a reusable reference library.
-
-**macOS 14+ · Apple silicon (M-series) · English / 简体中文**
-
-[Download & install](#download-and-install) · [Quick start](#quick-start) · [Feature previews](#feature-previews) · [For developers](#for-developers)
-
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
     <img src="docs/assets/github/shotpal-feature-trio-github.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
@@ -17,11 +9,55 @@ A native macOS tool for studying films, capturing frames, extracting audio, and 
   <sub>The first frame is a complete overview when animated images are disabled.</sub>
 </p>
 
+# ShotPal Pro
+
+A native macOS tool for studying films, capturing frames, extracting audio, and building a reusable reference library.
+
+**macOS 14+ · Apple silicon (M-series) · English / 简体中文**
+
+[Download & install](#download-and-install) · [Quick start](#quick-start) · [Feature previews](#feature-previews) · [For developers](#for-developers)
+
+## Feature previews
+
+<a name="showcase"></a>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/download.webp" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/scene.webp" width="1100" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/capture.webp" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/audio.webp" width="1100" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/subtitle.webp" width="1100" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/storyboard.webp" width="1100" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/drag.webp" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+</p>
+
+<p align="center">
+  <img src="docs/assets/github/showcase/posters/music.webp" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
+</p>
+
 ## Download and install
 
-> **Release candidate: 1.2.1, build 2026090901.** The installer is Developer ID–signed. Apple notarization and clean-Mac acceptance are pending, so this is not yet the final launch. Public installer downloads are available in [ShotPal-Releases](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901). This source repository and its complete developer package remain private.
+> **Release candidate: 1.2.1, build 2026090901.** The installer is Developer ID–signed. Apple notarization and clean-Mac acceptance are pending, so this is not yet the final launch. Installer downloads are available in [ShotPal Releases](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901). The installer, source, and complete developer package are available from this repository.
 
-1. Open the [public 1.2.1 release candidate](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901).
+1. Open the [1.2.1 release candidate](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901).
 2. Under **Assets**, download `ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg` (about 918 MiB).
 3. Once the release has passed notarization, open the DMG, drag the app to **Applications**, then eject the disk image.
 4. Launch the app from Applications and choose a writable folder for your library. This candidate may be blocked by Gatekeeper until notarization is completed; do not disable macOS security to install it.
@@ -29,8 +65,8 @@ A native macOS tool for studying films, capturing frames, extracting audio, and 
 | Release asset | Who needs it |
 | :-- | :-- |
 | `ShotPal-Pro-…-macOS14-AppleSilicon.dmg` | Users: the complete application, including all required local runtimes and models. |
-| `ShotPal-Pro-…-Complete-Developer-Package.tar.gz` | Authorized developers, via the private source release: source, Xcode project, tools, bundled runtime, models, dependency notices, and Whisper submodule source. |
-| `SHA256SUMS.txt` | The public release checksums the installer; the private source release checksums both complete packages. A checksum verifies file integrity, not Apple approval. |
+| `ShotPal-Pro-…-Complete-Developer-Package.tar.gz` | Developers, via the release: source, Xcode project, tools, bundled runtime, models, dependency notices, and Whisper submodule source. |
+| `SHA256SUMS.txt` | The release checksums both complete packages. A checksum verifies file integrity, not Apple approval. |
 
 **Use the DMG to install.** GitHub's **Code → Download ZIP** and **Source code (zip/tar.gz)** links contain developer source files, not the application. You do not need Xcode, Git, Python, Homebrew, or a separate model download to use a complete release installer.
 
@@ -38,7 +74,7 @@ Intel Macs, Windows, Linux, and macOS versions below 14 are not supported by thi
 
 ### Installation help
 
-- **The source release shows 404:** the development repository is private. Use the [public installer release](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901) for downloads without an account.
+- **A release link shows 404:** open [ShotPal Releases](https://github.com/zhengshihong66y-max/ShotPal/releases) and select the available release candidate.
 - **macOS rejects the app or reports it damaged:** download the official installer again. If it still fails, report the exact warning and your macOS version. A public release must pass signing and notarization checks; disabling Gatekeeper is not an installation step.
 - **The app cannot save files:** choose a local folder you can write to and allow access when macOS asks. Keep your original media and library metadata together when backing up.
 - **The app opens in the wrong language:** it follows your macOS preferred app language. Quit and reopen it after changing the language. English is the fallback for unsupported languages.
@@ -80,43 +116,6 @@ These are the default shortcuts while the video preview is active.
 Exported frames, audio, transcripts, storyboards, and downloaded music are saved in subfolders of your chosen library. Keep the library folder, its metadata, and your original videos together when backing up your work.
 
 Scene detection and subtitle transcription run locally on your Mac. Online imports and music lookups need an internet connection.
-
-## Feature previews
-
-<a name="showcase"></a>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/download.webp" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/scene.webp" width="1100" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/capture.webp" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/audio.webp" width="1100" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/subtitle.webp" width="1100" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/storyboard.webp" width="1100" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/drag.webp" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
-</p>
-
-<p align="center">
-  <img src="docs/assets/github/showcase/posters/music.webp" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
-</p>
-
 
 ## For developers
 
@@ -211,7 +210,7 @@ The complete developer release archive contains the source, Xcode project, scrip
 
 ### Build from the complete developer package
 
-Authorized developers can download `ShotPal-Pro-1.2.1-build2026090901-Complete-Developer-Package.tar.gz` from the [private source release](https://github.com/zhengshihong66y-max/LapianBao/releases/tag/v1.2.1-rc.2026090901). This archive includes the large Whisper model, the prepared recognition dependencies, and the checked-out Whisper submodule source. It excludes personal settings, credentials, build caches, Git history, and old installers. `PACKAGE-MANIFEST.json` records file hashes and the source revision.
+Developers can download `ShotPal-Pro-1.2.1-build2026090901-Complete-Developer-Package.tar.gz` from the [release](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901). This archive includes the large Whisper model, the prepared recognition dependencies, and the checked-out Whisper submodule source. It excludes personal settings, credentials, build caches, Git history, and old installers. `PACKAGE-MANIFEST.json` records file hashes and the source revision.
 
 Extract it on an Apple silicon Mac with Xcode installed, then open Terminal in the extracted directory:
 
@@ -223,13 +222,13 @@ python3 Tools/regression_checks.py
 xcodebuild -project LapianBao.xcodeproj -scheme LapianBao -configuration Debug -destination 'platform=macOS' CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= build
 ```
 
-This produces a local development build. Distribution requires your own Developer ID identity and notarization credentials; no signing private keys are included. The source is shared for inspection and collaboration with authorized readers; see the licensing note below before redistribution.
+This produces a local development build. Distribution requires your own Developer ID identity and notarization credentials; no signing private keys are included. The source is shared for inspection and collaboration; see the licensing note below before redistribution.
 
 ### Build from a Git checkout
 
 ```sh
-git clone --branch Pro1.2 --recurse-submodules https://github.com/zhengshihong66y-max/LapianBao.git
-cd LapianBao
+git clone --branch Pro1.2 --recurse-submodules https://github.com/zhengshihong66y-max/ShotPal.git
+cd ShotPal
 ```
 
 A Git checkout and GitHub's automatic source ZIP omit large runtime payloads. Use the complete developer package for an already-prepared source tree. Alternatively, use `Tools/prepare_download_runtime.py` and `Tools/prepare_recognition_runtime.py` to prepare pinned assets, and supply `LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/whisper.cpp/models/ggml-large-v3-turbo-q5_0.bin`. The recognition preparation script refuses to overwrite an existing dependency tree. Run the input checks above before building.
