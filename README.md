@@ -53,6 +53,8 @@ ShotPal Pro is a native Mac app for studying films and turning scenes, frames, s
 
 **macOS 14+ · Apple silicon · English / 简体中文**
 
+Contributions are welcome — see the [contribution guide](.github/CONTRIBUTING.md).
+
 ## Why use ShotPal?
 
 - **Understand the film.** Detect cuts, explore subtitles, and identify music to study how a sequence works.

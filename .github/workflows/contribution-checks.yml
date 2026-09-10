@@ -1,0 +1,20 @@
+name: Contribution checks
+on:
+  pull_request:
+    branches: [Pro1.2]
+  push:
+    branches: [Pro1.2]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Source regression checks
+        run: python3 Tools/regression_checks.py
+      - name: Whitespace checks
+        run: git show --format= --check HEAD
