@@ -1,4 +1,4 @@
-Language: EN | [简中](README.zh-CN.md)
+Language: [EN](README.md) | 简中
 
 <a name="feature-previews"></a>
 <a name="showcase"></a>
@@ -49,33 +49,33 @@ Language: EN | [简中](README.zh-CN.md)
 
 # ShotPal Pro
 
-Study films, capture frames, extract audio, and build a reusable reference library on your Mac.
+在 Mac 上拉片、截取画面、提取音频，建立可重复使用的参考素材库。
 
-**macOS 14+ · Apple silicon · English / 简体中文**
+**macOS 14+ · Apple 芯片 · 英文 / 简体中文**
 
-[Website & demo](https://shotpal.newtybei.com/#overview-story) · [Download](https://github.com/zhengshihong66y-max/ShotPal/releases) · [Privacy](https://shotpal.newtybei.com/privacy)
+[官网与演示](https://shotpal.newtybei.com/#overview-story) · [下载](https://github.com/zhengshihong66y-max/ShotPal/releases) · [隐私政策](https://shotpal.newtybei.com/privacy)
 
-## Install
+## 安装
 
-Download the **DMG** from [Releases](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901). It includes the app and its required tools; GitHub’s source ZIP is for developers.
+从 [Releases](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901) 下载 **DMG 安装包**，其中包含应用及所需工具。GitHub 的源码 ZIP 供开发者使用。
 
-**Current build: 1.2.1 release candidate.** Developer ID–signed; Apple notarization and clean-Mac acceptance are still pending. Wait for the notarized release if macOS blocks installation.
+**当前版本：1.2.1 候选版。** 已完成 Developer ID 签名，Apple 公证与干净 Mac 验收仍在等待完成。如果 macOS 阻止安装，请等待公证完成后的版本。
 
-Once notarized, open the DMG, drag ShotPal Pro to **Applications**, and choose a folder for your library.
+公证完成后，打开 DMG，将 ShotPal Pro 拖入**应用程序**，再选择一个文件夹作为素材库。
 
-## Quick start
+## 快速上手
 
-1. Open a local video or use **+** to import a supported link.
-2. Use **Scene Mode**, subtitles, or music recognition to explore the film.
-3. Save frames, export audio, or create a storyboard.
-4. Drag your saved material into your editing software.
+1. 打开本地视频，或点击 **+** 导入支持的平台链接。
+2. 使用**分镜模式**、字幕或音乐识别分析影片。
+3. 保存画面、导出音频，或生成分镜表。
+4. 将保存的素材拖入剪辑软件。
 
-**Shortcuts:** Space — play/pause · E — save frame · I/O — audio In/Out · P — export audio.
+**快捷键：** Space — 播放/暂停 · E — 保存画面 · I/O — 设置音频入点/出点 · P — 导出音频。
 
-Keep your original videos and library folder together. Scene detection and transcription run locally; online imports and music recognition need internet access.
+请将原始视频与素材库文件夹一起保存。分镜识别与字幕转写在本地运行；在线导入与音乐识别需要联网。
 
-## Credits
+## 致谢
 
-Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://ffmpeg.org/), [Whisper](https://github.com/openai/whisper), [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [TransNet V2](https://github.com/soCzech/TransNetV2) ([PyTorch implementation](https://github.com/allenday/transnetv2_pytorch)), and [ShazamIO](https://github.com/shazamio/ShazamIO).
+基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp)、[FFmpeg](https://ffmpeg.org/)、[Whisper](https://github.com/openai/whisper)、[whisper.cpp](https://github.com/ggml-org/whisper.cpp)、[TransNet V2](https://github.com/soCzech/TransNetV2)（[PyTorch 实现](https://github.com/allenday/transnetv2_pytorch)）与 [ShazamIO](https://github.com/shazamio/ShazamIO) 构建。
 
-Also uses [Python](https://www.python.org/), [python-build-standalone](https://github.com/astral-sh/python-build-standalone), [Deno](https://github.com/denoland/deno), [PyTorch](https://pytorch.org/), and [NumPy](https://numpy.org/). Third-party projects retain their own licenses and notices.
+同时使用 [Python](https://www.python.org/)、[python-build-standalone](https://github.com/astral-sh/python-build-standalone)、[Deno](https://github.com/denoland/deno)、[PyTorch](https://pytorch.org/) 与 [NumPy](https://numpy.org/)。第三方项目保留各自的许可证与声明。
