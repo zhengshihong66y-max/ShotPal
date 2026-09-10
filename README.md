@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/7f3bb2aa9cb3a8b57a0f9a4af7415279ff933b1d/docs/assets/github/release-strip.svg" width="1100" height="132" alt="Download ShotPal Pro DMG — version and platform information">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/1eefffdf52e05f70a331151b2215fed38b855ece/docs/assets/github/release-strip.svg" width="1100" height="132" alt="Download ShotPal Pro DMG — version and platform information">
   </a>
 </p>
 
@@ -67,9 +67,9 @@ Scene detection and transcription run locally on your Mac. Online imports and mu
 
 The DMG includes the app and its required tools. You can also find it in this repository’s **Releases → Assets**.
 
-**Current build: 1.2.1 release candidate.** Developer ID–signed; Apple notarization and clean-Mac acceptance are still pending. Wait for the notarized release if macOS blocks installation.
+**Current build: 1.2.1 release candidate.** Developer ID–signed and Apple-notarized, with a stapled notarization ticket. Clean-Mac acceptance is still pending.
 
-1. Once notarized, open the DMG, drag **ShotPal Pro** to **Applications**, and choose a library folder.
+1. Open the DMG, drag **ShotPal Pro** to **Applications**, and choose a library folder.
 2. Open a local video or click **+** to import a supported link.
 3. Use **Scene Mode**, subtitles, or music recognition to explore the film.
 4. Save frames, export audio, or create a storyboard, then drag your saved material into your editing software.
