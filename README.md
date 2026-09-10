@@ -47,35 +47,45 @@ Language: EN | [简中](README.zh-CN.md)
   <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/music.webp" width="1100" height="825" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
 </p>
 
-# ShotPal Pro
+## What is ShotPal?
 
-Study films, capture frames, extract audio, and build a reusable reference library on your Mac.
+ShotPal Pro is a native Mac app for studying films and turning scenes, frames, sound, and subtitles into a reusable reference library.
 
 **macOS 14+ · Apple silicon · English / 简体中文**
 
-[Website & demo](https://shotpal.newtybei.com/#overview-story) · [Download](https://github.com/zhengshihong66y-max/ShotPal/releases) · [Privacy](https://shotpal.newtybei.com/privacy)
+## Why use ShotPal?
 
-## Install
+- **Understand the film.** Detect cuts, explore subtitles, and identify music to study how a sequence works.
+- **Keep the source attached.** Save frames and audio with their original film and timecode, so you can return to the exact moment.
+- **Bring references into your next edit.** Export a storyboard or drag saved frames, audio, and music into your editing software.
 
-Download the **DMG** from [Releases](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901). It includes the app and its required tools; GitHub’s source ZIP is for developers.
+Scene detection and transcription run locally on your Mac. Online imports and music recognition need internet access.
+
+## How to use ShotPal
+
+**[Download the Mac DMG](https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg)** · [Release notes](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901) · [All releases](https://github.com/zhengshihong66y-max/ShotPal/releases)
+
+The DMG includes the app and its required tools. You can also find it in this repository’s **Releases → Assets**.
 
 **Current build: 1.2.1 release candidate.** Developer ID–signed; Apple notarization and clean-Mac acceptance are still pending. Wait for the notarized release if macOS blocks installation.
 
-Once notarized, open the DMG, drag ShotPal Pro to **Applications**, and choose a folder for your library.
+1. Once notarized, open the DMG, drag **ShotPal Pro** to **Applications**, and choose a library folder.
+2. Open a local video or click **+** to import a supported link.
+3. Use **Scene Mode**, subtitles, or music recognition to explore the film.
+4. Save frames, export audio, or create a storyboard, then drag your saved material into your editing software.
 
-## Quick start
+**Keyboard shortcuts**
 
-1. Open a local video or use **+** to import a supported link.
-2. Use **Scene Mode**, subtitles, or music recognition to explore the film.
-3. Save frames, export audio, or create a storyboard.
-4. Drag your saved material into your editing software.
+| Key | Action |
+| --- | --- |
+| Space | Play / pause |
+| ← / → | Previous / next frame |
+| ↑ / ↓ | Previous / next scene |
+| E | Save the current frame |
+| I / O | Set audio In / Out |
+| U | Clear the audio selection |
+| P | Export the selected audio |
 
-**Shortcuts:** Space — play/pause · E — save frame · I/O — audio In/Out · P — export audio.
+Keep your original videos and library folder together so ShotPal can find the source footage.
 
-Keep your original videos and library folder together. Scene detection and transcription run locally; online imports and music recognition need internet access.
-
-## Credits
-
-Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://ffmpeg.org/), [Whisper](https://github.com/openai/whisper), [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [TransNet V2](https://github.com/soCzech/TransNetV2) ([PyTorch implementation](https://github.com/allenday/transnetv2_pytorch)), and [ShazamIO](https://github.com/shazamio/ShazamIO).
-
-Also uses [Python](https://www.python.org/), [python-build-standalone](https://github.com/astral-sh/python-build-standalone), [Deno](https://github.com/denoland/deno), [PyTorch](https://pytorch.org/), and [NumPy](https://numpy.org/). Third-party projects retain their own licenses and notices.
+[Website & demo](https://shotpal.newtybei.com/#overview-story) · [Privacy](https://shotpal.newtybei.com/privacy)
