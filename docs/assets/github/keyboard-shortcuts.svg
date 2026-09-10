@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1060" viewBox="0 0 1100 1060" role="img" aria-labelledby="title desc">
+<title id="title">ShotPal Pro keyboard shortcuts</title>
+<desc id="desc">Default preview shortcuts. Space: play or pause. J: shuttle backward. K: play or pause, or increase speed while holding J or L. L: shuttle forward. Left and right arrows: previous and next frame. Up and down arrows: previous and next cut. E: save frame. I and O: set audio In and Out. P: export audio. U: clear audio selection.</desc>
+<defs><linearGradient id="brand"><stop stop-color="#ff6655"/><stop offset=".22" stop-color="#ffbd49"/><stop offset=".43" stop-color="#a7e886"/><stop offset=".61" stop-color="#58d9b8"/><stop offset=".81" stop-color="#8978ee"/><stop offset="1" stop-color="#d66aaf"/></linearGradient></defs>
+<rect width="1100" height="1060" fill="#000"/>
+<g font-family="SF Pro Display, SF Pro Text, -apple-system, BlinkMacSystemFont, Helvetica Neue, Arial, sans-serif">
+<text x="550" y="100" text-anchor="middle" fill="#f5f5f7" font-size="52" font-weight="600" letter-spacing="-1.6">Keep your hands on the story.</text>
+<text x="550" y="151" text-anchor="middle" fill="#8e8e93" font-size="22">Your everyday ShotPal Pro keyboard shortcuts.</text>
+<rect x="502" y="185" width="96" height="3" rx="1.5" fill="url(#brand)"/>
+
+<rect x="38" y="226" width="495" height="689" rx="26" fill="#0d0d0f" stroke="#2c2c2e"/>
+<text x="66" y="274" fill="#8e8e93" font-size="14" font-weight="600" letter-spacing="1.6">PLAYBACK &amp; NAVIGATION</text>
+<rect x="66" y="303" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="334" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">Space</text>
+<text x="174" y="334" fill="#e5e5e7" font-size="21">Play / pause</text>
+<rect x="66" y="376" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="407" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">J</text>
+<text x="174" y="407" fill="#e5e5e7" font-size="21">Shuttle backward</text>
+<rect x="66" y="449" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="480" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">K</text>
+<text x="174" y="480" fill="#e5e5e7" font-size="21">Play / pause · speed up*</text>
+<rect x="66" y="522" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="553" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">L</text>
+<text x="174" y="553" fill="#e5e5e7" font-size="21">Shuttle forward</text>
+<rect x="66" y="595" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="626" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">←</text>
+<text x="174" y="626" fill="#e5e5e7" font-size="21">Previous frame</text>
+<rect x="66" y="668" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="699" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">→</text>
+<text x="174" y="699" fill="#e5e5e7" font-size="21">Next frame</text>
+<rect x="66" y="741" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="772" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">↑</text>
+<text x="174" y="772" fill="#e5e5e7" font-size="21">Previous cut</text>
+<rect x="66" y="814" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="109" y="845" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">↓</text>
+<text x="174" y="845" fill="#e5e5e7" font-size="21">Next cut</text>
+<rect x="567" y="226" width="495" height="689" rx="26" fill="#0d0d0f" stroke="#2c2c2e"/>
+<text x="595" y="274" fill="#8e8e93" font-size="14" font-weight="600" letter-spacing="1.6">CAPTURE &amp; AUDIO</text>
+<rect x="595" y="303" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="638" y="334" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">E</text>
+<text x="703" y="334" fill="#e5e5e7" font-size="21">Save current frame</text>
+<rect x="595" y="376" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="638" y="407" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">I</text>
+<text x="703" y="407" fill="#e5e5e7" font-size="21">Set audio In</text>
+<rect x="595" y="449" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="638" y="480" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">O</text>
+<text x="703" y="480" fill="#e5e5e7" font-size="21">Set audio Out</text>
+<rect x="595" y="522" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="638" y="553" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">P</text>
+<text x="703" y="553" fill="#e5e5e7" font-size="21">Export audio selection</text>
+<rect x="595" y="595" width="86" height="48" rx="10" fill="#1c1c1e" stroke="#3a3a3c"/>
+<text x="638" y="626" text-anchor="middle" fill="#f5f5f7" font-size="22" font-weight="600">U</text>
+<text x="703" y="626" fill="#e5e5e7" font-size="21">Clear audio selection</text>
+<line x1="595" y1="730" x2="1034" y2="730" stroke="#2c2c2e"/>
+<text x="595" y="775" fill="#8e8e93" font-size="18">* Hold J or L, then press K</text>
+<text x="595" y="804" fill="#8e8e93" font-size="18">to increase shuttle speed.</text>
+<text x="595" y="859" fill="#8e8e93" font-size="18">Use shortcuts in the video preview.</text>
+<text x="550" y="973" text-anchor="middle" fill="#8e8e93" font-size="18">Default bindings · Custom shortcuts follow your app settings.</text>
+<text x="550" y="1014" text-anchor="middle" fill="#636366" font-size="15" letter-spacing="2">SHOTPAL PRO</text>
+</g></svg>
