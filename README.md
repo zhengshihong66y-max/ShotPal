@@ -63,8 +63,6 @@ Scene detection and transcription run locally on your Mac. Online imports and mu
 
 ## How to use ShotPal
 
-**[Download the Mac DMG](https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg)** · [Release notes](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901) · [All releases](https://github.com/zhengshihong66y-max/ShotPal/releases)
-
 The DMG includes the app and its required tools. You can also find it in this repository’s **Releases → Assets**.
 
 **Current build: 1.2.1 release candidate.** Developer ID–signed; Apple notarization and clean-Mac acceptance are still pending. Wait for the notarized release if macOS blocks installation.
@@ -87,5 +85,3 @@ The DMG includes the app and its required tools. You can also find it in this re
 | P | Export the selected audio |
 
 Keep your original videos and library folder together so ShotPal can find the source footage.
-
-[Website & demo](https://shotpal.newtybei.com/#overview-story) · [Privacy](https://shotpal.newtybei.com/privacy)

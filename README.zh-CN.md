@@ -63,8 +63,6 @@ ShotPal Pro 是一款原生 Mac 拉片工具，帮助你分析影片，将分镜
 
 ## 如何使用 ShotPal？
 
-**[下载 Mac DMG 安装包](https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg)** · [版本说明](https://github.com/zhengshihong66y-max/ShotPal/releases/tag/v1.2.1-rc.2026090901) · [全部版本](https://github.com/zhengshihong66y-max/ShotPal/releases)
-
 DMG 包含应用及所需工具，也可以从本仓库的 **Releases → Assets** 找到。
 
 **当前版本：1.2.1 候选版。** 已完成 Developer ID 签名，Apple 公证与干净 Mac 验收仍在等待完成。如果 macOS 阻止安装，请等待公证完成后的版本。
@@ -87,5 +85,3 @@ DMG 包含应用及所需工具，也可以从本仓库的 **Releases → Assets
 | P | 导出所选音频 |
 
 请将原始视频与素材库文件夹一起保存，确保 ShotPal 能找到源素材。
-
-[官网与演示](https://shotpal.newtybei.com/#overview-story) · [隐私政策](https://shotpal.newtybei.com/privacy)
