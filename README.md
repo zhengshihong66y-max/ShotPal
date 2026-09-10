@@ -3,7 +3,10 @@
 
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.gif" width="1100" height="606" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+    <picture>
+      <source srcset="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.gif" type="image/gif">
+      <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.gif" width="1100" height="606" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+    </picture>
   </a>
 </p>
 
