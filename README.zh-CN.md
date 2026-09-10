@@ -5,46 +5,46 @@ Language: [EN](README.md) | 简中
 
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="ShotPal Pro：导入影片、分析视听语言，将画面与片段整理为可复用素材">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="ShotPal Pro：导入影片、分析视听语言，将画面与片段整理为可复用素材">
   </a>
 </p>
 
 <p align="center">
   <a href="https://shotpal.newtybei.com">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/release-strip.svg" width="820" height="98" alt="访问 ShotPal Pro 官网：版本、系统要求、处理器与下载大小">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/release-strip.svg" width="820" height="98" alt="访问 ShotPal Pro 官网：版本、系统要求、处理器与下载大小">
   </a>
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/download.png" width="1100" height="825" alt="下载：粘贴公开链接，将影片与来源信息一同导入素材库。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/download.png" width="1100" height="825" alt="下载：粘贴公开链接，将影片与来源信息一同导入素材库。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/scene.png" width="1100" height="825" alt="分镜识别：自动识别切点，使用上下方向键在镜头之间跳转。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/scene.png" width="1100" height="825" alt="分镜识别：自动识别切点，使用上下方向键在镜头之间跳转。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/capture.png" width="1100" height="825" alt="保存画面：按 E 保存当前画面，同时保留来源与时间码。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/capture.png" width="1100" height="825" alt="保存画面：按 E 保存当前画面，同时保留来源与时间码。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/audio.png" width="1100" height="825" alt="声音选区：使用 I / O 设置入点和出点，按 P 导出音频。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/audio.png" width="1100" height="825" alt="声音选区：使用 I / O 设置入点和出点，按 P 导出音频。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/subtitle.png" width="1100" height="825" alt="本地字幕：在 Mac 上转写字幕，并与影片播放保持同步。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/subtitle.png" width="1100" height="825" alt="本地字幕：在 Mac 上转写字幕，并与影片播放保持同步。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/storyboard.png" width="1100" height="825" alt="分镜表：将镜号、时间码、画面与字幕导出为一份表格。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/storyboard.png" width="1100" height="825" alt="分镜表：将镜号、时间码、画面与字幕导出为一份表格。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/drag.png" width="1100" height="825" alt="拖出素材：将画面、音频和音乐直接拖入剪辑软件。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/drag.png" width="1100" height="825" alt="拖出素材：将画面、音频和音乐直接拖入剪辑软件。">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/749a1f5ab7a7224c331f1fd0bd4ce883ebc69333/docs/assets/github/zh-CN/posters/music.png" width="1100" height="825" alt="音乐识别：识别曲目，并定位它们在影片中出现的时刻。">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a663eb7b515336dc421acb93840b90a6ea66cdef/docs/assets/github/zh-CN/posters/music.png" width="1100" height="825" alt="音乐识别：识别曲目，并定位它们在影片中出现的时刻。">
 </p>
 
 ## ShotPal 是什么？
