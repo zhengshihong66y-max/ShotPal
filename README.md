@@ -77,7 +77,3 @@ Keep your original videos and library folder together. Scene detection and trans
 Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://ffmpeg.org/), [Whisper](https://github.com/openai/whisper), [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [TransNet V2](https://github.com/soCzech/TransNetV2) ([PyTorch implementation](https://github.com/allenday/transnetv2_pytorch)), and [ShazamIO](https://github.com/shazamio/ShazamIO).
 
 Also uses [Python](https://www.python.org/), [python-build-standalone](https://github.com/astral-sh/python-build-standalone), [Deno](https://github.com/denoland/deno), [PyTorch](https://pytorch.org/), and [NumPy](https://numpy.org/). Third-party projects retain their own licenses and notices.
-
-<p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/38c37c17a3d75ab8f1b05720e529fb1a113153e8/docs/assets/github/keyboard-shortcuts.svg" width="1100" height="1060" alt="ShotPal Pro keyboard shortcuts — playback, frame navigation, capture, and audio export">
-</p>
