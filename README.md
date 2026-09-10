@@ -127,6 +127,8 @@ Scene detection and subtitle transcription run locally on your Mac. Online impor
 
 ## For developers
 
+`Pro1.2` is the only development mainline and the default branch.
+
 The native app uses SwiftUI and AppKit. `ContentView` hosts the interface; `LibraryStore` owns application state and delegates workflows to domain extensions. `AppStartupCoordinator` and `AppWindowManager` handle startup and windows. `ProjectRepository` owns library persistence, and `ExternalProcessRunner` runs bundled media workers.
 
 | Path | Purpose |
@@ -233,7 +235,7 @@ This produces a local development build. Distribution requires your own Develope
 ### Build from a Git checkout
 
 ```sh
-git clone --recurse-submodules https://github.com/zhengshihong66y-max/LapianBao.git
+git clone --branch Pro1.2 --recurse-submodules https://github.com/zhengshihong66y-max/LapianBao.git
 cd LapianBao
 ```
 
