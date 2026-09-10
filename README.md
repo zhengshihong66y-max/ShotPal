@@ -49,7 +49,7 @@
 
 ## What is ShotPal?
 
-ShotPal Pro is a native Mac app for studying films and turning scenes, frames, sound, and subtitles into a reusable reference library.
+ShotPal Pro (拉片宝) is a native Mac app for studying films and turning scenes, frames, sound, and subtitles into a reusable reference library.
 
 **macOS 14+ · Apple silicon · English / 简体中文**
 
