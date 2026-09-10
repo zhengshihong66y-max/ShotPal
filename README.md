@@ -1,25 +1,11 @@
+<a name="feature-previews"></a>
+<a name="showcase"></a>
+
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
     <img src="docs/assets/github/shotpal-feature-trio-github.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
   </a>
 </p>
-
-<p align="center">
-  <a href="https://shotpal.newtybei.com/#overview-story"><strong>▶ Watch the latest interactive product demo</strong></a><br>
-  <sub>The first frame is a complete overview when animated images are disabled.</sub>
-</p>
-
-# ShotPal Pro
-
-A native macOS tool for studying films, capturing frames, extracting audio, and building a reusable reference library.
-
-**macOS 14+ · Apple silicon (M-series) · English / 简体中文**
-
-[Download & install](#download-and-install) · [Quick start](#quick-start) · [Feature previews](#feature-previews) · [For developers](#for-developers)
-
-## Feature previews
-
-<a name="showcase"></a>
 
 <p align="center">
   <img src="docs/assets/github/showcase/posters/download.webp" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
@@ -51,6 +37,19 @@ A native macOS tool for studying films, capturing frames, extracting audio, and 
 
 <p align="center">
   <img src="docs/assets/github/showcase/posters/music.webp" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
+</p>
+
+# ShotPal Pro
+
+A native macOS tool for studying films, capturing frames, extracting audio, and building a reusable reference library.
+
+**macOS 14+ · Apple silicon (M-series) · English / 简体中文**
+
+[Download & install](#download-and-install) · [Quick start](#quick-start) · [Feature previews](#feature-previews) · [For developers](#for-developers)
+
+<p align="center">
+  <a href="https://shotpal.newtybei.com/#overview-story"><strong>▶ Watch the latest interactive product demo</strong></a><br>
+  <sub>The first frame is a complete overview when animated images are disabled.</sub>
 </p>
 
 ## Download and install
