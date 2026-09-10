@@ -10,7 +10,8 @@ try FileManager.default.createDirectory(at:output.appendingPathComponent("poster
 func color(_ hex:Int)->NSColor { NSColor(srgbRed:CGFloat((hex>>16)&255)/255,green:CGFloat((hex>>8)&255)/255,blue:CGFloat(hex&255)/255,alpha:1) }
 func drawText(_ s:String,_ r:NSRect,_ size:CGFloat,_ weight:NSFont.Weight = .semibold,_ tint:NSColor = color(0xf5f5f7),_ center:Bool = false) {
  let p=NSMutableParagraphStyle(); p.alignment=center ? .center : .left
- let font=NSFont(name:weight == .regular ? "PingFangSC-Regular":"PingFangSC-Semibold",size:size) ?? NSFont.systemFont(ofSize:size,weight:weight)
+ // SF system font supplies Latin glyphs; Core Text chooses the matching CJK fallback.
+ let font=NSFont.systemFont(ofSize:size,weight:weight)
  (s as NSString).draw(in:r,withAttributes:[.font:font,.foregroundColor:tint,.paragraphStyle:p])
 }
 func render(_ w:Int,_ h:Int,_ body:()->Void)->CGImage {
@@ -93,5 +94,5 @@ for frame in 0..<count {
 assert(CGImageDestinationFinalize(dest));print("Rendered 8 posters and \(count) animated frames, duration \(elapsed) ms")
 
 var strip = try String(contentsOf:root.appendingPathComponent("docs/assets/github/release-strip.svg"),encoding:.utf8)
-for (en,zh) in [("Version 1.2.1","版本 1.2.1"),("REQUIRES","系统要求"),("PROCESSOR","处理器"),("Apple silicon","Apple 芯片"),("DOWNLOAD","下载大小"),("Visit website","访问官网"),("SF Pro Display","PingFang SC, SF Pro Display")] {strip=strip.replacingOccurrences(of:en,with:zh)}
+for (en,zh) in [("Version 1.2.1","版本 1.2.1"),("REQUIRES","系统要求"),("PROCESSOR","处理器"),("Apple silicon","Apple 芯片"),("DOWNLOAD","下载大小"),("Visit website","访问官网")] {strip=strip.replacingOccurrences(of:en,with:zh)}
 try strip.write(to:output.appendingPathComponent("release-strip.svg"),atomically:true,encoding:.utf8)
