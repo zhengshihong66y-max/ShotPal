@@ -34,11 +34,11 @@
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/storyboard.webp" width="1100" height="825" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/f9f00c185df035ac50d0a38c1496756dfee5e56e/docs/assets/github/showcase/posters/storyboard.webp" width="1100" height="825" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/drag.webp" width="1100" height="825" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/f9f00c185df035ac50d0a38c1496756dfee5e56e/docs/assets/github/showcase/posters/drag.webp" width="1100" height="825" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
 </p>
 
 <p align="center">
