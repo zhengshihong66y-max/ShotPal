@@ -291,7 +291,7 @@ extension LibraryStore {
 
         cancelPendingLocalMusicWaveformWork()
         libraryScanProgress = LibraryScanProgress(
-            message: generateMissingSamples ? "正在生成音乐缓存" : "正在检查音乐缓存",
+            message: generateMissingSamples ? L10n.text("正在生成音乐缓存") : L10n.text("正在检查音乐缓存"),
             completed: 0,
             total: 1
         )
@@ -381,8 +381,8 @@ extension LibraryStore {
 
             let sampleTotalUnits = max(1, assets.count * 100)
             let sampleProgressMessage = generateMissingSamples
-                ? "正在生成音乐波形缓存"
-                : "正在检查音乐波形缓存"
+                ? L10n.text("正在生成音乐波形缓存")
+                : L10n.text("正在检查音乐波形缓存")
             if !assets.isEmpty {
                 progress(LibraryScanProgress(
                     message: "\(sampleProgressMessage) · 0/\(assets.count)",
@@ -439,7 +439,7 @@ extension LibraryStore {
                     sampleCount: localMusicWaveformSampleCount
                 ) { value in
                     progress(LibraryScanProgress(
-                        message: "正在生成音乐波形缓存 · \(index)/\(assets.count)",
+                        message: L10n.text("正在生成音乐波形缓存 · \(index)/\(assets.count)"),
                         completed: min(sampleTotalUnits, sampleBase + Int((normalizedProgress(value) * 100).rounded())),
                         total: sampleTotalUnits
                     ))
@@ -448,7 +448,7 @@ extension LibraryStore {
                 guard let samples, samples.count == localMusicWaveformSampleCount else {
                     failedSampleCount += 1
                     progress(LibraryScanProgress(
-                        message: "正在生成音乐波形缓存 · \(index + 1)/\(assets.count)",
+                        message: L10n.text("正在生成音乐波形缓存 · \(index + 1)/\(assets.count)"),
                         completed: min(sampleTotalUnits, (index + 1) * 100),
                         total: sampleTotalUnits
                     ))
@@ -474,7 +474,7 @@ extension LibraryStore {
                 didChangeCache = true
 
                 progress(LibraryScanProgress(
-                    message: "正在生成音乐波形缓存 · \(index + 1)/\(assets.count)",
+                    message: L10n.text("正在生成音乐波形缓存 · \(index + 1)/\(assets.count)"),
                     completed: min(sampleTotalUnits, (index + 1) * 100),
                     total: sampleTotalUnits
                 ))
@@ -509,7 +509,7 @@ extension LibraryStore {
 
             if !sampleSets.isEmpty {
                 progress(LibraryScanProgress(
-                    message: "正在缓存音乐波形图 · 0/\(renderTotal)",
+                    message: L10n.text("正在缓存音乐波形图 · 0/\(renderTotal)"),
                     completed: 0,
                     total: renderTotal
                 ))
@@ -531,7 +531,7 @@ extension LibraryStore {
                         renderSummary.failed += summary.failed
                         renderCompleted += 1
                         progress(LibraryScanProgress(
-                            message: "正在缓存音乐波形图 · \(renderCompleted)/\(renderTotal)",
+                            message: L10n.text("正在缓存音乐波形图 · \(renderCompleted)/\(renderTotal)"),
                             completed: renderCompleted,
                             total: renderTotal
                         ))
@@ -2148,9 +2148,13 @@ extension LibraryStore {
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
-            return []
+        return try decodeAppleMusicSearchResponse(data: data, response: response)
+    }
+
+    nonisolated static func decodeAppleMusicSearchResponse(data: Data, response: URLResponse) throws -> [AppleMusicSearchResult] {
+        guard let httpResponse = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw AppleMusicSearchError.httpStatus(httpResponse.statusCode)
         }
         let decoded = try JSONDecoder().decode(AppleMusicSearchResponse.self, from: data)
         var seen = Set<Int>()

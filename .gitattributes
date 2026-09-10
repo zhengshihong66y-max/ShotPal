@@ -1,0 +1,4 @@
+# Keep bundled runtimes and design exports out of source-language statistics.
+LapianBao/RuntimeTools.bundle/** linguist-vendored
+IconDrafts/** linguist-generated
+docs/assets/** linguist-generated

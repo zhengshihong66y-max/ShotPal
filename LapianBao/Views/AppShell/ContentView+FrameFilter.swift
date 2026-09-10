@@ -42,9 +42,9 @@ extension ContentView {
             .overlay {
                 if videosWithCollectedFrames.isEmpty {
                     AppEmptyState(
-                        title: "暂无已收集画面",
+                        title: L10n.text("暂无已收集画面"),
                         systemImage: "photo.on.rectangle",
-                        description: "在主页截图后，这里会出现对应视频。",
+                        description: L10n.text("在主页截图后，这里会出现对应视频。"),
                         style: .compact,
                         minHeight: 116
                     )

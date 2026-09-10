@@ -761,11 +761,11 @@ extension LibraryStore {
             async let videoTracks = asset.loadTracks(withMediaType: .video)
 
             guard try await !videoTracks.isEmpty else {
-                return .unsupported("这个文件暂无可播放的视频轨道")
+                return .unsupported(L10n.text("这个文件暂无可播放的视频轨道"))
             }
 
             guard try await isPlayable else {
-                return .unsupported("macOS 系统播放器不支持这个容器或编码")
+                return .unsupported(L10n.text("macOS 系统播放器不支持这个容器或编码"))
             }
 
             return .playable
@@ -1298,7 +1298,7 @@ extension LibraryStore {
         NSError(
             domain: "LapianBao.FrameDragExport",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "无法导出这张画面"]
+            userInfo: [NSLocalizedDescriptionKey: L10n.text("无法导出这张画面")]
         )
     }
 
@@ -1446,11 +1446,11 @@ extension LibraryStore {
             return $0.videoName.localizedStandardCompare($1.videoName) == .orderedAscending
         }
         let lines = frames.enumerated().map { index, frame in
-            let kind = frame.kind == .screenshot ? "截图" : "场景代表帧"
+            let kind = frame.kind == .screenshot ? L10n.text("截图") : L10n.text("场景代表帧")
             return "\(index + 1). \(frame.videoName) · \(Self.clockText(frame.time)) · \(kind)"
         }
-        let body = lines.isEmpty ? "暂无导出图片。\n" : lines.joined(separator: "\n") + "\n"
-        let markdown = "# 拉片宝图片导出索引\n\n" + body
+        let body = lines.isEmpty ? L10n.text("暂无导出图片。\n") : lines.joined(separator: "\n") + "\n"
+        let markdown = L10n.text("# 拉片宝图片导出索引\n\n") + body
         try? markdown.write(to: folder.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
     }
 
@@ -1466,19 +1466,19 @@ extension LibraryStore {
         var errorDescription: String? {
             switch self {
             case .libraryMissing:
-                return "请先打开一个素材库文件夹"
+                return L10n.text("请先打开一个素材库文件夹")
             case .noAudioTrack:
-                return "这个视频没有可导出的音轨"
+                return L10n.text("这个视频没有可导出的音轨")
             case .exporterUnavailable:
-                return "系统音频导出器不可用"
+                return L10n.text("系统音频导出器不可用")
             case .emptyOutput:
-                return "声音文件导出为空"
+                return L10n.text("声音文件导出为空")
             case .ffmpegMissing:
-                return "系统导出失败，且找不到 ffmpeg"
+                return L10n.text("系统导出失败，且找不到 ffmpeg")
             case let .ffmpegFailed(message):
-                return message.isEmpty ? "ffmpeg 导出声音失败" : message
+                return message.isEmpty ? L10n.text("ffmpeg 导出声音失败") : message
             case let .avFoundationFailed(message):
-                return message.isEmpty ? "系统导出声音失败" : message
+                return message.isEmpty ? L10n.text("系统导出声音失败") : message
             }
         }
     }
@@ -1600,12 +1600,12 @@ extension LibraryStore {
         processRegistry: ToolProcessRegistry? = nil
     ) async throws -> [TranscriptSegment] {
         let task = Task.detached(priority: .utility) {
-            progressCallback?(0.01, "准备字幕分析")
+            progressCallback?(0.01, L10n.text("准备字幕分析"))
             guard let scriptURL = localToolURL(
                 relativePath: "Tools/transcribe_with_whisper.sh",
                 mustBeExecutable: true
             ) else {
-                throw NSError(domain: "LapianBao", code: 1, userInfo: [NSLocalizedDescriptionKey: "找不到本地 Whisper 转写脚本"])
+                throw NSError(domain: "LapianBao", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.text("找不到本地 Whisper 转写脚本")])
             }
 
             let baseFolder = libraryURL.map {
@@ -1666,17 +1666,17 @@ extension LibraryStore {
             try Task.checkCancellation()
             guard process.terminationStatus == 0 else {
                 let logData = (try? Data(contentsOf: logURL)) ?? Data()
-                let fullMessage = String(data: logData, encoding: .utf8) ?? "本地转写失败"
-                let message = trimmedProcessLog(fullMessage, fallback: "本地转写失败")
+                let fullMessage = String(data: logData, encoding: .utf8) ?? L10n.text("本地转写失败")
+                let message = trimmedProcessLog(fullMessage, fallback: L10n.text("本地转写失败"))
                 throw NSError(domain: "LapianBao", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
             }
 
             let jsonURL = outputBase.appendingPathExtension("json")
-            progressCallback?(0.98, "载入字幕结果")
+            progressCallback?(0.98, L10n.text("载入字幕结果"))
             let data = try Data(contentsOf: jsonURL)
             let segments = try parseWhisperSegments(data: data, videoPath: video.url.path)
             let cleanedSegments = cleanTranscriptSegments(segments)
-            progressCallback?(1.0, "字幕分析完成")
+            progressCallback?(1.0, L10n.text("字幕分析完成"))
             return cleanedSegments
         }
 
@@ -1700,14 +1700,14 @@ extension LibraryStore {
         if trimmed.hasPrefix("LPB_PROGRESS") {
             let parts = trimmed.split(separator: " ", maxSplits: 2).map(String.init)
             guard parts.count >= 2, let value = Double(parts[1]) else { return nil }
-            let message = parts.count >= 3 ? parts[2] : "字幕分析中"
+            let message = parts.count >= 3 ? L10n.workerMessage(parts[2]) : L10n.text("字幕分析中")
             return WhisperProgressUpdate(progress: normalizedProgress(value), message: message)
         }
 
         guard let percent = parsePercentValue(from: trimmed) else { return nil }
         return WhisperProgressUpdate(
             progress: min(0.94, 0.18 + normalizedProgress(percent / 100) * 0.76),
-            message: "本地 Whisper 转写"
+            message: L10n.text("本地 Whisper 转写")
         )
     }
 

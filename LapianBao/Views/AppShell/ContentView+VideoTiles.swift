@@ -91,35 +91,36 @@ extension ContentView {
         let sceneError = libraryStore.sceneDetectionErrorByVideoPath[path]
         let musics = libraryStore.musicsByVideoPath[path, default: []]
         let musicStatus = libraryStore.musicDetectionStatusByVideoPath[path] ?? .idle
+        let musicPresentation = MusicRecognitionPresentation(status: musicStatus, songCount: musics.count)
 
         return [
             VideoAnalysisMenuItem(
                 kind: .transcript,
-                title: "内容",
+                title: L10n.text("内容"),
                 icon: "text.bubble",
-                detail: transcriptSegments.isEmpty ? "暂无字幕" : "\(transcriptSegments.count) 段字幕",
-                status: menuStatusText(transcriptStatus, idleText: "空闲"),
+                detail: transcriptSegments.isEmpty ? L10n.text("暂无字幕") : L10n.text("\(transcriptSegments.count) 段字幕"),
+                status: menuStatusText(transcriptStatus, idleText: L10n.text("空闲")),
                 tone: menuTone(transcriptStatus),
                 canRun: !isRunning(transcriptStatus),
                 canDelete: !transcriptSegments.isEmpty || transcriptStatus != .idle
             ),
             VideoAnalysisMenuItem(
                 kind: .scene,
-                title: "画面",
+                title: L10n.text("画面"),
                 icon: "rectangle.on.rectangle",
-                detail: sceneCutCount.map { "\($0) 个剪辑点" } ?? "暂无场景",
-                status: sceneProgress.map { "分析中 \(progressPercentText($0))" } ?? (sceneError == nil ? (hasSceneRecognitionResult ? "已完成" : "空闲") : "失败"),
+                detail: sceneCutCount.map { L10n.text("\($0) 个剪辑点") } ?? L10n.text("暂无场景"),
+                status: sceneProgress.map { L10n.text("分析中 \(progressPercentText($0))") } ?? (sceneError == nil ? (hasSceneRecognitionResult ? L10n.text("已完成") : L10n.text("空闲")) : L10n.text("失败")),
                 tone: sceneProgress == nil ? (sceneError == nil ? (hasSceneRecognitionResult ? .completed : .idle) : .failed) : .running,
                 canRun: sceneProgress == nil,
                 canDelete: hasSceneRecognitionResult || sceneProgress != nil || sceneError != nil
             ),
             VideoAnalysisMenuItem(
                 kind: .music,
-                title: "声音",
+                title: L10n.text("声音"),
                 icon: "music.note.list",
-                detail: musics.isEmpty ? "暂无音乐" : "\(musics.count) 首音乐",
-                status: menuStatusText(musicStatus, idleText: "空闲"),
-                tone: menuTone(musicStatus),
+                detail: musics.isEmpty ? L10n.text("暂无音乐") : L10n.text("\(musics.count) 首音乐"),
+                status: musicPresentation.menuStatus,
+                tone: musicPresentation.menuTone,
                 canRun: !isRunning(musicStatus),
                 canDelete: !musics.isEmpty || musicStatus != .idle
             )
@@ -155,9 +156,9 @@ extension ContentView {
         case .running(let message):
             return message
         case .completed:
-            return "已完成"
+            return L10n.text("已完成")
         case .failed:
-            return "失败"
+            return L10n.text("失败")
         }
     }
 

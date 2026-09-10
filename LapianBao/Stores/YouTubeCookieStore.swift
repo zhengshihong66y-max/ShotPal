@@ -34,12 +34,45 @@ final class YouTubeCookieStore: ObservableObject {
     private var lastAutoRefreshAttemptAt: Date?
 
     nonisolated static let browserSourceName = "chrome"
-    nonisolated static let cookieExportProbeURL = "https://example.com/"
+    // Export locally through the bundled yt-dlp API. No unrelated web page has to
+    // load, and decryption warnings must not be silenced by --no-warnings.
+    nonisolated static let cookieExportScript = """
+    import os, sys
+    os.umask(0o077)
+    sys.path.insert(0, sys.argv[1])
+    from yt_dlp import YoutubeDL
+    with YoutubeDL({'cookiesfrombrowser': (sys.argv[2],),
+                    'cookiefile': sys.argv[3], 'cachedir': False,
+                    'quiet': True}) as ydl:
+        ydl.cookiejar
+    """
     // 首次运行会弹钥匙串授权("访问 Chrome Safe Storage"),给用户留足确认时间。
     nonisolated static let refreshTimeout: TimeInterval = 240
-    // 只防快速死循环,不能挡正常自愈:Chrome 活跃浏览 YouTube 时
-    // 会话可能几分钟就被轮换一次,冷却过长会让冷却期内的下载全部失败。
-    nonisolated static let autoRefreshCooldown: TimeInterval = 60
+    nonisolated static let autoRefreshCooldown: TimeInterval = 15 * 60
+
+    var hasReadableCookieFile: Bool {
+        guard let path = configuredFilePath, !path.isEmpty else { return false }
+        return FileManager.default.isReadableFile(atPath: path)
+    }
+
+    var statusDetail: String {
+        Self.statusDetail(phase: refreshPhase, path: configuredFilePath,
+                          fileAvailable: hasReadableCookieFile)
+    }
+
+    nonisolated static func statusDetail(phase: RefreshPhase, path: String?, fileAvailable: Bool) -> String {
+        switch phase {
+        case .running: return L10n.text("正在读取 Chrome；如弹出钥匙串授权，请点允许")
+        case .failed(let message):
+            return (fileAvailable ? L10n.text("上次文件已保留；本次同步失败：") : L10n.text("未同步 cookies：")) + message
+        case .idle, .succeeded:
+            if fileAvailable {
+                let name = path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "cookies.txt"
+                return L10n.text("\(name) · 文件已保存，平台登录有效性未验证")
+            }
+            return path == nil ? L10n.text("未配置（可选）；公开链接可能无需 cookies") : L10n.text("cookies 文件不可读取，请重新同步")
+        }
+    }
 
     var isRefreshing: Bool {
         refreshPhase == .running
@@ -74,12 +107,13 @@ final class YouTubeCookieStore: ObservableObject {
     }
 
     private func performRefresh() async {
-        guard let ytdlp = LibraryStore.usableYTDLPURL() else {
-            refreshPhase = .failed("未找到可用的 yt-dlp,请先完成上方的下载器自检")
+        refreshPhase = .running
+        guard let ytdlp = await LibraryStore.readyYTDLPURL() else {
+            refreshPhase = .failed(YTDLPRuntime.unavailableMessage)
             return
         }
         guard let exportURL = Self.managedCookieFileURL() else {
-            refreshPhase = .failed("无法定位 Application Support 目录")
+            refreshPhase = .failed(L10n.text("无法定位 Application Support 目录"))
             return
         }
 
@@ -113,45 +147,29 @@ final class YouTubeCookieStore: ObservableObject {
         try? FileManager.default.removeItem(at: tempURL)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
-        var attemptExtraArguments: [[String]] = [[]]
-        if let proxyURL = LibraryStore.currentYTDLPProxyURLs().first {
-            attemptExtraArguments.append(["--proxy", proxyURL])
-        }
+        let result = ExternalProcessRunner.run(
+            executableURL: YTDLPRuntime.pythonURL,
+            arguments: ["-I", "-B", "-c", cookieExportScript, ytdlp.path, browserSourceName, tempURL.path],
+            environment: YTDLPRuntime.environment,
+            qualityOfService: .utility,
+            timeout: refreshTimeout
+        )
 
-        var lastFailure = "未知错误"
-        for extraArguments in attemptExtraArguments {
-            let result = ExternalProcessRunner.run(
-                executableURL: ytdlp,
-                arguments: [
-                    "--cookies-from-browser", browserSourceName,
-                    "--cookies", tempURL.path,
-                    "--socket-timeout", "20",
-                    "--retries", "1",
-                    "--extractor-retries", "1",
-                    "--simulate",
-                    "--ignore-errors",
-                    "--no-warnings"
-                ] + extraArguments + [cookieExportProbeURL],
-                environment: LibraryStore.downloaderProcessEnvironment(),
-                timeout: refreshTimeout
-            )
-
-            if let filteredCookies = filteredBrowserCookieContents(at: tempURL) {
-                do {
-                    try filteredCookies.write(to: tempURL, atomically: true, encoding: .utf8)
-                    if FileManager.default.fileExists(atPath: exportURL.path) {
-                        _ = try FileManager.default.replaceItemAt(exportURL, withItemAt: tempURL)
-                    } else {
-                        try FileManager.default.moveItem(at: tempURL, to: exportURL)
-                    }
-                    return .success
-                } catch {
-                    return .failure("写入 cookies 文件失败:\(error.localizedDescription)")
+        if result.succeeded, let filteredCookies = filteredBrowserCookieContents(at: tempURL) {
+            do {
+                try filteredCookies.write(to: tempURL, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempURL.path)
+                if FileManager.default.fileExists(atPath: exportURL.path) {
+                    _ = try FileManager.default.replaceItemAt(exportURL, withItemAt: tempURL, options: .usingNewMetadataOnly)
+                } else {
+                    try FileManager.default.moveItem(at: tempURL, to: exportURL)
                 }
+                return .success
+            } catch {
+                return .failure(L10n.text("写入 cookies 文件失败:\(error.localizedDescription)"))
             }
-            lastFailure = refreshFailureMessage(result)
         }
-        return .failure(lastFailure)
+        return .failure(refreshFailureMessage(result))
     }
 
     nonisolated static func filteredBrowserCookieContents(at fileURL: URL) -> String? {
@@ -178,7 +196,10 @@ final class YouTubeCookieStore: ObservableObject {
             }
 
             let fields = fieldsLine.split(separator: "\t", omittingEmptySubsequences: false)
-            guard fields.count >= 7 else { continue }
+            guard fields.count == 7, !fields[6].isEmpty,
+                  let expires = Double(fields[4]), expires.isFinite,
+                  expires == 0 || expires > Date().timeIntervalSince1970
+            else { continue }
             let domain = String(fields[0]).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
             guard allowedDomains.contains(where: { domain == $0 || domain.hasSuffix(".\($0)") }) else {
                 continue
@@ -206,25 +227,28 @@ final class YouTubeCookieStore: ObservableObject {
 
     nonisolated static func refreshFailureMessage(_ result: ExternalProcessRunner.Result) -> String {
         if result.didTimeOut {
-            return "读取超时:如果系统弹出了钥匙串授权,请点\"允许\"后再试一次"
+            return L10n.text("读取超时:如果系统弹出了钥匙串授权,请点\"允许\"后再试一次")
         }
 
         let errorText = result.errorText
         let lowercased = errorText.lowercased()
+        if lowercased.contains("keychain") || lowercased.contains("decrypt") || lowercased.contains("keyring") {
+            return L10n.text("Chrome cookies 解密失败；请允许 Chrome Safe Storage 钥匙串访问后重试")
+        }
         if lowercased.contains("could not find") && lowercased.contains("cookies") {
-            return "未找到 Chrome 的 cookie 数据，请确认 Chrome 已安装并至少打开过一个目标平台"
+            return L10n.text("未找到 Chrome 的 cookie 数据，请确认 Chrome 已安装并至少打开过一个目标平台")
         }
         if lowercased.contains("sign in to confirm") || lowercased.contains("not a bot") {
-            return "Chrome 会话读取失败，请先在 Chrome 打开目标平台后再重试"
+            return L10n.text("Chrome 会话读取失败，请先在 Chrome 打开目标平台后再重试")
         }
-        if lowercased.contains("unable to download") || lowercased.contains("timed out") {
-            return "网络验证失败,请确认代理可用后重试"
+        if result.succeeded {
+            return L10n.text("未找到受支持平台的有效 cookies；请先在 Chrome 打开并登录目标平台")
         }
 
         let lastLine = errorText
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .last { !$0.isEmpty }
-        return lastLine ?? "配置失败,请重试"
+        return lastLine ?? L10n.text("配置失败,请重试")
     }
 }

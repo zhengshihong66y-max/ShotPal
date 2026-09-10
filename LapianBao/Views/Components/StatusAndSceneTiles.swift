@@ -122,6 +122,9 @@ extension LibraryScanProgress {
         message.contains("音乐缓存")
             || message.contains("音乐波形")
             || message.contains("识别音乐素材")
+            || message.localizedCaseInsensitiveContains("music cache")
+            || message.localizedCaseInsensitiveContains("music waveform")
+            || message.localizedCaseInsensitiveContains("identifying music files")
     }
 }
 
@@ -151,7 +154,7 @@ struct RecognitionFailureIndicator: View {
 
     private var displayMessage: String {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? "识别失败" : trimmed
+        return trimmed.isEmpty ? L10n.text("识别失败") : trimmed
     }
 
     var body: some View {
@@ -525,7 +528,7 @@ struct SceneCutTile: View {
                     isMorePresented = false
                     onShowInFinder()
                 } label: {
-                    Label("在访达中显示", systemImage: "folder")
+                    Label(L10n.text("在访达中显示"), systemImage: "folder")
                         .foregroundStyle(sceneActionForeground(isEnabled: isEnabled))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
@@ -544,7 +547,7 @@ struct SceneCutTile: View {
                     isMorePresented = false
                     onDelete()
                 } label: {
-                    Label(isScreenshot ? "删除截图" : "删除图片", systemImage: "trash")
+                    Label(isScreenshot ? L10n.text("删除截图") : L10n.text("删除图片"), systemImage: "trash")
                         .foregroundStyle(sceneActionForeground(isEnabled: isEnabled, destructive: true))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)

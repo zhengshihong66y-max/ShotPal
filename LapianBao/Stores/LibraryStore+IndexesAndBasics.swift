@@ -604,7 +604,7 @@ extension LibraryStore {
                 suggestedName: fileURL.lastPathComponent,
                 fallbackTypeIdentifier: UTType.image.identifier,
                 errorDomain: "LapianBao.SavedFrameDragExport",
-                missingFileMessage: "收藏图片文件不存在"
+                missingFileMessage: L10n.text("收藏图片文件不存在")
             )
         }
 
@@ -637,7 +637,7 @@ extension LibraryStore {
             suggestedName: fileURL.lastPathComponent,
             fallbackTypeIdentifier: UTType.audio.identifier,
             errorDomain: "LapianBao.AudioClipDragExport",
-            missingFileMessage: "声音片段文件不存在"
+            missingFileMessage: L10n.text("声音片段文件不存在")
         )
     }
 

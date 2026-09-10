@@ -57,7 +57,7 @@ extension ContentView {
     var importInputSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("链接输入", systemImage: "link")
+                Label(L10n.text("链接输入"), systemImage: "link")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -66,19 +66,19 @@ extension ContentView {
                         importURLText = ""
                         importURLFeedbackMessage = nil
                     } label: {
-                        Text("清空")
+                        Text(L10n.text("清空"))
                             .font(.caption2.weight(.semibold))
                             .frame(height: 22)
                     }
                     .buttonStyle(.borderless)
-                    .accessibilityLabel("清空导入链接")
+                    .accessibilityLabel(L10n.text("清空导入链接"))
                     .accessibilityIdentifier("import_clear_links_button")
                 }
             }
 
             ImportURLTextEditor(
                 text: $importURLText,
-                placeholder: "每行一个链接，支持 Instagram、YouTube、小红书、Bilibili、抖音…"
+                placeholder: L10n.text("每行一个链接，支持 Instagram、YouTube、小红书、Bilibili、抖音…")
             )
             .frame(minHeight: 72, maxHeight: 96)
             .background(.white.opacity(0.06))
@@ -87,7 +87,7 @@ extension ContentView {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(.white.opacity(0.10), lineWidth: 1)
             }
-            .accessibilityLabel("导入链接输入框")
+            .accessibilityLabel(L10n.text("导入链接输入框"))
             .accessibilityIdentifier("import_url_text_editor")
             .onChange(of: importURLText) { _, _ in
                 importURLFeedbackMessage = nil
@@ -120,20 +120,20 @@ extension ContentView {
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("关闭导入面板")
+                .accessibilityLabel(L10n.text("关闭导入面板"))
                 .accessibilityIdentifier("import_close_button")
 
                 Button {
                     startRemoteImport()
                 } label: {
-                    Label("下载", systemImage: "arrow.down.circle.fill")
+                    Label(L10n.text("下载"), systemImage: "arrow.down.circle.fill")
                         .fontWeight(.semibold)
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(!canSubmitImportURLs)
-                .accessibilityLabel("开始下载导入链接")
+                .accessibilityLabel(L10n.text("开始下载导入链接"))
                 .accessibilityIdentifier("import_start_download_button")
             }
             .frame(height: 30)
@@ -143,7 +143,7 @@ extension ContentView {
     var downloadProgressSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("下载进度", systemImage: "arrow.down.circle")
+                Label(L10n.text("下载进度"), systemImage: "arrow.down.circle")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -156,7 +156,7 @@ extension ContentView {
 
             if activeImportJobs.isEmpty {
                 AppEmptyState(
-                    title: "暂无进行中的下载",
+                    title: L10n.text("暂无进行中的下载"),
                     systemImage: "tray",
                     style: .compact
                 )
@@ -183,7 +183,7 @@ extension ContentView {
     @ViewBuilder
     var downloadProgressFooter: some View {
         if activeImportJobs.isEmpty {
-            Text(libraryStore.remoteImportJobs.isEmpty ? "粘贴链接后点击下载，任务会显示在这里" : "当前没有正在下载的任务")
+            Text(libraryStore.remoteImportJobs.isEmpty ? L10n.text("粘贴链接后点击下载，任务会显示在这里") : L10n.text("当前没有正在下载的任务"))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -194,7 +194,7 @@ extension ContentView {
     var downloadHistorySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("下载记录", systemImage: "clock.arrow.circlepath")
+                Label(L10n.text("下载记录"), systemImage: "clock.arrow.circlepath")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -207,7 +207,7 @@ extension ContentView {
 
             if importHistoryItems.isEmpty {
                 AppEmptyState(
-                    title: "暂无下载记录",
+                    title: L10n.text("暂无下载记录"),
                     systemImage: "clock",
                     style: .compact
                 )
@@ -227,13 +227,13 @@ extension ContentView {
                     Button {
                         libraryStore.clearFinishedRemoteImports()
                     } label: {
-                        Text("清空已完成记录")
+                        Text(L10n.text("清空已完成记录"))
                             .frame(maxWidth: .infinity)
                     }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.borderless)
                     .padding(.top, 2)
-                    .accessibilityLabel("清空已完成下载记录")
+                    .accessibilityLabel(L10n.text("清空已完成下载记录"))
                     .accessibilityIdentifier("import_clear_finished_records_button")
                 }
             }
@@ -281,7 +281,7 @@ private struct ImportURLTextEditor: NSViewRepresentable {
     }
 }
 
-private final class ImportURLTextEditorView: NSView {
+final class ImportURLTextEditorView: NSView {
     let textView = NSTextView()
 
     private let scrollView = NSScrollView()
@@ -327,6 +327,11 @@ private final class ImportURLTextEditorView: NSView {
     func configure(text: String, placeholder: String) {
         if textView.string != text {
             textView.string = text
+            if text.isEmpty {
+                textView.setSelectedRange(NSRange(location: 0, length: 0))
+                textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+                textView.undoManager?.removeAllActions(withTarget: textView)
+            }
         }
         if placeholderView.string != placeholder {
             placeholderView.string = placeholder

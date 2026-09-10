@@ -44,7 +44,7 @@ extension ContentView {
                         Group {
                             if videos.isEmpty {
                                 AppEmptyState(
-                                    title: libraryStore.libraryScanProgress == nil ? "暂无视频素材" : "正在读取素材",
+                                    title: libraryStore.libraryScanProgress == nil ? L10n.text("暂无视频素材") : L10n.text("正在读取素材"),
                                     systemImage: "film",
                                     style: .compact
                                 )
@@ -133,7 +133,7 @@ extension ContentView {
 
     var libraryInitialStateView: some View {
         AppEmptyState(
-            title: "未选择文件夹",
+            title: L10n.text("未选择文件夹"),
             systemImage: "folder",
             style: .large
         )
@@ -172,12 +172,12 @@ extension ContentView {
 
         return VStack(alignment: .leading, spacing: 8) {
             libraryPlatformFilterSection(
-                title: "平台",
+                title: L10n.text("平台"),
                 values: metrics.platforms,
-                emptyTitle: "暂无平台"
+                emptyTitle: L10n.text("暂无平台")
             ) { platform in
                 libraryCompactFilterChip(
-                    title: platform,
+                    title: VideoSourcePlatform.displayName(for: platform),
                     count: metrics.platformCounts[platform, default: 0],
                     isSelected: selectedLibraryPlatforms.contains(platform),
                     tint: VideoSourcePlatform.color(for: platform)
@@ -188,7 +188,7 @@ extension ContentView {
 
             libraryTagFilterSection(
                 values: libraryStore.allTags,
-                emptyTitle: "暂无标签",
+                emptyTitle: L10n.text("暂无标签"),
                 tagOptions: tagOptions,
                 fallbackCounts: metrics.tagCountsByKey
             )
@@ -205,7 +205,7 @@ extension ContentView {
         fallbackCounts: [String: Int]
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("内容")
+            Text(L10n.text("内容"))
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(.tertiary)
 
@@ -512,7 +512,7 @@ extension ContentView {
 
     func importDateSection(for video: VideoItem) -> (id: String, title: String) {
         guard let date = libraryStore.metadataByVideoPath[video.url.path]?.createdAt else {
-            return ("unknown", "日期未知")
+            return ("unknown", L10n.text("日期未知"))
         }
         let startOfDay = Calendar.current.startOfDay(for: date)
         let id = String(Int(startOfDay.timeIntervalSince1970))
@@ -552,7 +552,7 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .accessibilityLabel("打开导入面板")
+        .accessibilityLabel(L10n.text("打开导入面板"))
         .accessibilityIdentifier("library_import_button")
     }
 
@@ -580,7 +580,7 @@ extension ContentView {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .accessibilityLabel(isLibrarySidebarFilterAreaPresented ? "隐藏素材筛选" : "显示素材筛选")
+        .accessibilityLabel(isLibrarySidebarFilterAreaPresented ? L10n.text("隐藏素材筛选") : L10n.text("显示素材筛选"))
         .accessibilityIdentifier("library_filter_toggle_button")
     }
 
@@ -608,11 +608,11 @@ extension ContentView {
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("标签筛选")
+                Text(L10n.text("标签筛选"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("全部") {
+                Button(L10n.text("全部")) {
                     libraryStore.selectedTags.removeAll()
                 }
                 .font(.caption)
@@ -621,7 +621,7 @@ extension ContentView {
             }
 
             if libraryStore.allTags.isEmpty {
-                AppEmptyState(title: "暂无标签", style: .inline, alignment: .leading)
+                AppEmptyState(title: L10n.text("暂无标签"), style: .inline, alignment: .leading)
                     .frame(minHeight: 36)
             } else {
                 ScrollView {
@@ -684,7 +684,7 @@ extension ContentView {
 
     var sortMenu: some View {
         Menu {
-            Section("排序方式") {
+            Section(L10n.text("排序方式")) {
                 ForEach(VideoSortOption.allCases) { option in
                     Button {
                         libraryStore.setSort(option: option)
@@ -694,7 +694,7 @@ extension ContentView {
                 }
             }
 
-            Section("方向") {
+            Section(L10n.text("方向")) {
                 ForEach(VideoSortDirection.allCases) { direction in
                     Button {
                         libraryStore.setSort(direction: direction)
@@ -709,7 +709,7 @@ extension ContentView {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .accessibilityLabel("素材排序菜单")
+        .accessibilityLabel(L10n.text("素材排序菜单"))
         .accessibilityIdentifier("library_sort_menu")
     }
 

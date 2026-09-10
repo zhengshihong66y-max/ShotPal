@@ -184,8 +184,8 @@ extension LibraryStore {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.title = "打开文件夹"
-        panel.prompt = "打开"
+        panel.title = L10n.text("打开文件夹")
+        panel.prompt = L10n.text("打开")
 
         if panel.runModal() == .OK, let url = panel.url {
             persistLibraryAccess(for: url)
@@ -270,7 +270,7 @@ extension LibraryStore {
             remoteImportJobs.append(RemoteImportJob(
                 sourceURL: Self.placeholderRemoteImportURL,
                 platform: "未知平台",
-                status: .failed("请输入至少一个有效链接")
+                status: .failed(L10n.text("请输入至少一个有效链接"))
             ))
             return
         }
@@ -296,7 +296,7 @@ extension LibraryStore {
             remoteImportJobs.append(RemoteImportJob(
                 sourceURL: Self.placeholderRemoteImportURL,
                 platform: "未知平台",
-                status: .failed("请输入至少一个有效链接")
+                status: .failed(L10n.text("请输入至少一个有效链接"))
             ))
             return
         }
@@ -342,7 +342,7 @@ extension LibraryStore {
                 batchTitle: batchTitle,
                 batchTotalCount: batchTotalCount,
                 batchIndex: batchIndex,
-                status: .failed("请输入有效链接")
+                status: .failed(L10n.text("请输入有效链接"))
             ))
             return nil
         }
@@ -355,7 +355,7 @@ extension LibraryStore {
                 batchTitle: batchTitle,
                 batchTotalCount: batchTotalCount,
                 batchIndex: batchIndex,
-                status: .failed("暂不支持该平台，目前支持 Instagram、YouTube、小红书、Bilibili 和抖音")
+                status: .failed(L10n.text("暂不支持该平台，目前支持 Instagram、YouTube、小红书、Bilibili 和抖音"))
             ))
             return nil
         }
@@ -369,7 +369,7 @@ extension LibraryStore {
                 batchTitle: batchTitle,
                 batchTotalCount: batchTotalCount,
                 batchIndex: batchIndex,
-                status: .failed("请先打开一个素材库文件夹")
+                status: .failed(L10n.text("请先打开一个素材库文件夹"))
             ))
             return nil
         }
@@ -390,9 +390,8 @@ extension LibraryStore {
 
         loadRemoteImportCandidateMetadata(for: jobID, sourceURL: importSourceURL)
 
-        // 进度回调：yt-dlp 每行输出一次，跳回主线程更新 UI
-        let progressCallback: @Sendable (Double?, String?) -> Void = { [weak self] progress, speed in
-            Task { @MainActor [weak self] in
+        // Merge rapid worker measurements before publishing to the global store (at most 10 Hz).
+        let progressDelivery = DownloadProgressCoalescer { [weak self] progress, speed in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     guard case .importing = job.status else { return }
                     if let progress {
@@ -408,13 +407,14 @@ extension LibraryStore {
                         job.downloadSpeed = nil
                     }
                 }
-            }
+        }
+        let progressCallback: @Sendable (Double?, String?) -> Void = { progress, speed in
+            progressDelivery.submit(progress, speed)
         }
         // 转码回调：下载结束、VP9→H.264 转码即将开始时触发。
         // 转码是独立阶段:进度显示 ffmpeg 的真实分数,从 0 重新起算,
         // 阶段内取 max 单调;不把真实分数映射进假想尾段。
-        let transcodingCallback: @Sendable (Double?) -> Void = { [weak self] progress in
-            Task { @MainActor [weak self] in
+        let transcodingDelivery = DownloadProgressCoalescer { [weak self] progress, _ in
                 self?.updateRemoteImportJob(id: jobID) { job in
                     guard Self.remoteImportJobCanReceiveWorkerProgress(job.status) else { return }
                     // 收尾已开始时,迟到的转码进度行不再把状态拨回去
@@ -433,7 +433,9 @@ extension LibraryStore {
                     }
                     job.downloadSpeed = nil
                 }
-            }
+        }
+        let transcodingCallback: @Sendable (Double?) -> Void = { progress in
+            transcodingDelivery.submit(progress, nil)
         }
         let finalizingCallback: @Sendable (Double) -> Void = { [weak self] progress in
             Task { @MainActor [weak self] in
@@ -550,6 +552,7 @@ extension LibraryStore {
            Self.remoteImportJobCanReceiveWorkerProgress(updatedJobs[index].status) {
             updatedJobs[index] = previousJob
         }
+        guard updatedJobs[index] != previousJob else { return }
         remoteImportJobs = updatedJobs
     }
 
@@ -839,7 +842,7 @@ extension LibraryStore {
             case .toolUnavailable(let message), .failed(let message):
                 return message
             case .timedOut:
-                return "网页读取超时"
+                return L10n.text("网页读取超时")
             }
         }
     }
@@ -896,7 +899,7 @@ extension LibraryStore {
         timeout: TimeInterval
     ) throws -> CurlFetchResult {
         guard let curl = localCurlURL() else {
-            throw RemoteWebFetchError.toolUnavailable("未找到 curl，无法读取网页")
+            throw RemoteWebFetchError.toolUnavailable(L10n.text("未找到 curl，无法读取网页"))
         }
 
         let bodyURL = FileManager.default.temporaryDirectory
@@ -941,7 +944,7 @@ extension LibraryStore {
         } catch {
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
-            throw RemoteWebFetchError.toolUnavailable("无法启动 curl：\(error.localizedDescription)")
+            throw RemoteWebFetchError.toolUnavailable(L10n.text("无法启动 curl：\(error.localizedDescription)"))
         }
 
         let semaphore = DispatchSemaphore(value: 0)
@@ -967,7 +970,7 @@ extension LibraryStore {
         guard process.terminationStatus == 0 else {
             let errorText = String(data: errorCollector.data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw RemoteWebFetchError.failed(errorText.isEmpty ? "curl 请求失败" : errorText)
+            throw RemoteWebFetchError.failed(errorText.isEmpty ? L10n.text("curl 请求失败") : errorText)
         }
 
         let statusText = String(data: outputCollector.data, encoding: .utf8)?
@@ -1041,9 +1044,7 @@ extension LibraryStore {
         extraArguments: [String] = []
     ) -> YTDLPVideoInfo? {
         let process = Process()
-        process.executableURL = executableURL
-        process.environment = downloaderProcessEnvironment()
-        process.arguments = [
+        let arguments = [
             "--yes-playlist",
             "--skip-download",
             "--dump-single-json",
@@ -1052,6 +1053,7 @@ extension LibraryStore {
         ] + ytdlpProbeNetworkArguments(isYouTube: false) + extraArguments + [
             sourceURL.absoluteString
         ]
+        YTDLPRuntime.configure(process, archive: executableURL, arguments: arguments)
 
         let outputPipe = Pipe()
         let errorPipe = Pipe()

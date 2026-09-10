@@ -305,6 +305,8 @@ final class LibraryStore: ObservableObject {
     var projectSaveSequence = 0
     var projectLoadTask: Task<Void, Never>?
     var projectLoadGeneration = 0
+    @Published var metadataPersistenceError: String?
+    @Published var projectPersistenceError: String?
     @Published var projectDataLoadState: ProjectDataLoadState = .idle
     var projectDataDirty = false
     var startupAutomationLibraryPath: String?

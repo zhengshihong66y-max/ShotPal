@@ -52,6 +52,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5B4104772FC28A35006F8246 /* Build configuration list for PBXNativeTarget "LapianBao" */;
 			buildPhases = (
+				A08302026D0A000000000001 /* Verify Download Runtime */,
 				5B4104682FC28A33006F8246 /* Sources */,
 				5B4104692FC28A33006F8246 /* Frameworks */,
 				5B41046A2FC28A33006F8246 /* Resources */,
@@ -90,6 +91,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				"zh-Hans",
 				Base,
 			);
 			mainGroup = 5B4104632FC28A33006F8246;
@@ -113,6 +115,43 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A08302026D0A000000000001 /* Verify Download Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Tools/",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/",
+				"$(SRCROOT)/Tools/check_recognition_bundle_inputs.py",
+				"$(SRCROOT)/Tools/recognition-wheels.lock.json",
+				"$(SRCROOT)/Tools/recognition_bootstrap.py",
+				"$(SRCROOT)/Tools/detect_music.py",
+				"$(SRCROOT)/Tools/detect_scene_cuts_transnet.py",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/recognition/",
+				"$(SRCROOT)/Tools/check_download_bundle_inputs.py",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/downloader-manifest.json",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/bin/yt-dlp",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/bin/deno",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/bin/ffmpeg",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/bin/ffprobe",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/python/cpython-3.11-aarch64-apple-darwin/bin/python3.11",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/licenses/yt-dlp-Unlicense.txt",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/licenses/yt-dlp-THIRD-PARTY.txt",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/licenses/deno-MIT.txt",
+				"$(SRCROOT)/LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/licenses/deno-THIRD-PARTY.txt",
+			);
+			name = "Verify Download Runtime";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/usr/bin/python3 \"$SRCROOT/Tools/check_download_bundle_inputs.py\"\n/usr/bin/python3 \"$SRCROOT/Tools/check_recognition_bundle_inputs.py\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5B4104682FC28A33006F8246 /* Sources */ = {
@@ -246,10 +285,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2026090901;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_PREVIEWS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "拉片宝";
@@ -261,7 +301,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lapianbao.app;
 				PRODUCT_MODULE_NAME = LapianBao;
 				PRODUCT_NAME = "拉片宝";
@@ -283,12 +323,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2026090901;
 				DEVELOPMENT_TEAM = F74D79WXAT;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "拉片宝";
@@ -300,7 +341,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lapianbao.app;
 				PRODUCT_MODULE_NAME = LapianBao;
 				PRODUCT_NAME = "拉片宝";

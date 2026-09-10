@@ -54,19 +54,19 @@ enum PreviewShortcutAction: String, Identifiable {
 
     var title: String {
         switch self {
-        case .togglePlayback: return "播放/暂停"
-        case .shuttleSpeed: return "播放/加速"
-        case .shuttleBackward: return "倒放穿梭"
-        case .shuttleForward: return "正放穿梭"
-        case .stepBackward: return "后退一帧"
-        case .stepForward: return "前进一帧"
-        case .previousSceneCut: return "上一个剪辑点"
-        case .nextSceneCut: return "下一个剪辑点"
-        case .setAudioIn: return "设置 In 点"
-        case .setAudioOut: return "设置 Out 点"
-        case .clearAudioSelection: return "清除声音选区"
-        case .captureCurrentFrame: return "导出当前画面"
-        case .exportAudioSelection: return "导出声音选区"
+        case .togglePlayback: return L10n.text("播放/暂停")
+        case .shuttleSpeed: return L10n.text("播放/加速")
+        case .shuttleBackward: return L10n.text("倒放穿梭")
+        case .shuttleForward: return L10n.text("正放穿梭")
+        case .stepBackward: return L10n.text("后退一帧")
+        case .stepForward: return L10n.text("前进一帧")
+        case .previousSceneCut: return L10n.text("上一个剪辑点")
+        case .nextSceneCut: return L10n.text("下一个剪辑点")
+        case .setAudioIn: return L10n.text("设置 In 点")
+        case .setAudioOut: return L10n.text("设置 Out 点")
+        case .clearAudioSelection: return L10n.text("清除声音选区")
+        case .captureCurrentFrame: return L10n.text("导出当前画面")
+        case .exportAudioSelection: return L10n.text("导出声音选区")
         }
     }
 
@@ -883,11 +883,11 @@ private extension TrafficLightButton.Kind {
     var accessibilityLabel: String {
         switch self {
         case .close:
-            return "关闭"
+            return L10n.text("关闭")
         case .miniaturize:
-            return "最小化"
+            return L10n.text("最小化")
         case .zoom:
-            return "全屏"
+            return L10n.text("全屏")
         }
     }
 }

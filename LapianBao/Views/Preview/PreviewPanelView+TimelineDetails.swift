@@ -14,12 +14,12 @@ import UniformTypeIdentifiers
 
 extension PreviewPanelView {
     @ViewBuilder
-    func timelineDetailContent(_ tab: PreviewTab, for video: VideoItem) -> some View {
+    func timelineDetailContent(_ tab: PreviewTab, for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         switch tab {
         case .frames:
             frameTimelineDetailContent(for: video)
         case .audio, .content:
-            contentTimelineDetailContent(for: video)
+            contentTimelineDetailContent(for: video, clock: clock)
         }
     }
 
@@ -54,13 +54,15 @@ extension PreviewPanelView {
     }
 
     @ViewBuilder
-    func contentTimelineDetailContent(for video: VideoItem) -> some View {
+    func contentTimelineDetailContent(for video: VideoItem, clock: PlaybackClockSnapshot) -> some View {
         let path = video.url.path
         let status = libraryStore.transcriptStatusByVideoPath[path]
-        let segments = libraryStore.transcriptSegmentsByVideoPath[path, default: []]
 
-        if segments.isEmpty {
-            contentRecognitionStartBlock(for: video, status: status)
+        let state = TranscriptTimelineState(segments: libraryStore.transcriptSegmentsByVideoPath[path], status: status)
+        if state.showsWaveformFallback {
+            TranscriptTimelineFallback(state: state, retry: { libraryStore.transcribe(video: video) }) {
+                audioTimeline(for: video, clock: clock)
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             ZStack(alignment: .bottomTrailing) {
@@ -72,15 +74,6 @@ extension PreviewPanelView {
                     .padding(.bottom, 8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
-    }
-
-    @ViewBuilder
-    func contentRecognitionStartBlock(for video: VideoItem, status: TranscriptJobStatus?) -> some View {
-        if case let .failed(message) = status {
-            RecognitionFailureIndicator(message: message, minHeight: 34)
-        } else {
-            EmptyView()
         }
     }
 
@@ -101,7 +94,7 @@ extension PreviewPanelView {
                         RecognitionFailureIndicator(message: message, minHeight: 28)
                     } else {
                         AppEmptyState(
-                            title: "暂无字幕",
+                            title: L10n.text("暂无字幕"),
                             style: .inline,
                             fillsWidth: false
                         )
@@ -110,7 +103,7 @@ extension PreviewPanelView {
                     Button {
                         libraryStore.transcribe(video: video)
                     } label: {
-                        Label(statusFailed(status) ? "重试" : "生成字幕", systemImage: "text.badge.plus")
+                        Label(statusFailed(status) ? L10n.text("重试") : L10n.text("生成字幕"), systemImage: "text.badge.plus")
                     }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("transcript_generate_button")
@@ -141,11 +134,11 @@ extension PreviewPanelView {
         Button {
             exportCurrentTranscript(for: video)
         } label: {
-            contentTimelineExportButtonLabel(systemImage: "square.and.arrow.up", title: "导出字幕")
+            contentTimelineExportButtonLabel(systemImage: "square.and.arrow.up", title: L10n.text("导出字幕"))
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .accessibilityLabel("导出字幕")
+        .accessibilityLabel(L10n.text("导出字幕"))
         .accessibilityIdentifier("transcript_export_button")
     }
 
@@ -153,19 +146,19 @@ extension PreviewPanelView {
         let path = video.url.path
         if pendingStoryboardExportPath == path {
             if let progress = libraryStore.sceneDetectionProgress[path] {
-                return "导出中 \(progressPercentText(progress))"
+                return L10n.text("导出中 \(progressPercentText(progress))")
             }
-            return "等待导出"
+            return L10n.text("等待导出")
         }
-        return libraryStore.hasSceneRecognitionResult(for: video) ? "导出分镜表" : "识别后导出"
+        return libraryStore.hasSceneRecognitionResult(for: video) ? L10n.text("导出分镜表") : L10n.text("识别后导出")
     }
 
     func storyboardExportButtonHelp(for video: VideoItem) -> String {
         let path = video.url.path
         if pendingStoryboardExportPath == path {
-            return "分镜识别完成后自动导出 Word"
+            return L10n.text("分镜识别完成后自动导出 Word")
         }
-        return libraryStore.hasSceneRecognitionResult(for: video) ? "导出分镜表 Word" : "先识别分镜，完成后自动导出 Word"
+        return libraryStore.hasSceneRecognitionResult(for: video) ? L10n.text("导出分镜表 Word") : L10n.text("先识别分镜，完成后自动导出 Word")
     }
 
     func contentTimelineExportButtonLabel(systemImage: String, title: String) -> some View {
@@ -196,8 +189,7 @@ extension PreviewPanelView {
                     ForEach(segments) { segment in
                         let isActive = segment.id == activeTranscriptSegmentID
                         Button {
-                            controller.pause()
-                            controller.seekToSeconds(segment.start)
+                            controller.playContinuously(from: segment.start)
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
                                 Text(formatDuration(segment.start))
@@ -221,8 +213,10 @@ extension PreviewPanelView {
                     }
                 }
                 .padding(.bottom, 48)
+                .background(SubtitleScrollIndicators())
             }
-            .fadingVerticalScrollIndicators()
+            .scrollIndicators(.automatic)
+            .accessibilityIdentifier("transcript_segment_scroll_view")
             .onChange(of: activeTranscriptSegmentID) { _, newID in
                 if let newID {
                     withAnimation(.easeInOut(duration: 0.3)) {
@@ -289,12 +283,10 @@ extension PreviewPanelView {
     }
 
     func startSubtitleRecognitionIfNeeded(for video: VideoItem) {
-        switch libraryStore.transcriptStatusByVideoPath[video.url.path] {
-        case .running(_), .failed(_), .completed:
-            return
-        case .idle, .none:
-            break
-        }
+        let path = video.url.path
+        let state = TranscriptTimelineState(segments: libraryStore.transcriptSegmentsByVideoPath[path],
+                                            status: libraryStore.transcriptStatusByVideoPath[path])
+        guard state.shouldStartAutomatically else { return }
         libraryStore.transcribe(video: video)
     }
 
@@ -373,8 +365,8 @@ extension PreviewPanelView {
 
     func annotationEditorView(for video: VideoItem) -> some View {
         let editingAnnotation = editingAnnotation(for: video)
-        let title = editingAnnotation.map { "编辑\($0.kind.title)批注" }
-            ?? "添加\(pendingAnnotationKind.title)批注 · \(previewTimecodeText)"
+        let title = editingAnnotation.map { L10n.text("编辑\($0.kind.title)批注") }
+            ?? L10n.text("添加\(pendingAnnotationKind.title)批注 · \(previewTimecodeText)")
 
         return VStack(alignment: .leading, spacing: 12) {
             Text(title)
@@ -389,7 +381,7 @@ extension PreviewPanelView {
             HStack(spacing: 12) {
                 if let editingAnnotation {
                     AnnotationEditorActionButton(
-                        title: "删除",
+                        title: L10n.text("删除"),
                         role: .destructive,
                         accessibilityIdentifier: "annotation_editor_delete_button"
                     ) {
@@ -400,7 +392,7 @@ extension PreviewPanelView {
                 }
 
                 AnnotationEditorActionButton(
-                    title: "取消",
+                    title: L10n.text("取消"),
                     role: .secondary,
                     accessibilityIdentifier: "annotation_editor_cancel_button"
                 ) {
@@ -408,7 +400,7 @@ extension PreviewPanelView {
                     isAnnotationPopoverPresented = false
                 }
                 AnnotationEditorActionButton(
-                    title: "保存",
+                    title: L10n.text("保存"),
                     role: .primary,
                     accessibilityIdentifier: "annotation_editor_save_button"
                 ) {
@@ -678,7 +670,7 @@ private struct AnnotationEditorTextView: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.setAccessibilityIdentifier(AnnotationEditorAccessibility.textViewIdentifier)
-        textView.setAccessibilityLabel("批注输入框")
+        textView.setAccessibilityLabel(L10n.text("批注输入框"))
 
         scrollView.documentView = textView
         context.coordinator.textView = textView

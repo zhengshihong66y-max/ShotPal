@@ -229,7 +229,7 @@ struct CenteredWaveformTimeline: View {
             RoundedRectangle(cornerRadius: Design.innerRadius, style: .continuous)
                 .stroke(.white.opacity(0.08), lineWidth: 0.7)
         }
-        .accessibilityLabel("居中播放头音频波形")
+        .accessibilityLabel(L10n.text("居中播放头音频波形"))
     }
 
     private func xPosition(for sampleProgress: Double, focus: Double, span: Double, width: CGFloat) -> CGFloat {
@@ -383,7 +383,7 @@ struct PreviewPlayerView: View {
                 .stroke(.white.opacity(0.14), lineWidth: 1)
         }
         .contentShape(Rectangle())
-        .accessibilityLabel("播放器画面")
+        .accessibilityLabel(L10n.text("播放器画面"))
         .accessibilityIdentifier("preview_player_surface")
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)

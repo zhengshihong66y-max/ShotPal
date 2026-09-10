@@ -153,7 +153,7 @@ nonisolated private func registerResolvedFileDataRepresentation(
                     completion(nil, NSError(
                         domain: "LapianBao.DragFileRepresentation",
                         code: 2,
-                        userInfo: [NSLocalizedDescriptionKey: "无法生成拖拽文件路径数据"]
+                        userInfo: [NSLocalizedDescriptionKey: L10n.text("无法生成拖拽文件路径数据")]
                     ))
                 }
             case .failure(let error):
@@ -249,6 +249,6 @@ nonisolated func videoDragItemProvider(for video: VideoItem) -> NSItemProvider {
         suggestedName: video.url.lastPathComponent,
         fallbackTypeIdentifier: UTType.movie.identifier,
         errorDomain: "LapianBao.VideoDragExport",
-        missingFileMessage: "视频文件不存在"
+        missingFileMessage: L10n.text("视频文件不存在")
     )
 }

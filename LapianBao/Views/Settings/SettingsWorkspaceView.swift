@@ -51,60 +51,39 @@ struct SettingsWorkspaceView: View {
         return settingsCompactRow(
             icon: downloaderSelfCheckIcon(for: report),
             iconTint: downloaderSelfCheckColor(for: report),
-            title: "下载器自检",
-            description: "使用开源下载工具，请保证网络环境。",
+            title: L10n.text("下载器自检"),
+            description: L10n.text("使用开源下载工具，请保证网络环境。"),
             detail: downloaderSelfCheckVersionText(report),
             detailColor: downloaderSelfCheckDetailColor(for: report),
             actionIcon: "arrow.clockwise",
-            help: "刷新 YTDLP 自检",
+            help: L10n.text("刷新 YTDLP 自检"),
             isDisabled: report.isRunning,
             action: { selfCheckStore.startExternalServiceSelfCheck() }
         )
     }
 
     private func youtubeCookieFileCard() -> some View {
-        let isConfigured = !(youtubeCookieStore.configuredFilePath ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isConfigured = youtubeCookieStore.hasReadableCookieFile
         let isRefreshing = youtubeCookieStore.isRefreshing
         return settingsCompactRow(
             icon: youtubeCookieCardIcon(isConfigured: isConfigured),
             iconTint: youtubeCookieCardIconTint(isConfigured: isConfigured),
-            title: "浏览器 cookies",
-            description: "用于 YouTube、小红书、Bilibili、抖音风控；仅保留这些平台的 Chrome cookies。",
-            detail: youtubeCookieFileDetailText,
+            title: L10n.text("浏览器 cookies"),
+            description: L10n.text("可选的 Chrome 登录信息；cookies 同步与下载器能否运行是两项独立检查。"),
+            detail: youtubeCookieStore.statusDetail,
             detailColor: youtubeCookieDetailColor(isConfigured: isConfigured),
             actionIcon: "arrow.clockwise",
-            help: isConfigured ? "从 Chrome 一键更新 cookies" : "从 Chrome 一键配置 cookies",
+            help: isConfigured ? L10n.text("从 Chrome 一键更新 cookies") : L10n.text("从 Chrome 一键配置 cookies"),
             isDisabled: isRefreshing,
             action: { youtubeCookieStore.refreshFromBrowser() }
         )
-    }
-
-    private var youtubeCookieFileDetailText: String {
-        switch youtubeCookieStore.refreshPhase {
-        case .running:
-            return "正在从 Chrome 同步…首次会弹出钥匙串授权，请点\"允许\""
-        case .failed(let message):
-            return message
-        case .succeeded:
-            return "\(youtubeCookieConfiguredFileName ?? "cookies.txt") · 已同步"
-        case .idle:
-            return youtubeCookieConfiguredFileName.map { "\($0) · 已配置" } ?? "未配置"
-        }
-    }
-
-    private var youtubeCookieConfiguredFileName: String? {
-        let trimmed = (youtubeCookieStore.configuredFilePath ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return URL(fileURLWithPath: trimmed).lastPathComponent
     }
 
     private func youtubeCookieCardIcon(isConfigured: Bool) -> String {
         switch youtubeCookieStore.refreshPhase {
         case .running: return "clock.arrow.circlepath"
         case .failed: return "exclamationmark.triangle.fill"
-        case .succeeded: return "checkmark.seal.fill"
+        case .succeeded: return isConfigured ? "doc.badge.gearshape.fill" : "exclamationmark.triangle.fill"
         case .idle: return isConfigured ? "doc.badge.gearshape.fill" : "doc.badge.plus"
         }
     }
@@ -112,15 +91,15 @@ struct SettingsWorkspaceView: View {
     private func youtubeCookieCardIconTint(isConfigured: Bool) -> Color {
         switch youtubeCookieStore.refreshPhase {
         case .running: return Design.annotationAccent
-        case .failed: return .red
-        case .succeeded: return .green
+        case .failed: return .orange
+        case .succeeded: return isConfigured ? .green : .orange
         case .idle: return isConfigured ? .green : Design.annotationAccent
         }
     }
 
     private func youtubeCookieDetailColor(isConfigured: Bool) -> Color {
         switch youtubeCookieStore.refreshPhase {
-        case .succeeded: return .green
+        case .succeeded: return isConfigured ? .green : .orange
         case .idle where isConfigured: return .green
         default: return Color.yellow.opacity(0.92)
         }
@@ -157,7 +136,7 @@ struct SettingsWorkspaceView: View {
                         .font(Design.numericCaption2())
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("冲突：\(conflicts.map(\.title).joined(separator: "、"))")
+                    Text(L10n.text("冲突：\(conflicts.map(\.title).joined(separator: "、"))"))
                         .font(.caption2)
                         .foregroundStyle(.red)
                 }
@@ -176,7 +155,7 @@ struct SettingsWorkspaceView: View {
             settingsActionButton(
                 systemImage: "arrow.uturn.backward",
                 tint: action.keyCode == action.defaultKeyCode ? .white.opacity(0.22) : .white.opacity(0.70),
-                help: "恢复默认",
+                help: L10n.text("恢复默认"),
                 action: {
                     AppSettings.resetPreviewShortcutKeyCode(actionRawValue: action.rawValue)
                     shortcutRevision += 1
@@ -252,10 +231,11 @@ struct SettingsWorkspaceView: View {
             Text(detail.isEmpty ? " " : detail)
                 .font(.caption2)
                 .foregroundStyle(detailColor)
-                .lineLimit(1)
+                .lineLimit(3)
                 .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, minHeight: Self.rowContentHeight, maxHeight: Self.rowContentHeight, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: Self.rowContentHeight, alignment: .leading)
     }
 
     private func settingsRowIcon(_ systemImage: String, tint: Color) -> some View {
@@ -310,20 +290,20 @@ struct SettingsWorkspaceView: View {
 
     private func downloaderSelfCheckVersionText(_ report: DownloaderSelfCheckReport) -> String {
         if report.isRunning {
-            return "当前版本：检查中"
+            return L10n.text("当前版本：检查中")
         }
         if report.status == .failed {
             let message = report.message.trimmingCharacters(in: .whitespacesAndNewlines)
             if !message.isEmpty, message != "未自检" {
-                return message
+                return L10n.key(message)
             }
         }
         guard let version = report.ytdlpVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
               !version.isEmpty
         else {
-            return "当前版本：未检测"
+            return L10n.text("当前版本：未检测")
         }
-        return "当前版本：\(version)"
+        return L10n.text("当前版本：\(version)")
     }
 
     private func removeDeprecatedSettings() {

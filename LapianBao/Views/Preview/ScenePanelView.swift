@@ -218,9 +218,9 @@ struct ScenePanelView: View, Equatable {
 
     private var storyboardButtonTitle: String {
         if let progress = sceneDetectionProgress {
-            return "识别中 \(progressPercentText(progress))"
+            return L10n.text("识别中 \(progressPercentText(progress))")
         }
-        return hasSceneRecognitionResult ? "分镜模式" : "识别场景"
+        return hasSceneRecognitionResult ? L10n.text("分镜模式") : L10n.text("识别场景")
     }
 
     private var shouldShowSceneRecognitionStatus: Bool {
@@ -242,7 +242,7 @@ struct ScenePanelView: View, Equatable {
     private func sceneRecognitionStatusContent(centered: Bool) -> some View {
         if let progress = sceneDetectionProgress {
             RecognitionProgressRow(
-                message: "正在识别场景",
+                message: L10n.text("正在识别场景"),
                 progress: progress,
                 compact: false
             )
@@ -251,7 +251,7 @@ struct ScenePanelView: View, Equatable {
             sceneRecognitionFailureContent(sceneDetectionError, centered: centered)
         } else if hasSceneRecognitionResult && sceneCuts.isEmpty {
             AppEmptyState(
-                title: centered ? "未识别到场景切点" : "未识别到场景切点，已有截图会继续保留",
+                title: centered ? L10n.text("未识别到场景切点") : L10n.text("未识别到场景切点，已有截图会继续保留"),
                 systemImage: centered ? "checkmark.circle" : nil,
                 style: centered ? .compact : .inline,
                 minHeight: centered ? 92 : nil,
@@ -261,7 +261,7 @@ struct ScenePanelView: View, Equatable {
             )
         } else {
             RecognitionProgressRow(
-                message: "正在准备场景识别",
+                message: L10n.text("正在准备场景识别"),
                 progress: nil,
                 compact: false,
                 showPercent: false
@@ -277,7 +277,7 @@ struct ScenePanelView: View, Equatable {
                 .foregroundStyle(.red.opacity(0.92))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("场景识别失败")
+                Text(L10n.text("场景识别失败"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text(message)

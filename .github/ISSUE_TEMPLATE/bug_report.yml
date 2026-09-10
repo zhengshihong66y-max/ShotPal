@@ -1,0 +1,34 @@
+name: Bug report
+description: Report an installation or app problem.
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: ShotPal Pro version
+      description: Include the version and build number if available.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Mac and macOS version
+      placeholder: "Example: M1 MacBook Air, macOS 14.7"
+    validations:
+      required: true
+  - type: input
+    id: installer
+    attributes:
+      label: Installer filename and download source
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include expected behavior, actual behavior, and interface language.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Error message or screenshot
+      description: Remove cookies, tokens, private media, and personal folder paths before sharing.

@@ -23,7 +23,7 @@ extension PreviewPanelView {
                         activePreviewTab = tab
                     }
                 } label: {
-                    Text(tab.rawValue)
+                    Text(tab.title)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(activePreviewTab == tab ? .white : .white.opacity(0.45))
                         .padding(.horizontal, 13)
@@ -51,7 +51,7 @@ extension PreviewPanelView {
                         }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("切换到\(tab.rawValue)")
+                .accessibilityLabel(L10n.text("切换到\(tab.title)"))
                 .accessibilityIdentifier("preview_tab_\(tabAccessibilityKey(tab))_button")
             }
         }
@@ -130,11 +130,11 @@ extension PreviewPanelView {
         if activePreviewTab == .audio {
             HStack(spacing: 8) {
                 Button("In") { setAudioInPoint() }
-                    .accessibilityLabel("设置声音入点")
+                    .accessibilityLabel(L10n.text("设置声音入点"))
                     .accessibilityIdentifier("audio_set_in_point_button")
 
                 Button("Out") { setAudioOutPoint() }
-                    .accessibilityLabel("设置声音出点")
+                    .accessibilityLabel(L10n.text("设置声音出点"))
                     .accessibilityIdentifier("audio_set_out_point_button")
 
                 Divider().frame(height: 14)
@@ -149,7 +149,7 @@ extension PreviewPanelView {
                 }
                 .buttonStyle(.plain)
                 .disabled(audioInPoint == nil || audioOutPoint == nil || libraryStore.audioClipExportProgressByVideoPath[video.url.path] != nil)
-                .accessibilityLabel("导出声音选区")
+                .accessibilityLabel(L10n.text("导出声音选区"))
                 .accessibilityIdentifier("audio_export_selection_button")
 
                 Spacer()
@@ -213,7 +213,7 @@ extension PreviewPanelView {
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("已截取声音段")
+                Text(L10n.text("已截取声音段"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
@@ -242,7 +242,7 @@ extension PreviewPanelView {
 
             if let progress = libraryStore.audioClipExportProgressByVideoPath[video.url.path] {
                 GenerationProgressRow(
-                    message: "正在导出声音并生成波形",
+                    message: L10n.text("正在导出声音并生成波形"),
                     progress: progress,
                     tint: Design.annotationAccent,
                     systemImage: "waveform.badge.plus",
@@ -263,7 +263,7 @@ extension PreviewPanelView {
 
             if clips.isEmpty {
                 AppEmptyState(
-                    title: "暂无声音片段",
+                    title: L10n.text("暂无声音片段"),
                     systemImage: "waveform",
                     style: .compact
                 )
@@ -298,7 +298,7 @@ extension PreviewPanelView {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(audioOutPoint == nil ? "当前声音选区" : "待导出声音段")
+                Text(audioOutPoint == nil ? L10n.text("当前声音选区") : L10n.text("待导出声音段"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.84))
                 Text("\(formatDuration(min(inTime, end))) - \(formatDuration(max(inTime, end))) · \(formatDuration(duration))")
@@ -359,8 +359,8 @@ extension PreviewPanelView {
             exportItemActionColumn(
                 showInFinderURL: libraryStore.audioClipFileURL(for: clip),
                 accessibilityIdentifierPrefix: "home_audio_clip_\(clip.id.uuidString)",
-                jumpHelp: "回到原视频位置",
-                deleteHelp: "删除声音片段",
+                jumpHelp: L10n.text("回到原视频位置"),
+                deleteHelp: L10n.text("删除声音片段"),
                 onJump: {
                     audioInPoint = clip.inTime
                     audioOutPoint = clip.outTime
@@ -395,8 +395,8 @@ extension PreviewPanelView {
     }
 
     func audioClipTitle(index: Int?) -> String {
-        guard let index else { return "声音片段" }
-        return String(format: "声音片段 %02d", index)
+        guard let index else { return L10n.text("声音片段") }
+        return String(format: L10n.text("声音片段 %02d"), index)
     }
 
     func clipWidthRatio(_ clip: AudioClipItem) -> Double {
@@ -409,10 +409,11 @@ extension PreviewPanelView {
         let path = video.url.path
         let status = libraryStore.musicDetectionStatusByVideoPath[path]
         let songs = libraryStore.musicsByVideoPath[path, default: []]
+        let presentation = MusicRecognitionPresentation(status: status, songCount: songs.count)
 
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("音乐识别")
+                Text(L10n.text("音乐识别"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -421,7 +422,7 @@ extension PreviewPanelView {
                         libraryStore.cancelMusicDetection(for: video)
                     } label: {
                         Image(systemName: "stop.circle")
-                            .accessibilityLabel("停止")
+                            .accessibilityLabel(L10n.text("停止"))
                     }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("music_recognition_stop_button")
@@ -429,7 +430,7 @@ extension PreviewPanelView {
                     Button {
                         libraryStore.detectMusic(for: video)
                     } label: {
-                        Label(songs.isEmpty ? "识别音乐" : "重新识别", systemImage: "music.note.list")
+                        Label(songs.isEmpty ? L10n.text("识别音乐") : L10n.text("重新识别"), systemImage: "music.note.list")
                     }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("music_recognition_start_button")
@@ -448,20 +449,18 @@ extension PreviewPanelView {
                 if !songs.isEmpty {
                     homeMusicRows(songs: songs, videoPath: path)
                 }
-            } else if case let .failed(message) = status {
-                RecognitionFailureIndicator(message: message, minHeight: 82)
-            } else if status == .completed, songs.isEmpty {
-                AppEmptyState(
-                    title: "暂无音乐识别结果",
-                    style: .compact,
-                    minHeight: 82,
-                    showsBackground: true
-                )
+            } else if presentation.noticeTitle != nil {
+                if !songs.isEmpty {
+                    homeMusicRows(songs: songs, videoPath: path)
+                }
+                MusicRecognitionNotice(presentation: presentation) {
+                    libraryStore.detectMusic(for: video)
+                }
             } else if songs.isEmpty {
                 AppEmptyState(
-                    title: "暂无音乐识别记录",
+                    title: L10n.text("暂无音乐识别记录"),
                     systemImage: "music.note",
-                    description: "识别视频中出现过的背景音乐，并显示歌名、作者、封面和 Apple Music 链接。",
+                    description: L10n.text("识别视频中出现过的背景音乐，并显示歌名、作者、封面和 Apple Music 链接。"),
                     style: .compact,
                     minHeight: 82,
                     showsBackground: true
@@ -495,14 +494,14 @@ extension PreviewPanelView {
         } else if segments.isEmpty {
             HStack(spacing: 10) {
                 AppEmptyState(
-                    title: "暂无字幕",
+                    title: L10n.text("暂无字幕"),
                     style: .inline,
                     fillsWidth: false
                 )
                 Button {
                     libraryStore.transcribe(video: video)
                 } label: {
-                    Label("生成字幕", systemImage: "text.badge.plus")
+                    Label(L10n.text("生成字幕"), systemImage: "text.badge.plus")
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("transcript_generate_button")

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "architecture": "arm64",
+  "firstLaunchDownloads": false,
+  "ytDLPVersion": "2026.08.29.232711",
+  "denoVersion": "2.9.6",
+  "assets": {
+    "yt-dlp": {
+      "path": "bin/yt-dlp",
+      "sourceURL": "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/download/2026.08.29.232711/yt-dlp",
+      "downloadSHA256": "e8bc4155d3af4fa4fa8efbb5146790f6e9da48266d103eea859de8a44ba194ad",
+      "unsignedSHA256": "e8bc4155d3af4fa4fa8efbb5146790f6e9da48266d103eea859de8a44ba194ad"
+    },
+    "deno": {
+      "path": "bin/deno",
+      "sourceURL": "https://github.com/denoland/deno/releases/download/v2.9.6/deno-aarch64-apple-darwin.zip",
+      "downloadSHA256": "213a2f304f04d3c9cb5220669afad138f60a5aab1fe80962abdeb8f35807a472",
+      "unsignedSHA256": "b3ac3bd206e48c26026cadd80c1367e96c149f9c66130952382a642b09fa8a71"
+    }
+  }
+}

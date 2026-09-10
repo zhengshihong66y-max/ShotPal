@@ -293,7 +293,7 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
     )
     require(
         'LibraryToolbar(placeholder: "", text: $librarySearchText)' in library_grid
-        and 'LibraryToolbar(placeholder: "", text: $viewModel.searchText)' in music_workspace
+        and 'LibraryToolbar(placeholder: "", text: $viewModel.searchText,' in music_workspace
         and 'LibraryToolbar(placeholder: "", text: $frameSearchText)' in frames_workspace
         and "searchExpands" not in design
         and "static let libraryToolbarSearchMinWidth: CGFloat = 110" in design
@@ -489,7 +489,7 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
     music_tag_column = section_between(
         music_workspace,
         "private func musicTagColumn(",
-        "private func sectionHeader",
+        "private func toolbarIcon",
     )
     require(
         "MusicEntryTagStrip(tags: tags)" in music_tag_column
@@ -525,6 +525,15 @@ def require_music_library_projection_guardrails(sources: dict[str, str]) -> None
         and "requiredVisibleMusicTags(" in projection_builder
         and "displayedMusicTags(" in projection_builder,
         "Music workspace projections must never expose empty visible genre tags after metadata filtering.",
+    )
+    require(
+        '"国际流行": "Pop"' in music_tagging
+        and '"电子音乐": "Electronic"' in music_tagging
+        and '"r&b/灵魂乐": "R&B/Soul"' in music_tagging
+        and "recognizedMusicGenreKeys.contains(key)" in music_tagging
+        and "canonicalMusicGenreKey($0.key)" in music_tagging
+        and "CommandLineMusicGenreCheck.run()" in sources["LapianBao/CommandLineUIStateCheck.swift"],
+        "Localized catalog genres and recognized English genres must survive canonicalization, without accepting arbitrary content tags.",
     )
     require(
         "音乐界面不提供自添加标签系统" in agents
@@ -1497,7 +1506,7 @@ def require_annotation_editor_guardrails(sources: dict[str, str]) -> None:
     )
     save_button = section_between(
         annotation_editor,
-        'title: "保存"',
+        'title: L10n.text("保存")',
         'saveAnnotationEditor(for: video, editingAnnotation: editingAnnotation)',
     )
     annotation_action_row = section_between(
@@ -1706,7 +1715,7 @@ def require_preview_timeline_playback_viewport_guardrails(sources: dict[str, str
     pending_timeline_expansion = section_between(
         timeline_layout,
         "func completePendingTimelineExpansionIfReady()",
-        "func timelineTranscriptRecognitionIsRunning",
+        "private struct TimelineRangeSelectionIcon",
     )
     require(
         "hasSceneRecognitionResult: libraryStore.hasSceneRecognitionResult(for: video)" in home_frame_tab
@@ -1887,7 +1896,7 @@ def require_settings_row_description_guardrails(sources: dict[str, str]) -> None
         "Settings rows with title, note, and status must use fixed spacing and a shared gray description color.",
     )
     require(
-        'description: "使用开源下载工具，请保证网络环境。"' in downloader_card
+        'description: L10n.text("使用开源下载工具，请保证网络环境。")' in downloader_card
         and "Text(description)" in compact_info_column
         and ".foregroundStyle(Self.rowDescriptionColor)" in compact_info_column
         and "detailColor: downloaderSelfCheckDetailColor(for: report)" in downloader_card
@@ -2055,7 +2064,7 @@ def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None
         # 取代原自绘 RoundedRectangle(隐式动画在整行高频重建下吃不上会跳动)。
         and "ProgressView(value: progress)" in active_progress_bar
         and ".progressViewStyle(.linear)" in active_progress_bar
-        and "accessibilityLabel(\"下载进度\")" in active_progress_bar,
+        and "accessibilityLabel(L10n.text(\"下载进度\"))" in active_progress_bar,
         "Active import job cards must render a visible download ProgressView below the source URL.",
     )
     require(
@@ -2078,7 +2087,7 @@ def require_import_job_progress_text_guardrails(sources: dict[str, str]) -> None
     require(
         "progressPercentText" not in import_progress_summary
         and "activeImportOverallProgress" not in import_progress_summary
-        and 'return "\\(activeImportJobs.count) 个任务"' in import_progress_summary,
+        and 'return L10n.text("\\(activeImportJobs.count) 个任务")' in import_progress_summary,
         "Download progress section header summary must show only the active task count, not an overall percentage.",
     )
     history_status = section_between(
@@ -2219,9 +2228,9 @@ def require_music_recognition_download_scope_guardrails(sources: dict[str, str])
     )
     require(
         "func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil)" in capture_music
-        and "MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: .importing)" in capture_music
-        and "musicDownloadJobs.firstIndex(where: { $0.songKey == songKey && $0.type == type })" in capture_music
-        and "musicDownloadJobs[index].status = .importing" in capture_music
+        and "MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: status, song: song)" in capture_music
+        and "musicDownloadJobs.lastIndex(where: { $0.songKey == songKey && $0.type == type })" in capture_music
+        and "musicDownloadJobs[index] = existing" in capture_music
         and "musicDownloadJobs.last { $0.songKey == songKey && $0.type == type }" in capture_music
         and "var seen = Set<UUID>()" in capture_music,
         "Music download records must stay globally unique per (song, type): retries update in place and lookups ignore recognitionID.",
@@ -2335,7 +2344,7 @@ def require_deleted_video_image_cleanup_guardrails(sources: dict[str, str]) -> N
     )
     project_prune = section_between(
         persistence,
-        "func projectDataRemovingMissingVideoImageExports",
+        "func applyProjectData(",
         "func migrateProjectDataVideoPaths",
     )
     require(
@@ -2347,25 +2356,22 @@ def require_deleted_video_image_cleanup_guardrails(sources: dict[str, str]) -> N
         "Deleting a video from the app must delete both generated image files and sampled-frame records for that video.",
     )
     require(
-        "let pruned = projectDataRemovingMissingVideoImageExports(decoded)" in persistence
-        and "sampledFrames = pruned.sampledFrames" in persistence
-        and "let liveVideoPaths = Set(videos.map(\\.url.path))" in project_prune
-        and "let framesToRemove = decoded.sampledFrames.filter { !liveVideoPaths.contains($0.videoPath) }" in project_prune
-        and 'context: "missing-video image export"' in project_prune
-        and "pruned.sampledFrames.removeAll { !liveVideoPaths.contains($0.videoPath) }" in project_prune,
-        "Loading project data after videos disappear from disk must prune orphan generated image files and frame records.",
+        "sampledFrames = decoded.sampledFrames" in project_prune
+        and "trashLibraryFileIfPresent" not in project_prune
+        and "removeAll" not in project_prune,
+        "Loading project data must preserve exports when original media is temporarily unavailable.",
     )
     require(
         "in allFrames: [SampledFrame]" in timeline_media
         and "let remainingRecordCount = allFrames.filter" in timeline_media,
-        "Image export deletion must compare against a supplied frame set so missing-video cleanup protects live duplicate filenames.",
+        "Image export deletion must compare against a supplied frame set so explicit deletion protects live duplicate filenames.",
     )
     require(
         "--lapianbao-deleted-video-image-cleanup-check" in command_check
         and "store.removeVideo(video)" in command_check
         and "store.applyProjectData(ProjectDataFile(" in command_check
         and "appDeleteRemovedImageFile" in command_check
-        and "missingVideoLoadRemovedImageFile" in command_check
+        and "missingVideoLoadPreservedImageFile" in command_check
         and "CommandLineDeletedVideoImageCleanupCheck.runIfRequested()" in app_delegate,
         "Formal app executable must keep a command-line smoke check for deleted-video image cleanup.",
     )
@@ -2550,8 +2556,10 @@ def require_architecture_guardrails(sources: dict[str, str]) -> None:
             "LapianBao/Views/Components/CardAndTimelineHelpers.swift",
             "LapianBao/Views/Music/AudioMusicComponents.swift",
             "LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift",
+            "LapianBao/Views/Preview/SubtitleScrollIndicators.swift",
+            "LapianBao/CommandLineSubtitleScrollCheck.swift",
         },
-        "NotificationCenter access must stay inside AppEventBus, AppKit window observers, or local AVPlayer observers",
+        "NotificationCenter access must stay inside AppEventBus, AppKit window/scroll observers and fixtures, or local AVPlayer observers",
     )
     require_regex_allowlist(
         sources,
@@ -2575,6 +2583,25 @@ def main() -> None:
     swift_sources = read_sources("LapianBao")
     require_architecture_guardrails(swift_sources)
 
+    runtime = swift_sources["LapianBao/YTDLPRuntime.swift"]
+    readiness = swift_sources["LapianBao/Stores/LibraryStore+DownloaderSelfCheck.swift"]
+    remote = swift_sources["LapianBao/Stores/LibraryStore+RemoteDownload.swift"]
+    require('"-I", "-B", archive.path' in runtime and '"--js-runtimes"' in runtime,
+            "yt-dlp must use explicit bundled Python and JS runtime paths.")
+    require("Task.detached(priority: .utility)" in runtime and "actor DownloaderReadiness" in runtime,
+            "Runtime readiness must coalesce work off MainActor.")
+    require("/opt/homebrew/bin/yt-dlp" not in readiness and "func usableYTDLPURL" not in readiness,
+            "Do not restore host-tool fallback or synchronous first-use repair.")
+    require("Darwin.rename(temporaryURL.path, targetURL.path)" in readiness
+            and "copyItem(at: targetURL, to: backupURL)" in readiness
+            and "moveItem(at: targetURL, to: backupURL)" not in readiness,
+            "Downloader update must replace atomically without moving the live archive away first.")
+    require("@concurrent nonisolated static func downloadVideo" in remote and "await readyYTDLPURL()" in remote,
+            "Download entry must explicitly leave caller actor and await shared readiness.")
+    require("importViaCobalt(" not in remote, "Do not restore an unauthenticated public Cobalt fallback.")
+    require("DownloadProgressCoalescer" in swift_sources["LapianBao/Stores/LibraryStore+LaunchAndRemoteImports.swift"],
+            "Download progress must be coalesced before global UI publication.")
+
     app_swift = "\n\n".join(swift_sources.values())
     library_store = app_swift
     preview_controller = app_swift
@@ -2590,6 +2617,139 @@ def main() -> None:
     xiaohongshu_download = swift_sources.get("LapianBao/Stores/LibraryStore+XiaohongshuDownload.swift", "")
     browser_cookie_store = swift_sources.get("LapianBao/Stores/YouTubeCookieStore.swift", "")
     settings_workspace = swift_sources.get("LapianBao/Views/Settings/SettingsWorkspaceView.swift", "")
+    import_jobs = swift_sources["LapianBao/Views/AppShell/ContentView+ImportJobs.swift"]
+    import_input = swift_sources["LapianBao/Views/AppShell/ContentView+ImportInput.swift"]
+    design = swift_sources["LapianBao/Views/Design/Design.swift"]
+    music_workspace = swift_sources["LapianBao/Views/Music/MusicWorkspaceView.swift"]
+    music_projection = swift_sources["LapianBao/Views/Music/MusicWorkspaceProjectionBuilder.swift"]
+    submission = section_between(import_jobs, "func startRemoteImport()", "var detectedImportPlatform")
+    require('importURLText = ""' in submission
+            and submission.index('importURLText = ""') < submission.index("libraryStore.importRemoteVideos")
+            and "observedPasteboardChangeCount = NSPasteboard.general.changeCount" in submission,
+            "Accepted import drafts must clear before queue publication and consume clipboard autofill.")
+    require(import_input.count("unqueuedClipboardImportURLs(from: clip)") == 2
+            and "!existingIDs.contains(importCandidateID(for: $0))" in import_input,
+            "Clipboard polling and import-panel autofill must both exclude queued/imported links.")
+    require("override var mouseDownCanMoveWindow: Bool { false }" in design
+            and "textField.isEditable = true" in design and "textField.isSelectable = true" in design,
+            "Search fields must own selection drags, not move the window.")
+    music_row_state = swift_sources["LapianBao/Views/Music/MusicDownloadRowState.swift"]
+    require('primaryClientArguments = []' in ytdlp_download
+            and 'youtube:player_client=tv;skip=hls,dash' not in ytdlp_download
+            and 'authenticationRetry.allows(arguments: attempt.arguments)' in remote_download
+            and 'authenticationRetry.allows(arguments: source.extraArguments)' in music_detection
+            and 'authenticationRetry.recordFailure(' in remote_download
+            and 'if cookieFileURL != nil {\n                            break' not in remote_download
+            and 'usedCookies: extraArguments.contains("--cookies")' in ytdlp_download,
+            "YouTube defaults and authenticated fallback routes must survive a single-client rejection; errors must describe actual cookie use.")
+    require("MusicDownloadQueueView" not in music_workspace
+            and "downloadBackedMusicGroups(" in music_projection
+            and "MusicDownloadRowState.structuralJobs(libraryStore.musicDownloadJobs)" in music_workspace
+            and "sortedAppleMusicSearchResults" not in music_projection,
+            "Music downloads must reuse normal rows outside transient search, with structural-only list refreshes and service relevance ordering.")
+    require("MusicDownloadRowState.liveJob(" in swift_sources["LapianBao/Views/Music/AudioMusicComponents.swift"]
+            and 'static func liveJob(' in music_row_state
+            and "return realJob" in music_projection
+            and "viewModel.isShowingSearchProgress" in music_workspace
+            and "searchResultsQuery != query || projection.searchQuery != query" in swift_sources["LapianBao/Views/Music/MusicWorkspaceModels.swift"],
+            "Music buttons must use live task progress, preserve real task IDs, and never display a projection for a previous search query.")
+    require('for: song, type: type, projected:' in swift_sources['LapianBao/Views/Music/AudioMusicComponents.swift']
+            and 'musicDownloadIsIndeterminate(job: displayJob)' in swift_sources['LapianBao/Views/Music/AudioMusicComponents.swift']
+            and 'jobs.last { $0.songKey == songKey && $0.type == type }' in music_row_state
+            and 'lastSubmissionWasMeasured != isMeasured' in swift_sources['LapianBao/DownloadProgressCoalescer.swift']
+            and 'generation == token' in swift_sources['LapianBao/DownloadProgressCoalescer.swift'],
+            "New music downloads need immediate live-task activity and first measured progress, without fake percentages or stale timer deliveries.")
+    require('searchPopover: musicSearchPopoverConfiguration' in music_workspace
+            and 'guard viewModel.searchMode == .onlineCatalog else { return nil }' in music_workspace
+            and 'guard viewModel.searchMode == .onlineCatalog else { return }' in music_workspace
+            and 'popover.show(relativeTo: field.bounds, of: field' in design
+            and 'field.restoreSearchEditor()' in design
+            and 'final class SearchPopoverFieldEditor: NSTextView' in design
+            and 'popoverFieldEditor.onActivate?()' in swift_sources["LapianBao/CommandLineMusicRowsRenderCheck.swift"]
+            and 'searchSection(' not in music_workspace
+            and 'scrollProxy.scrollTo' not in music_workspace
+            and 'input.searchMode == .library ? normalizedSearch(input.searchText) : ""' in music_projection
+            and 'init(searchMode: MusicWorkspaceSearchMode = .library)' in swift_sources["LapianBao/Views/Music/MusicWorkspaceModels.swift"]
+            and 'Text(L10n.text("正在搜索…"))' in music_workspace
+            and "searchGeneration == generation" in swift_sources["LapianBao/Views/Music/MusicWorkspaceModels.swift"]
+            and "CommandLineMusicSearchCheck.run()" in swift_sources["LapianBao/CommandLineUIStateCheck.swift"],
+            "Search feedback belongs to the field-anchored popover, preserves editing and library layout, and rejects stale completions.")
+    music_artwork = swift_sources["LapianBao/Views/Music/MusicArtworkAndLookup.swift"]
+    music_artwork_state = swift_sources["LapianBao/Views/Music/MusicArtworkPresentation.swift"]
+    music_artwork_loader = swift_sources["LapianBao/Views/Music/MusicArtworkLoader.swift"]
+    require("musicDownloadPercentage(job: job) ?? type.label" in music_row_state
+            and "progress.isFinite" in music_row_state
+            and "if musicDownloadPercentage(job: displayJob) == nil" in swift_sources["LapianBao/Views/Music/AudioMusicComponents.swift"],
+            "Measured music-download buttons must show only percentages, with normal track labels for unknown progress.")
+    require("displayState.visibleImage(for: request)" in music_artwork
+            and "if identity != request.songIdentity { image = nil }" in music_artwork_state
+            and "generation == expected, identity == request.songIdentity" in music_artwork_state
+            and "Task.detached(priority: .utility)" in music_artwork
+            and "kCGImageSourceThumbnailMaxPixelSize: 1024" in music_artwork
+            and "if let task = inFlight[url]" in music_artwork_loader
+            and "retryAfter[url]" in music_artwork_loader,
+            "Music covers must preserve same-song images, reject stale responses, downsample off-main, and coalesce/cool down requests.")
+    require("normalizedSearch($0.title) == titleKey && normalizedSearch($0.artist) == artistKey" in music_artwork_state
+            and "MusicArtworkSelection.preferredURL(" in music_projection
+            and "CommandLineMusicArtworkCheck.run()" in swift_sources["LapianBao/CommandLineUIStateCheck.swift"],
+            "Music cover metadata and fallback must stay song-matched and retain executable regression coverage.")
+    require("cookieExportProbeURL" not in browser_cookie_store
+            and "cookieExportScript" in browser_cookie_store
+            and "上次文件已保留" in browser_cookie_store
+            and "登录有效性未验证" in browser_cookie_store,
+            "Cookie export must be local and the status must not conflate saved files with authenticated downloads.")
+    require("progressCallback?(0.02)" not in music_detection
+            and "reportsPostProcessingProgress: false" in music_detection,
+            "Music download preparation/extraction must not invent progress percentages.")
+    require("throw AppleMusicSearchError.httpStatus(httpResponse.statusCode)" in swift_sources["LapianBao/Stores/LibraryStore+TimelineMedia.swift"]
+            and "(error as? AppleMusicSearchError)?.errorDescription" in swift_sources["LapianBao/Views/Music/MusicWorkspaceModels.swift"],
+            "Apple Music service rejection must remain an explicit HTTP error, not an empty successful search.")
+    transcript_store = swift_sources["LapianBao/Stores/LibraryStore+CaptureTranscriptMusic.swift"]
+    transcript_details = swift_sources["LapianBao/Views/Preview/PreviewPanelView+TimelineDetails.swift"]
+    transcript_state = swift_sources["LapianBao/Views/Preview/TranscriptTimelineState.swift"]
+    music_notice = swift_sources["LapianBao/Views/Music/MusicRecognitionNotice.swift"]
+    home_music = section_between(swift_sources["LapianBao/Views/Preview/PreviewPanelView+HomeContent.swift"],
+                                 "func homeMusicRecognitionPanel", "func homeMusicRows")
+    export_music = section_between(swift_sources["LapianBao/Views/Preview/PreviewPanelView+ExportPanel.swift"],
+                                   "func exportMusicRecognitionPanel", "private func exportMusicWaveformRenderPrewarmProbe")
+    require(all("MusicRecognitionNotice(presentation: presentation)" in panel
+                and "RecognitionFailureIndicator" not in panel for panel in [home_music, export_music])
+            and ".red" not in music_notice and 'Text("!")' not in music_notice
+            and 'return L10n.text("音乐识别未完成")' in music_notice and "return songCount > 0" in music_notice,
+            "Music no-match/incomplete notices must be neutral without concealing genuine error details.")
+    require("homeMusicRows(songs: songs, videoPath: path)" in section_between(home_music, "presentation.noticeTitle != nil", "else if songs.isEmpty")
+            and "ForEach(songs)" in section_between(export_music, "presentation.noticeTitle != nil", "else if songs.isEmpty")
+            and "tone: musicPresentation.menuTone" in swift_sources["LapianBao/Views/AppShell/ContentView+VideoTiles.swift"],
+            "Partial music matches must remain visible, and music menu status must use the neutral presentation.")
+    subtitle_rows = section_between(transcript_details, "func subtitleSegmentList", "func statusFailed")
+    subtitle_scroll = swift_sources['LapianBao/Views/Preview/SubtitleScrollIndicators.swift']
+    require('.background(SubtitleScrollIndicators())' in subtitle_rows
+            and '.scrollIndicators(.automatic)' in subtitle_rows
+            and 'proxy.scrollTo(newID, anchor: .center)' in subtitle_rows
+            and 'NSScrollView.didLiveScrollNotification, object: enclosing' in subtitle_scroll
+            and 'if !isTracking { scheduleHide() }' in subtitle_scroll
+            and 'scrollView.hasVerticalScroller = isIndicatorVisible' in subtitle_scroll
+            and 'boundsDidChangeNotification' not in subtitle_scroll
+            and 'addLocalMonitorForEvents' not in subtitle_scroll,
+            "Subtitle indicators must attach inside their own scroll content and respond only to manual scrolling, never playback follow or layout updates.")
+    continuous_playback = section_between(swift_sources["LapianBao/PreviewController.swift"],
+                                          "func playContinuously(from", "@discardableResult")
+    require("controller.playContinuously(from: segment.start)" in subtitle_rows
+            and "controller.pause()" not in subtitle_rows
+            and "playSegment(" not in subtitle_rows
+            and "seekToSeconds(seconds, snapToFrame: false)" in continuous_playback
+            and "setRate(1)" in continuous_playback,
+            "Subtitle selection must seek and play continuously, not pause or stop at the entry end.")
+    require("TranscriptTimelineFallback(state: state" in transcript_details
+            and "audioTimeline(for: video, clock: clock)" in transcript_details
+            and "contentRecognitionStartBlock" not in transcript_details,
+            "Untranscribable audio must show an interactive waveform, not an empty grey detail panel.")
+    require(transcript_store.count("completeTranscription(path: path, segments: segments)") == 2
+            and "transcriptStatusByVideoPath[path] = .completed" in transcript_store
+            and "guard case .running = transcriptStatusByVideoPath[path] else { return }" in transcript_store
+            and "return transcriptSegmentsByVideoPath[video.url.path] == nil" in transcript_store
+            and "if segments != nil { return true }" in transcript_state,
+            "Single and batch transcription must record empty completion, preserve prior words and reject stale progress.")
     requirements_music = read("Tools/requirements-music.txt")
     bundled_requirements_music = read("LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/requirements-music.txt")
     debug_scheme = read("LapianBao.xcodeproj/xcshareddata/xcschemes/LapianBao-Debug.xcscheme")
@@ -2616,12 +2776,20 @@ def main() -> None:
     )
     require(
         "--lapianbao-music-runtime-check" in music_runtime_check
-        and 'requirementsRelativePath: "Tools/requirements-music.txt"' in music_runtime_check
-        and 'probeModules: ["shazamio", "requests"]' in music_runtime_check
-        and "environment: probeEnvironment(for: pythonURL)" in music_runtime_check
-        and "LibraryStore.localFFmpegDirectoryPath()" in music_runtime_check
+        and "--lapianbao-scene-runtime-check" in music_runtime_check
+        and "LibraryStore.bundledRecognitionPython" in music_runtime_check
+        and "LibraryStore.recognitionArguments" in music_runtime_check
+        and "environment: LibraryStore.recognitionEnvironment" in music_runtime_check
         and "CommandLineMusicRuntimeCheck.runIfRequested()" in app_swift,
-        "Formal app executable must keep a command-line smoke check for music-recognition Python dependencies.",
+        "Formal app must keep offline bundle-only checks for both recognition engines.",
+    )
+    python_runtimes = swift_sources.get("LapianBao/Stores/LibraryStore+PythonRuntimes.swift", "")
+    require(
+        "YTDLPRuntime.pythonURL" in python_runtimes
+        and '"-I", "-B", "-u"' in python_runtimes
+        and "recognition_bootstrap.py" in python_runtimes
+        and not any(token in python_runtimes for token in ["installPythonRuntime", "hostPython3URL", "localToolURL(", '"pip"', '"venv"']),
+        "Core recognition runtimes must be bundled and isolated, never installed on first use.",
     )
     require(
         "let expectedPartCount = videoInfo?.expectedDownloadPartCount ?? 1" in ytdlp_download
@@ -2691,11 +2859,11 @@ def main() -> None:
         "LibraryStore must track project data load state.",
     )
     require(
-        "guard projectDataLoadState == .loaded else { return }" in library_store,
+        "guard projectDataLoadState == .loaded else {" in library_store,
         "Project data saves must not write before project data is loaded.",
     )
     require(
-        "guard projectDataDirty || projectSaveTask != nil else { return }" in library_store,
+        "guard projectDataDirty || projectSaveTask != nil else { return true }" in library_store,
         "Project data flush must only write dirty or pending snapshots.",
     )
     require(
@@ -2847,7 +3015,7 @@ def main() -> None:
         and "func usesBrowserCookieJar(for sourceURL: URL)" in ytdlp_download
         and "xiaohongshuBrowserCookieHeader()" in xiaohongshu_download
         and "isDouyinFreshCookieFailure" in ytdlp_download
-        and 'title: "浏览器 cookies"' in settings_workspace
+        and 'title: L10n.text("浏览器 cookies")' in settings_workspace
         and 'appendingPathComponent("browser-cookies.txt")' in browser_cookie_store
         and "filteredBrowserCookieContents" in browser_cookie_store
         and '"xiaohongshu.com", "xhslink.com"' in browser_cookie_store
@@ -2907,7 +3075,7 @@ def main() -> None:
         "func normalizedImportProgress(for job: RemoteImportJob) -> Double?" in import_jobs_view
         and "return 0.92" not in import_jobs_view
         and "return 0.98" not in import_jobs_view
-        and 'progress.map(progressPercentText) ?? "处理中"' in import_jobs_view
+        and 'progress.map(progressPercentText) ?? L10n.text("处理中")' in import_jobs_view
         and "if case .finalizing = job.status { return }" in launch_imports
         and "wasTranscoding ? (job.downloadProgress ?? 0) : 0" in launch_imports
         and "saturating" not in remote_download_types

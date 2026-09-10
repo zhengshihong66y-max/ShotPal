@@ -26,3 +26,9 @@ Dist/
 
 # Large local runtime model (prepared separately for distribution builds)
 LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/whisper.cpp/models/ggml-large-v3-turbo-q5_0.bin
+
+# Reproducible recognition wheel payload (lock + manifest remain tracked)
+LapianBao/RuntimeTools.bundle/Contents/Resources/Tools/recognition/site-packages/
+
+# Local generated README previews
+docs/readme-preview/

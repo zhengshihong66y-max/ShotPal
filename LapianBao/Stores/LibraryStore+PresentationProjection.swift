@@ -176,7 +176,7 @@ extension LibraryStore {
 
     private func importDateSection(for video: VideoItem) -> (id: String, title: String) {
         guard let date = metadataByVideoPath[video.url.path]?.createdAt else {
-            return ("unknown", "日期未知")
+            return ("unknown", L10n.text("日期未知"))
         }
 
         let startOfDay = Calendar.current.startOfDay(for: date)

@@ -7,29 +7,9 @@
 
 import Foundation
 
-nonisolated final class SceneDetectionProcessRegistry: ExternalProcessRegistry, @unchecked Sendable {
-    static let shared = SceneDetectionProcessRegistry()
-
-    private let lock = NSLock()
-    private var process: Process?
-
-    func set(_ process: Process?) {
-        lock.lock()
-        self.process = process
-        lock.unlock()
-    }
-
-    func cancelRunningProcess() {
-        lock.lock()
-        let process = process
-        self.process = nil
-        lock.unlock()
-
-        if process?.isRunning == true {
-            process?.terminate()
-        }
-    }
-}
+// Scene workers need the same pre-start cancellation and child-process cleanup
+// as the other bundled workers.
+typealias SceneDetectionProcessRegistry = ToolProcessRegistry
 
 actor SceneDetectionGate {
     static let shared = SceneDetectionGate()
@@ -62,22 +42,24 @@ actor SceneDetectionGate {
 nonisolated final class ToolProcessRegistry: ExternalProcessRegistry, @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
+    private var cancelled = false
 
     func set(_ process: Process?) {
         lock.lock()
         self.process = process
+        let shouldCancel = cancelled
         lock.unlock()
+        if shouldCancel, let process { ExternalProcessRunner.terminateTree(process) }
     }
 
     func cancelRunningProcess() {
         lock.lock()
         let process = process
         self.process = nil
+        cancelled = true
         lock.unlock()
 
-        if process?.isRunning == true {
-            process?.terminate()
-        }
+        if let process { ExternalProcessRunner.terminateTree(process) }
     }
 }
 
@@ -102,34 +84,36 @@ nonisolated final class PipeDataCollector: @unchecked Sendable {
 nonisolated final class PipeLineCollector: @unchecked Sendable {
     private let dataCollector = PipeDataCollector()
     private let lock = NSLock()
-    private var pendingText = ""
+    private var pendingData = Data()
 
     func append(_ data: Data) -> [String] {
-        guard !data.isEmpty else { return [] }
-        dataCollector.append(data)
-        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return [] }
-
         lock.lock()
         defer { lock.unlock() }
+        return appendLocked(data)
+    }
 
-        pendingText += text.replacingOccurrences(of: "\r", with: "\n")
-        let parts = pendingText.components(separatedBy: .newlines)
-        guard parts.count > 1 else { return [] }
-
-        pendingText = parts.last ?? ""
-        return Array(parts.dropLast())
+    private func appendLocked(_ data: Data) -> [String] {
+        guard !data.isEmpty else { return [] }
+        dataCollector.append(data)
+        pendingData.append(data)
+        var lines: [String] = []
+        // Pipe callbacks can split a UTF-8 character between reads. Decode only
+        // complete lines so Chinese text and emoji cannot disappear at a split.
+        while let boundary = pendingData.firstIndex(where: { $0 == 10 || $0 == 13 }) {
+            lines.append(String(decoding: pendingData[..<boundary], as: UTF8.self))
+            pendingData.removeSubrange(...boundary)
+        }
+        return lines
     }
 
     func finish(with data: Data = Data()) -> [String] {
-        var lines = append(data)
-
         lock.lock()
-        if !pendingText.isEmpty {
-            lines.append(pendingText)
-            pendingText = ""
+        defer { lock.unlock() }
+        var lines = appendLocked(data)
+        if !pendingData.isEmpty {
+            lines.append(String(decoding: pendingData, as: UTF8.self))
+            pendingData.removeAll(keepingCapacity: true)
         }
-        lock.unlock()
-
         return lines
     }
 
@@ -255,4 +239,4 @@ nonisolated enum ResourceLibrarySQLite {
     }
 }
 
-enum ProjectDataLoadState { case idle, loading, loaded }
+enum ProjectDataLoadState { case idle, loading, loaded, failed }

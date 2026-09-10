@@ -1019,7 +1019,7 @@ struct FrameScrubberView: View {
         .popover(isPresented: $showAnnotationDetail, arrowEdge: .top) {
             if let text = tappedAnnotationText {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("批注", systemImage: "text.bubble.fill")
+                    Label(L10n.text("批注"), systemImage: "text.bubble.fill")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Design.annotationAccent)
                     Text(text)
@@ -1044,8 +1044,8 @@ struct FrameScrubberView: View {
         ZStack {
             // 播放控制组：ZStack 默认居中 → 播放键始终在正中心
             HStack(spacing: 4) {
-                navButton(icon: "backward.end.fill", help: "上一个场景", identifier: "timeline_previous_scene_button", action: prevScene)
-                navButton(icon: "gobackward.1",      help: "后退一帧", identifier: "timeline_step_back_button", action: stepBack)
+                navButton(icon: "backward.end.fill", help: L10n.text("上一个场景"), identifier: "timeline_previous_scene_button", action: prevScene)
+                navButton(icon: "gobackward.1",      help: L10n.text("后退一帧"), identifier: "timeline_step_back_button", action: stepBack)
 
                 Button(action: togglePlayback) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
@@ -1055,11 +1055,11 @@ struct FrameScrubberView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(isPlaying ? "暂停播放" : "播放")
+                .accessibilityLabel(isPlaying ? L10n.text("暂停播放") : L10n.text("播放"))
                 .accessibilityIdentifier("timeline_play_pause_button")
 
-                navButton(icon: "goforward.1", help: "前进一帧", identifier: "timeline_step_forward_button", action: stepForward)
-                navButton(icon: "forward.end.fill", help: "下一个场景", identifier: "timeline_next_scene_button", action: nextScene)
+                navButton(icon: "goforward.1", help: L10n.text("前进一帧"), identifier: "timeline_step_forward_button", action: stepForward)
+                navButton(icon: "forward.end.fill", help: L10n.text("下一个场景"), identifier: "timeline_next_scene_button", action: nextScene)
             }
 
             // 右侧辅助区：timecode + 图标按钮（无文字标签）
@@ -1076,7 +1076,7 @@ struct FrameScrubberView: View {
                         Image(systemName: "camera.fill")
                             .frame(width: 22, height: 22)
                     }
-                    .accessibilityLabel("截取当前帧")
+                    .accessibilityLabel(L10n.text("截取当前帧"))
                     .accessibilityIdentifier("timeline_capture_frame_button")
                 }
                 if let fn = onAnnotate {
@@ -1084,7 +1084,7 @@ struct FrameScrubberView: View {
                         Image(systemName: "text.bubble.fill")
                             .frame(width: 22, height: 22)
                     }
-                    .accessibilityLabel("添加批注")
+                    .accessibilityLabel(L10n.text("添加批注"))
                     .accessibilityIdentifier("timeline_add_annotation_button")
                 }
             }

@@ -3,7 +3,7 @@
 detect_music.py — Recognize songs in a media file using Shazam.
 
 Setup:
-    The macOS app creates its Python runtime in Application Support on first use.
+    The macOS app ships its Python runtime and all recognition libraries.
     For direct script use, create an environment from requirements-music.txt.
 
 Usage:
@@ -32,7 +32,7 @@ try:
 except ImportError:
     print(json.dumps({
         "type": "error",
-        "message": "缺少音乐识别依赖。请通过 App 首次运行自动安装，或按 requirements-music.txt 手动创建 Python 环境。"
+        "message": "内置音乐识别依赖缺失，请重新安装完整安装包。"
     }), flush=True)
     sys.exit(1)
 
@@ -195,11 +195,21 @@ def parse_apple_music_url(track: dict) -> str:
     return ""
 
 
+class RecognitionServiceError(RuntimeError):
+    """A failed service request must never be reported as a successful no-match."""
+
+
 async def recognize(shazam: Shazam, seg_path: str, timeout: float = RECOGNIZE_TIMEOUT) -> dict | None:
     try:
         result = await asyncio.wait_for(shazam.recognize(seg_path), timeout=timeout)
-    except (asyncio.TimeoutError, Exception):
-        return None
+    except asyncio.TimeoutError as error:
+        raise RecognitionServiceError("音乐识别服务连接超时，请检查网络后重试") from error
+    except Exception as error:
+        # Do not expose request URLs, tokens or media paths in user diagnostics.
+        raise RecognitionServiceError(f"音乐识别服务请求失败（{type(error).__name__}），请检查网络后重试") from error
+
+    if not isinstance(result, dict) or ("track" not in result and "matches" not in result):
+        raise RecognitionServiceError("音乐识别服务返回了无效响应，请稍后重试")
 
     track = result.get("track")
     if not track:
@@ -208,7 +218,7 @@ async def recognize(shazam: Shazam, seg_path: str, timeout: float = RECOGNIZE_TI
     title = track.get("title", "").strip()
     artist = track.get("subtitle", "").strip()
     if not title:
-        return None
+        raise RecognitionServiceError("音乐识别服务返回了不完整的歌曲信息")
 
     images = track.get("images", {})
     artwork = images.get("coverarthq") or images.get("coverart", "")
@@ -269,12 +279,15 @@ async def main() -> None:
 
     shazam = Shazam()
     found: dict[str, dict] = {}   # dedup key → song dict
+    completed_requests = 0
+    failures: list[str] = []
     started_at = time.monotonic()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         for idx, start in enumerate(starts):
             elapsed = time.monotonic() - started_at
             if elapsed >= TOTAL_TIMEOUT:
+                failures.append("识别达到时间上限，部分片段尚未完成，请重试")
                 emit({
                     "type": "progress",
                     "value": idx / max(total, 1),
@@ -287,7 +300,13 @@ async def main() -> None:
 
             if ok:
                 remaining = max(1.0, TOTAL_TIMEOUT - (time.monotonic() - started_at))
-                song = await recognize(shazam, seg_path, timeout=min(RECOGNIZE_TIMEOUT, remaining))
+                try:
+                    song = await recognize(shazam, seg_path, timeout=min(RECOGNIZE_TIMEOUT, remaining))
+                    completed_requests += 1
+                except RecognitionServiceError as error:
+                    failures.append(str(error))
+                    song = None
+                    emit({"type": "progress", "value": idx / max(total, 1), "message": str(error)})
                 if song:
                     key = f"{song['title'].casefold()}|{song['artist'].casefold()}"
                     if key not in found:
@@ -314,6 +333,8 @@ async def main() -> None:
                     os.remove(seg_path)
                 except OSError:
                     pass
+            else:
+                failures.append("无法提取用于识别的音频片段，请确认素材有可读取的音轨")
 
             emit({
                 "type": "progress",
@@ -324,6 +345,16 @@ async def main() -> None:
             # Brief pause to avoid hammering the API
             await asyncio.sleep(0.4)
 
+    if failures:
+        message = failures[-1]
+        if completed_requests:
+            message = "部分片段识别失败，已保留识别出的歌曲。" + message
+        emit({"type": "error", "message": message, "code": "recognition_incomplete",
+              "completed_requests": completed_requests, "failed_requests": len(failures)})
+        raise SystemExit(1)
+    if completed_requests == 0:
+        emit({"type": "error", "message": "识别未完成，请重试", "code": "recognition_incomplete"})
+        raise SystemExit(1)
     emit({"type": "done", "songs": list(found.values())})
 
 

@@ -1,0 +1,5 @@
+"CFBundleDisplayName" = "ShotPal Pro";
+"CFBundleName" = "ShotPal Pro";
+"NSDesktopFolderUsageDescription" = "ShotPal Pro accesses your chosen library folder to read videos and save analysis data.";
+"NSDocumentsFolderUsageDescription" = "ShotPal Pro accesses your chosen library folder to read videos and save analysis data.";
+"NSDownloadsFolderUsageDescription" = "ShotPal Pro accesses your chosen library folder to read videos and save analysis data.";

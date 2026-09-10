@@ -32,7 +32,7 @@ extension LibraryStore {
         query: String,
         into destinationDirectory: URL,
         preResolvedURL: URL? = nil,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double?, Bool) -> Void)? = nil
     ) async throws -> URL {
         let processRegistry = ToolProcessRegistry()
         return try await withTaskCancellationHandler {
@@ -49,11 +49,11 @@ extension LibraryStore {
                 group.addTask {
                     try await Task.sleep(nanoseconds: 300_000_000_000)
                     processRegistry.cancelRunningProcess()
-                    throw RemoteImportError.downloaderFailed("YouTube 音乐下载超时。通常是网络不可达、YouTube 限速，或当前地区无法访问 YouTube 搜索。")
+                    throw RemoteImportError.downloaderFailed(L10n.text("YouTube 音乐下载超时。通常是网络不可达、YouTube 限速，或当前地区无法访问 YouTube 搜索。"))
                 }
 
                 guard let result = try await group.next() else {
-                    throw RemoteImportError.downloaderFailed("YouTube 音乐下载失败")
+                    throw RemoteImportError.downloaderFailed(L10n.text("YouTube 音乐下载失败"))
                 }
                 group.cancelAll()
                 return result
@@ -68,40 +68,37 @@ extension LibraryStore {
         into destinationDirectory: URL,
         preResolvedURL: URL? = nil,
         processRegistry: ToolProcessRegistry,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double?, Bool) -> Void)? = nil
     ) async throws -> URL {
-        progressCallback?(0.02)
+        progressCallback?(nil, false)
         let sources = await musicDownloadSources(for: query, preResolvedURL: preResolvedURL)
         var failures: [String] = []
+        var authenticationRetry = YTDLPAuthenticationRetryState()
 
         // 与导入页一致:进度条直接反映当前尝试的真实下载进度,
         // 不按尝试源数量切段;换源重试时进度回到起点重新走。
         for source in sources {
-            progressCallback?(0.02)
+            guard authenticationRetry.allows(arguments: source.extraArguments) else { continue }
+            progressCallback?(nil, false)
 
             do {
                 return try await runMusicYTDLPDownloadWithTimeout(
                     source: source,
                     into: destinationDirectory,
                     processRegistry: processRegistry,
-                    progressCallback: { progress in
-                        progressCallback?(min(0.98, progress))
-                    }
+                    progressCallback: progressCallback
                 )
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 failures.append("\(source.name)：\(error.localizedDescription)")
-                // 已配置 cookie 仍被风控拦下:立刻结束梯子,让上层走 cookie 自动更新并重试
-                if configuredYouTubeCookieFileURL() != nil,
-                   isYouTubeBotVerificationFailure(error.localizedDescription) {
-                    break
-                }
+                authenticationRetry.recordFailure(error.localizedDescription, arguments: source.extraArguments)
             }
         }
 
         throw RemoteImportError.downloaderFailed(
-            failures.isEmpty ? "YouTube 搜索下载失败" : failures.suffix(3).joined(separator: "\n")
+            authenticationRetry.verificationFailure
+                ?? (failures.isEmpty ? L10n.text("YouTube 搜索下载失败") : failures.suffix(3).joined(separator: "\n"))
         )
     }
 
@@ -130,21 +127,21 @@ extension LibraryStore {
 
         // 识别后预搜索命中的播放页排最前:点下载时连搜索都不用做
         if let preResolvedURL {
-            sources.append(contentsOf: expandedSources(name: "预搜索播放页", target: preResolvedURL.absoluteString))
+            sources.append(contentsOf: expandedSources(name: L10n.text("预搜索播放页"), target: preResolvedURL.absoluteString))
         }
 
         // 配置了 cookie 时让下载进程用 ytsearch1: 一步完成搜索+下载,
         // 省掉独立搜索探测的一整个进程(慢代理下约 6-10 秒);
         // 失败时仍有多客户端/代理尝试和 cookie 自动愈合兜底。
         if configuredYouTubeCookieFileURL() != nil {
-            sources.append(contentsOf: expandedSources(name: "YouTube 搜索直下", target: "ytsearch1:\(trimmedQuery)"))
+            sources.append(contentsOf: expandedSources(name: L10n.text("YouTube 搜索直下"), target: "ytsearch1:\(trimmedQuery)"))
             return sources
         }
 
         if let firstResultURL = await firstYouTubeSearchResultURL(for: trimmedQuery) {
-            sources.append(contentsOf: expandedSources(name: "YouTube 播放页", target: firstResultURL.absoluteString))
+            sources.append(contentsOf: expandedSources(name: L10n.text("YouTube 播放页"), target: firstResultURL.absoluteString))
         }
-        sources.append(contentsOf: expandedSources(name: "YouTube 搜索兜底", target: "ytsearch1:\(trimmedQuery)"))
+        sources.append(contentsOf: expandedSources(name: L10n.text("YouTube 搜索兜底"), target: "ytsearch1:\(trimmedQuery)"))
         return sources
     }
 
@@ -159,7 +156,7 @@ extension LibraryStore {
     }
 
     nonisolated static func firstYouTubeSearchResultURLWithYTDLP(for query: String) async -> URL? {
-        guard let ytdlp = localYTDLPURL() else { return nil }
+        guard let ytdlp = await readyYTDLPURL() else { return nil }
 
         let processRegistry = ToolProcessRegistry()
         return await withTaskCancellationHandler {
@@ -205,10 +202,10 @@ extension LibraryStore {
             ]
             arguments.insert(contentsOf: ytdlpProbeNetworkArguments(isYouTube: true), at: 3)
             arguments.insert(contentsOf: attempt.arguments, at: max(0, arguments.count - 2))
-            let result = ExternalProcessRunner.run(
-                executableURL: executableURL,
+            let result = YTDLPRuntime.run(
+                archive: executableURL,
                 arguments: arguments,
-                environment: downloaderProcessEnvironment(),
+                timeout: 30,
                 processRegistry: processRegistry
             )
 
@@ -340,7 +337,7 @@ extension LibraryStore {
         source: MusicDownloadSource,
         into destinationDirectory: URL,
         processRegistry: ToolProcessRegistry,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double?, Bool) -> Void)? = nil
     ) async throws -> URL {
         try await withThrowingTaskGroup(of: URL.self) { group in
             group.addTask {
@@ -354,11 +351,11 @@ extension LibraryStore {
             group.addTask {
                 try await Task.sleep(nanoseconds: 90_000_000_000)
                 processRegistry.cancelRunningProcess()
-                throw RemoteImportError.downloaderFailed("\(source.name) 下载超时")
+                throw RemoteImportError.downloaderFailed(L10n.text("\(source.name) 下载超时"))
             }
 
             guard let result = try await group.next() else {
-                throw RemoteImportError.downloaderFailed("\(source.name) 下载失败")
+                throw RemoteImportError.downloaderFailed(L10n.text("\(source.name) 下载失败"))
             }
             group.cancelAll()
             return result
@@ -369,16 +366,15 @@ extension LibraryStore {
         source: MusicDownloadSource,
         into destinationDirectory: URL,
         processRegistry: ToolProcessRegistry,
-        progressCallback: (@Sendable (Double) -> Void)? = nil
+        progressCallback: (@Sendable (Double?, Bool) -> Void)? = nil
     ) async throws -> URL {
         try await Task.detached(priority: .utility) {
-            guard let ytdlp = usableYTDLPURL() else {
-                throw RemoteImportError.downloaderFailed("未找到可用的 yt-dlp，自动安装/更新也未完成。请检查网络后在设置里重新运行 yt-dlp 自检。")
+            guard let ytdlp = await readyYTDLPURL() else {
+                throw RemoteImportError.downloaderFailed(YTDLPRuntime.unavailableMessage)
             }
 
             let startedAt = Date()
             let process = Process()
-            process.executableURL = ytdlp
             var env = downloaderProcessEnvironment()
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
@@ -405,7 +401,7 @@ extension LibraryStore {
             arguments += ytdlpDownloadNetworkArguments(isYouTube: true)
             arguments += source.extraArguments
             arguments.append(source.target)
-            process.arguments = arguments
+            YTDLPRuntime.configure(process, archive: ytdlp, arguments: arguments)
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -416,14 +412,13 @@ extension LibraryStore {
             let errorCollector = PipeLineCollector()
             let progressTracker = YTDLPProgressTracker(
                 expectedPartCount: 1,
-                downloadCompletionProgress: 0.94,
-                postProcessingProgress: 0.98
+                allowsEstimatedMultipartProgress: false,
+                reportsPostProcessingProgress: false
             )
             let handleProgressLines: @Sendable ([String]) -> Void = { lines in
                 for line in lines {
-                    if let update = progressTracker.update(from: line),
-                       let progress = update.progress {
-                        progressCallback?(progress)
+                    if let update = progressTracker.update(from: line) {
+                        progressCallback?(update.progress, isYTDLPPostProcessingLine(line))
                     }
                 }
             }
@@ -471,7 +466,7 @@ extension LibraryStore {
                 throw RemoteImportError.downloaderFailed(
                     conciseYTDLPError(
                         errorOutput,
-                        fallback: "\(source.name) 下载失败，请确认网络可访问 YouTube，且已安装 yt-dlp 和 ffmpeg"
+                        fallback: L10n.text("\(source.name) 下载失败，请确认网络可访问 YouTube，且已安装 yt-dlp 和 ffmpeg")
                     )
                 )
             }
@@ -482,7 +477,7 @@ extension LibraryStore {
                 startedAt: startedAt
             ) else {
                 throw RemoteImportError.downloaderFailed(
-                    conciseYTDLPError(errorOutput, fallback: "找不到已下载的音频文件")
+                    conciseYTDLPError(errorOutput, fallback: L10n.text("找不到已下载的音频文件"))
                 )
             }
 
@@ -592,17 +587,8 @@ extension LibraryStore {
         onEvent: @Sendable @escaping (MusicDetectionEvent) async -> Void,
         processRegistry: ToolProcessRegistry
     ) async throws -> [MusicRecognitionItem] {
-        await onEvent(.progress("检查音乐识别环境"))
-        let pythonURL = try ensurePythonRuntime(
-            named: "music-env",
-            requirementsRelativePath: "Tools/requirements-music.txt",
-            probeModules: ["shazamio", "requests"]
-        )
-        guard let scriptURL = localToolURL(
-            relativePath: "Tools/detect_music.py"
-        ) else {
-            throw MusicDetectionError.scriptMissing
-        }
+        await onEvent(.progress(L10n.text("检查音乐识别环境")))
+        let pythonURL = try bundledRecognitionPython(named: "music")
         guard FileManager.default.fileExists(atPath: videoPath) else {
             throw MusicDetectionError.videoMissing(videoPath)
         }
@@ -612,32 +598,8 @@ extension LibraryStore {
 
         let process = Process()
         process.executableURL = pythonURL
-        process.arguments = [scriptURL.path, videoPath]
-        var env = ProcessInfo.processInfo.environment
-        let scriptBinPath = scriptURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("bin", isDirectory: true)
-            .path
-        let pythonBinPath = pythonURL.deletingLastPathComponent().path
-        var pathParts = [
-            scriptBinPath,
-            pythonBinPath,
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin"
-        ]
-        if let currentPath = env["PATH"], !currentPath.isEmpty {
-            pathParts.append(currentPath)
-        }
-        env["PATH"] = pathParts.joined(separator: ":")
-        env["VIRTUAL_ENV"] = pythonURL
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .path
-        env["PYTHONUNBUFFERED"] = "1"
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONNOUSERSITE"] = "1"
-        env.removeValue(forKey: "PYTHONPATH")
+        process.arguments = recognitionArguments(["music", videoPath])
+        var env = recognitionEnvironment
         env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] = env["LAPIANBAO_MUSIC_MAX_SEGMENTS"] ?? "12"
         env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] = env["LAPIANBAO_MUSIC_RECOGNIZE_TIMEOUT"] ?? "10"
         env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] = env["LAPIANBAO_MUSIC_ITUNES_TIMEOUT"] ?? "3"
@@ -688,7 +650,7 @@ extension LibraryStore {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let val = json["value"] as? Double ?? 0
                 let percent = Int((min(1, max(0, val)) * 100).rounded())
-                let statusPrefix = "识别中 \(percent)%"
+                let statusPrefix = L10n.text("识别中 \(percent)%")
                 let displayMessage = Self.isMusicDetectionSegmentTotalMessage(msg)
                     ? statusPrefix
                     : "\(statusPrefix) · \(msg)"
@@ -707,7 +669,7 @@ extension LibraryStore {
                 }
 
             case "error":
-                let msg = json["message"] as? String ?? "识别失败"
+                let msg = L10n.workerMessage(json["message"] as? String ?? L10n.text("识别失败"))
                 processRegistry.cancelRunningProcess()
                 throw MusicDetectionError.scriptError(msg)
 
@@ -723,7 +685,7 @@ extension LibraryStore {
         }
         if process.terminationStatus != 0 {
             let err = String(data: errorCollector.data, encoding: .utf8) ?? ""
-            throw MusicDetectionError.scriptError(err.isEmpty ? "音乐识别脚本退出失败" : err)
+            throw MusicDetectionError.scriptError(err.isEmpty ? L10n.text("音乐识别脚本退出失败") : err)
         }
         return songs
     }
@@ -829,15 +791,15 @@ extension LibraryStore {
         var errorDescription: String? {
             switch self {
             case .envNotSetup:
-                return "未检测到音乐识别环境，且自动安装没有完成。请确认本机有 Python 3.11 以上版本和网络连接。"
+                return L10n.text("未检测到音乐识别环境，且自动安装没有完成。请确认本机有 Python 3.11 以上版本和网络连接。")
             case .scriptMissing:
-                return "未找到音乐识别脚本：Tools/detect_music.py"
+                return L10n.text("未找到音乐识别脚本：Tools/detect_music.py")
             case .videoMissing(let path):
-                return "视频文件不存在或无法访问：\(path)"
+                return L10n.text("视频文件不存在或无法访问：\(path)")
             case .videoUnreadable(let path):
-                return "当前运行环境无法读取视频文件：\(path)。如果这是 Xcode 预览，请重新打开素材库或使用真实 App 运行一次授权。"
+                return L10n.text("当前运行环境无法读取视频文件：\(path)。如果这是 Xcode 预览，请重新打开素材库或使用真实 App 运行一次授权。")
             case .timeout:
-                return "音乐识别超时，已停止本次识别。可以稍后重试，或换一个更短的视频片段。"
+                return L10n.text("音乐识别超时，已停止本次识别。可以稍后重试，或换一个更短的视频片段。")
             case .scriptError(let msg):
                 return msg
             }

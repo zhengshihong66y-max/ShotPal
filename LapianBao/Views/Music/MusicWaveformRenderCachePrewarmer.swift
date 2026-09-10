@@ -57,14 +57,14 @@ nonisolated enum MusicWaveformRenderCachePrewarmer {
 
     static func run(arguments: [String]) async throws -> Report {
         guard let libraryURL = libraryURL(from: arguments) else {
-            throw PrewarmFailure(message: "未找到素材库路径")
+            throw PrewarmFailure(message: L10n.text("未找到素材库路径"))
         }
 
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: libraryURL.path, isDirectory: &isDirectory),
               isDirectory.boolValue
         else {
-            throw PrewarmFailure(message: "素材库路径不存在：\(libraryURL.path)")
+            throw PrewarmFailure(message: L10n.text("素材库路径不存在：\(libraryURL.path)"))
         }
 
         let snapshot = LibraryStore.quickResourceLibrarySnapshot(in: libraryURL)

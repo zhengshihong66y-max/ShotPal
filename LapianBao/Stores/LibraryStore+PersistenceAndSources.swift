@@ -40,7 +40,8 @@ extension LibraryStore {
             relative[ProjectRepository.relativePath(for: absPath, base: libraryURL)] = cleanedTags
         }
         persistedVideoTagPaths = pathsToPersist
-        try? ProjectRepository.writeJSON(relative, to: url)
+        ProjectRepository.writeMetadata(relative, to: url, recoverValue: ProjectRepository.mergeRecoveredTags)
+        refreshMetadataPersistenceError()
     }
 
     func saveSourceInfoJSON() {
@@ -51,27 +52,55 @@ extension LibraryStore {
             relative[ProjectRepository.relativePath(for: absPath, base: libraryURL)] = cleanedInfo
         }
 
-        try? ProjectRepository.writeJSON(relative, to: url, encoder: ProjectRepository.prettySortedEncoder)
+        ProjectRepository.writeMetadata(relative, to: url)
+        refreshMetadataPersistenceError()
     }
 
     func projectDataURL() -> URL? {
         libraryURL.map(ProjectRepository.projectDataURL)
     }
 
-    func flushProjectDataSave() {
-        guard projectDataLoadState == .loaded else { return }
-        guard projectDataDirty || projectSaveTask != nil else { return }
+    @discardableResult
+    func flushProjectDataSave() -> Bool {
+        if let libraryURL, !ProjectRepository.retryMetadata(in: libraryURL) {
+            refreshMetadataPersistenceError()
+            return false
+        }
+        guard projectDataDirty || projectSaveTask != nil else { return true }
+        guard projectDataLoadState == .loaded else {
+            projectPersistenceError = L10n.text("素材库尚未成功读取，暂时无法保存。请等待载入完成或恢复项目文件后重试。")
+            return false
+        }
+        projectSaveSequence += 1
         projectSaveTask?.cancel()
         projectSaveTask = nil
-        guard let url = projectDataURL() else { return }
-        if (try? Self.writeProjectData(makeProjectDataFile(), to: url)) != nil {
+        guard let url = projectDataURL() else { return false }
+        do {
+            try Self.writeProjectData(makeProjectDataFile(), to: url)
             projectDataDirty = false
+            projectPersistenceError = nil
+            return true
+        } catch {
+            projectPersistenceError = L10n.text("未能保存素材库：\(error.localizedDescription)。请检查磁盘空间与文件夹权限后重试；当前修改仍保留在应用中。")
+            return false
         }
+    }
+
+    func refreshMetadataPersistenceError() {
+        guard let libraryURL else { metadataPersistenceError = nil; return }
+        metadataPersistenceError = ProjectRepository.metadataFailure(in: libraryURL).map {
+            L10n.text("元数据尚未保存或无法读取：\($0)。原文件和待保存修改已保留。请检查磁盘空间、权限或恢复备份，然后重试。")
+        }
+    }
+
+    func reportProjectDataReadFailure(_ error: Error) {
+        projectDataLoadState = .failed
+        projectPersistenceError = L10n.text("无法读取项目文件：\(error.localizedDescription)。原文件已保留，自动保存已停止。请恢复备份后重新打开素材库。")
     }
 
     func saveProjectData() {
         guard projectDataLoadState == .loaded else {
-            if projectDataLoadState == .loading {
+            if projectDataLoadState == .loading || projectDataLoadState == .failed {
                 projectDataDirty = true
             }
             return
@@ -102,6 +131,7 @@ extension LibraryStore {
                     await MainActor.run { [weak self] in
                         guard self?.projectSaveSequence == sequence else { return }
                         self?.projectSaveTask = nil
+                        self?.projectPersistenceError = L10n.text("未能保存素材库：\(error.localizedDescription)。请检查磁盘空间与文件夹权限后重试；当前修改仍保留在应用中。")
                     }
                     return
                 }
@@ -109,6 +139,7 @@ extension LibraryStore {
                     guard self?.projectSaveSequence == sequence else { return }
                     self?.projectSaveTask = nil
                     self?.projectDataDirty = false
+                    self?.projectPersistenceError = nil
                 }
             }
         }
@@ -153,13 +184,29 @@ extension LibraryStore {
         projectDataDirty = false
         guard
             let url = projectDataURL(),
-            let libraryURL,
-            let decoded = Self.readProjectData(from: url)
+            let libraryURL
         else {
             clearProjectData()
             projectDataLoadState = .loaded
             runStartupAutomationIfNeeded()
             return
+        }
+        let decoded: ProjectDataFile
+        switch ProjectRepository.readProjectDataResult(from: url) {
+        case .failure(let error):
+            clearProjectData()
+            projectDataDirty = false
+            reportProjectDataReadFailure(error)
+            return
+        case .success(nil):
+            clearProjectData()
+            projectDataLoadState = .loaded
+            projectPersistenceError = nil
+            runStartupAutomationIfNeeded()
+            return
+        case .success(let value?):
+            decoded = value
+            projectPersistenceError = nil
         }
         let restored = Self.projectDataFile(decoded, resolvingRelativeTo: libraryURL)
         let shouldPersistMigration = restored.didChange || !pendingVideoPathRemap.isEmpty
@@ -180,6 +227,7 @@ extension LibraryStore {
         projectDataLoadState = .loading
         projectDataDirty = false
         clearProjectData()
+        projectDataDirty = false
         guard let url = projectDataURL(), let libraryURL else {
             projectDataLoadState = .loaded
             return
@@ -191,10 +239,20 @@ extension LibraryStore {
                 try? await Task.sleep(nanoseconds: delayNanoseconds)
                 guard !Task.isCancelled else { return }
             }
-            let decoded = Self.readProjectData(from: url)
+            let readResult = ProjectRepository.readProjectDataResult(from: url)
             guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
                 guard let self, self.projectLoadGeneration == generation else { return }
+                let decoded: ProjectDataFile?
+                switch readResult {
+                case .failure(let error):
+                    self.reportProjectDataReadFailure(error)
+                    self.projectLoadTask = nil
+                    return
+                case .success(let value):
+                    decoded = value
+                    self.projectPersistenceError = nil
+                }
                 let pendingEdits = self.projectDataDirty
                     ? self.pendingProjectDataEditsSnapshot(resolvingRelativeTo: libraryURL)
                     : nil
@@ -481,38 +539,18 @@ extension LibraryStore {
     }
 
     func applyProjectData(_ decoded: ProjectDataFile) {
-        let pruned = projectDataRemovingMissingVideoImageExports(decoded)
-        sampledFrames = pruned.sampledFrames
-        annotations = pruned.annotations
-        audioClips = pruned.audioClips
-        transcriptSegmentsByVideoPath = pruned.transcripts
-        transcriptExports = pruned.transcriptExports ?? []
-        musicsByVideoPath = pruned.musicsByVideoPath ?? [:]
-        musicDownloadJobs = reconciledMusicDownloadJobs(pruned.musicDownloadJobs ?? [])
+        // A missing source may be temporarily unavailable. Loading must never
+        // delete saved exports; explicit removeVideo owns destructive cleanup.
+        sampledFrames = decoded.sampledFrames
+        annotations = decoded.annotations
+        audioClips = decoded.audioClips
+        transcriptSegmentsByVideoPath = decoded.transcripts
+        transcriptExports = decoded.transcriptExports ?? []
+        musicsByVideoPath = decoded.musicsByVideoPath ?? [:]
+        musicDownloadJobs = reconciledMusicDownloadJobs(decoded.musicDownloadJobs ?? [])
         reconcileMusicDownloadJobsWithLocalAssets(localMusicAssets)
         enrichMusicTagsIfNeeded(includeLocalAssets: false)
         runStartupAutomationIfNeeded()
-    }
-
-    func projectDataRemovingMissingVideoImageExports(_ decoded: ProjectDataFile) -> ProjectDataFile {
-        let liveVideoPaths = Set(videos.map(\.url.path))
-        let framesToRemove = decoded.sampledFrames.filter { !liveVideoPaths.contains($0.videoPath) }
-        guard !framesToRemove.isEmpty else { return decoded }
-
-        let frameIDsToRemove = Set(framesToRemove.map(\.id))
-        for frame in framesToRemove {
-            for url in imageExportURLsToDelete(
-                for: frame,
-                excludingFrameIDs: frameIDsToRemove,
-                in: decoded.sampledFrames
-            ) {
-                _ = trashLibraryFileIfPresent(url, context: "missing-video image export")
-            }
-        }
-
-        var pruned = decoded
-        pruned.sampledFrames.removeAll { !liveVideoPaths.contains($0.videoPath) }
-        return pruned
     }
 
     func migrateProjectDataVideoPaths(_ decoded: ProjectDataFile) -> ProjectDataFile {
@@ -648,7 +686,7 @@ extension LibraryStore {
 
     func loadTagsJSON() {
         guard let url = tagsJSONURL(), let libraryURL else { return }
-        guard let decoded = ProjectRepository.readJSON([String: [String]].self, from: url) else {
+        guard let decoded = ProjectRepository.readMetadata([String].self, from: url) else {
             persistedVideoTagPaths.removeAll()
             return
         }
@@ -671,7 +709,7 @@ extension LibraryStore {
 
     func loadSourceInfoJSON() {
         guard let url = sourceInfoJSONURL(), let libraryURL else { return }
-        guard let decoded = ProjectRepository.readJSON([String: VideoSourceInfo].self, from: url) else { return }
+        guard let decoded = ProjectRepository.readMetadata(VideoSourceInfo.self, from: url) else { return }
 
         let base = libraryURL.path.hasSuffix("/") ? libraryURL.path : libraryURL.path + "/"
         var loadedSourceInfoByVideoPath = sourceInfoByVideoPath

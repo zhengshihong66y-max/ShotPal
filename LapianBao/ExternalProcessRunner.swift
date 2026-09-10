@@ -122,7 +122,7 @@ nonisolated enum ExternalProcessRunner {
         )
     }
 
-    private static func waitForExit(
+    static func waitForExit(
         _ process: Process,
         timeout: TimeInterval?,
         progressTick: (@Sendable (TimeInterval) -> Void)?
@@ -143,9 +143,7 @@ nonisolated enum ExternalProcessRunner {
             let elapsed = Date().timeIntervalSince(waitStartedAt)
             let remaining = timeout - elapsed
             if remaining <= 0 {
-                if process.isRunning {
-                    process.terminate()
-                }
+                terminateTree(process)
                 _ = semaphore.wait(timeout: .now() + 2)
                 return true
             }
@@ -155,6 +153,7 @@ nonisolated enum ExternalProcessRunner {
             progressTick?(Date().timeIntervalSince(waitStartedAt))
         }
     }
+
 
     private static func stopCollecting(
         outputPipe: Pipe,

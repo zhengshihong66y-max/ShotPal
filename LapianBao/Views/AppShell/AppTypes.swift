@@ -13,12 +13,14 @@ import Foundation
 import UniformTypeIdentifiers
 
 enum PreviewTab: String, CaseIterable {
+    var title: String { L10n.key(rawValue) }
     case frames = "提取画面"
     case audio  = "提取声音"
     case content = "提取内容"
 }
 
 enum ExportPanelFilter: String, CaseIterable, Identifiable {
+    var title: String { L10n.key(rawValue) }
     case recent = "最近"
     case images = "图片"
     case audio = "声音"
@@ -94,10 +96,10 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "主页"
-        case .frames: return "画面"
-        case .music: return "AM 库"
-        case .settings: return "设置"
+        case .home: return L10n.text("主页")
+        case .frames: return L10n.text("画面")
+        case .music: return L10n.text("AM 库")
+        case .settings: return L10n.text("设置")
         }
     }
 
@@ -136,6 +138,7 @@ enum AppWorkspace: String, CaseIterable, Identifiable {
 }
 
 enum FramesBoardMode: String, CaseIterable, Identifiable {
+    var title: String { L10n.key(rawValue) }
     case storyboard = "分镜"
     case collection = "收藏"
 
@@ -212,6 +215,7 @@ struct PendingImportVideo: Identifiable, Equatable {
 }
 
 enum VideoSourcePlatform: String, CaseIterable {
+    var title: String { L10n.key(rawValue) }
     case instagram = "Instagram"
     case youtube = "YouTube"
     case xiaohongshu = "小红书"
@@ -239,6 +243,10 @@ enum VideoSourcePlatform: String, CaseIterable {
         case .douyin: return .white
         case .other: return Color(red: 0.62, green: 0.66, blue: 0.72)
         }
+    }
+
+    static func displayName(for value: String) -> String {
+        matching(value)?.title ?? value
     }
 
     static func matching(_ value: String) -> VideoSourcePlatform? {

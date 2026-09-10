@@ -36,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     )
 
     static func main() {
+        CommandLineMediaExportCheck.runIfRequested()
+        CommandLineLocalizationCheck.runIfRequested()
+        CommandLineUIStateCheck.runIfRequested()
+        CommandLineDownloaderRuntimeCheck.runIfRequested()
         CommandLineImportPanelCheck.runIfRequested()
         CommandLineAnnotationSaveCheck.runIfRequested()
         CommandLineDownloadProgressCheck.runIfRequested()
@@ -103,6 +107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             StartupDiagnostics.mark(.setupScheduled)
             self?.startupCoordinator.completeLaunchSetupIfNeeded()
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard libraryStore.flushProjectDataSave() else {
+            windowManager.ensureMainWindowVisible()
+            return .terminateCancel
+        }
+        return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {

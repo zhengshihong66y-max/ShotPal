@@ -24,6 +24,7 @@ nonisolated struct MusicWorkspaceProjectionInput: Sendable {
     var musicDownloadLookupCaches: MusicDownloadLookupCaches
     var localMusicWaveformSamplesByPath: [String: [Double]]
     var knownLocalResourcePaths: Set<String>
+    var searchMode: MusicWorkspaceSearchMode = .library
 }
 
 nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
@@ -41,14 +42,17 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             uniqueKeysWithValues: input.videos.map { ($0.url.path, $0.name) }
         )
         localMusicFilePaths = Set(input.localMusicAssets.map(\.filePath))
-        searchQuery = normalizedSearch(input.searchText)
+        searchQuery = input.searchMode == .library ? normalizedSearch(input.searchText) : ""
     }
 
     func makeProjection() -> MusicWorkspaceProjection {
         let recognizedAssets = musicAssets
         let sourceVideoNamesByMusicKey = recognizedSourceVideoNamesByMusicKey(from: recognizedAssets)
         let recognizedMusicIdentityKeys = musicIdentityKeys(from: recognizedAssets)
-        let allLocalMusicGroups = groupedLocalMusicAssets(from: folderLocalMusicAssets)
+        let allLocalMusicGroups = downloadBackedMusicGroups(
+            alongside: groupedLocalMusicAssets(from: folderLocalMusicAssets),
+            recognizedMusicIdentityKeys: recognizedMusicIdentityKeys
+        )
         let displayedLocalMusicGroups = allLocalMusicGroups.filter {
             shouldDisplayLocalMusicGroup($0, recognizedMusicIdentityKeys: recognizedMusicIdentityKeys)
         }
@@ -80,8 +84,9 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             recognizedAssets: recognizedAssets,
             localGroups: displayedLocalMusicGroups
         )
-        let filteredSearchItems = sortedAppleMusicSearchResults(
-            filteredSearchResults(localMusicIdentityKeys: localMusicIdentityKeys)
+        // The service ranks search results. Library sorting applies only to saved music.
+        let filteredSearchItems = filteredSearchResults(
+            localMusicIdentityKeys: localMusicIdentityKeys.union(recognizedMusicIdentityKeys)
         )
         let allMusicRows = allMusicEntries.map {
             musicLibraryRowProjection(for: $0, sourceVideoNamesByMusicKey: sourceVideoNamesByMusicKey)
@@ -92,6 +97,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         let filteredSearchRows = filteredSearchItems.map(appleMusicSearchResultRowProjection(for:))
 
         return MusicWorkspaceProjection(
+            searchQuery: input.searchText.trimmingCharacters(in: .whitespacesAndNewlines),
             recognizedAssets: recognizedAssets,
             displayedLocalMusicGroups: displayedLocalMusicGroups,
             allEntries: allMusicRows,
@@ -128,12 +134,6 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     func isLocalMusicEntry(_ entry: MusicLibraryEntry) -> Bool {
         if case .local = entry { return true }
         return false
-    }
-
-    func sortedAppleMusicSearchResults(_ results: [AppleMusicSearchResult]) -> [AppleMusicSearchResult] {
-        results.sorted {
-            musicSortPrecedes(sortSnapshot(for: $0), sortSnapshot(for: $1))
-        }
     }
 
     func musicLibraryRowProjection(
@@ -191,7 +191,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             displayTitle: group.title,
             displayArtist: group.artist,
             visibleTags: displayedMusicTags(visibleTags(for: group)),
-            primaryFileURL: localMusicFileURL(for: group.primaryAsset),
+            primaryFileURL: group.primaryAsset.flatMap { localMusicFileURL(for: $0) },
             fileURLs: localMusicFileURLs(for: group),
             sourceText: localMusicGroupSourceText(
                 for: group,
@@ -329,6 +329,10 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             collect(asset.createdAt ?? asset.modifiedAt)
         }
 
+        for job in musicDownloadJobs(for: localMusicGroupSong(for: group)) {
+            collect(job.createdAt)
+        }
+
         return latestDate
     }
 
@@ -345,10 +349,12 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
                 }
         }
         .sorted { lhs, rhs in
-            if lhs.videoName == rhs.videoName {
+            let nameOrder = lhs.videoName.localizedStandardCompare(rhs.videoName)
+            if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+            if lhs.song.detectedAt != rhs.song.detectedAt {
                 return lhs.song.detectedAt < rhs.song.detectedAt
             }
-            return lhs.videoName.localizedStandardCompare(rhs.videoName) == .orderedAscending
+            return lhs.id < rhs.id
         }
         return mergedRecognizedMusicAssets(assets)
     }
@@ -397,9 +403,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         with duplicate: MusicRecognitionItem
     ) -> MusicRecognitionItem {
         var merged = current
-        if merged.artworkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            merged.artworkURL = duplicate.artworkURL
-        }
+        merged.artworkURL = MusicArtworkSelection.preferredURL([current.artworkURL, duplicate.artworkURL])
         if merged.appleMusicURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             merged.appleMusicURL = duplicate.appleMusicURL
         }
@@ -487,7 +491,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             if lhsRole != rhsRole { return lhsRole < rhsRole }
             return LibraryStore.preferredLocalMusicAssetSort(lhs.asset, rhs.asset)
         }
-        let displaySong = sortedProjections.compactMap(\.song).first(where: hasRecognizedTitleAndArtist)
+        var displaySong = sortedProjections.compactMap(\.song).first(where: hasRecognizedTitleAndArtist)
             ?? sortedProjections.compactMap(\.song).first
         let displayTitle = displaySong?.title.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? sortedProjections.first?.title
@@ -495,7 +499,12 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         let displayArtist = displaySong?.artist.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? sortedProjections.first { !$0.artist.isEmpty }?.artist
             ?? ""
-        let artworkURL = displaySong?.artworkURL.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let artworkURL = MusicArtworkSelection.preferredURL(
+            [displaySong?.artworkURL ?? ""]
+                + sortedProjections.compactMap { $0.song?.artworkURL }
+                + sortedProjections.compactMap { localMusicDownloadJob(for: $0.asset)?.song?.artworkURL }
+        )
+        displaySong?.artworkURL = artworkURL
         let allTags = sortedProjections.flatMap(\.tags)
         let tags = MusicRecognitionItem.cleanedMusicTags(allTags, title: displayTitle, artist: displayArtist)
         let originalAsset = preferredLocalMusicAsset(in: sortedProjections, role: .original)
@@ -571,7 +580,10 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     ) -> [MusicDownloadJob] {
         let song = localMusicGroupSong(for: group)
         let songKey = "\(song.title)|\(song.artist)"
-        let persistedJobs = input.musicDownloadLookupCaches.jobsBySongKey[songKey] ?? []
+        let fileBackedJobs = roleAssets.compactMap { localMusicDownloadJob(for: $0.asset) }
+        let persistedJobs = latestMusicDownloadJobs(
+            fileBackedJobs + (input.musicDownloadLookupCaches.jobsBySongKey[songKey] ?? [])
+        )
         let syntheticJobs = roleAssets.compactMap { roleAsset -> MusicDownloadJob? in
             let type = localMusicDownloadType(for: roleAsset.role)
             let fileURL = URL(fileURLWithPath: roleAsset.asset.filePath)
@@ -591,7 +603,14 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
                 createdAt: roleAsset.asset.modifiedAt ?? Date.distantPast
             )
         }
-        return latestMusicDownloadJobs(persistedJobs + syntheticJobs)
+        return MusicDownloadJob.DownloadType.allCases.compactMap { type in
+            if let realJob = persistedJobs.last(where: { $0.type == type }),
+               completedMusicFileURL(for: realJob) != nil || MusicDownloadRowState.hasUnfinishedJob([realJob]) {
+                return realJob
+            }
+            return syntheticJobs.last { $0.type == type }
+                ?? persistedJobs.last { $0.type == type }
+        }
     }
 
     func musicDownloadJobs(for song: MusicRecognitionItem) -> [MusicDownloadJob] {
@@ -671,8 +690,8 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
                 LocalMusicRoleAsset(role: .unknown, asset: $0)
             })
         }
-        if roleAssets.isEmpty {
-            roleAssets.append(LocalMusicRoleAsset(role: localMusicDisplayRole(for: group.primaryAsset), asset: group.primaryAsset))
+        if roleAssets.isEmpty, let primaryAsset = group.primaryAsset {
+            roleAssets.append(LocalMusicRoleAsset(role: localMusicDisplayRole(for: primaryAsset), asset: primaryAsset))
         }
         return roleAssets
     }
@@ -701,7 +720,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         }.filter { !$0.isEmpty })
         labels.append(contentsOf: fileExtensions.sorted())
         if group.assets.count > 1 {
-            labels.append("\(group.assets.count) 个文件")
+            labels.append(L10n.text("\(group.assets.count) 个文件"))
         }
         return labels
     }
@@ -735,7 +754,8 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             }
         }
 
-        for (path, songs) in input.musicsByVideoPath {
+        for path in input.musicsByVideoPath.keys.sorted() {
+            let songs = input.musicsByVideoPath[path, default: []]
             guard let videoName = videoNameByPath[path] else { continue }
             for song in songs where hasRecognizedTitleAndArtist(song) {
                 appendSource(title: song.title, artist: song.artist, videoName: videoName)
@@ -782,7 +802,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
         if sourceNames.count <= 2 {
             return sourceNames.joined(separator: "、")
         }
-        return "\(sourceNames[0]) 等 \(sourceNames.count) 个视频"
+        return L10n.text("\(sourceNames[0]) 等 \(sourceNames.count) 个视频")
     }
 
     func musicSourceLookupKey(title: String, artist: String) -> String? {
@@ -793,11 +813,16 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
     }
 
     func filteredSearchResults(localMusicIdentityKeys: Set<String>) -> [AppleMusicSearchResult] {
-        input.searchResults.filter { item in
+        guard input.searchMode == .onlineCatalog else { return [] }
+        var seenIDs = Set<Int>()
+        var seenSongs = Set<String>()
+        return input.searchResults.filter { item in
             let song = item.asMusicRecognitionItem()
             guard isAMReadySong(song) else { return false }
             guard !isMusicAlreadyInLocalLibrary(song, localMusicIdentityKeys: localMusicIdentityKeys) else { return false }
-            return matchesSelectedMusicFilters(for: song)
+            guard matchesSelectedMusicFilters(for: song), seenIDs.insert(item.id).inserted else { return false }
+            let key = musicSourceLookupKey(title: song.title, artist: song.artist) ?? "track|\(item.id)"
+            return seenSongs.insert(key).inserted
         }
     }
 
@@ -891,6 +916,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             return assets
         }
         return assets.filter { asset in
+            if MusicDownloadRowState.hasUnfinishedJob(musicDownloadJobs(for: asset)) { return true }
             guard musicAssetMatchesSearch(asset, query: searchQuery) else { return false }
             return matchesSelectedMusicFilters(for: asset)
         }
@@ -901,6 +927,7 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             return groups
         }
         return groups.filter { group in
+            if MusicDownloadRowState.hasUnfinishedJob(musicDownloadJobs(for: localMusicGroupSong(for: group))) { return true }
             guard musicGroupMatchesSearch(group, query: searchQuery) else { return false }
             return matchesSelectedMusicFilters(for: group)
         }
@@ -1391,7 +1418,9 @@ nonisolated struct MusicWorkspaceProjectionBuilder: Sendable {
             return song
         }
         if let job = localMusicDownloadJob(for: asset) {
-            return LibraryStore.musicRecognitionItem(fromSongKey: job.songKey, tags: asset.tags)
+            var song = MusicDownloadRowState.displaySong(for: job)
+            song.tags = MusicRecognitionItem.cleanedMusicTags(song.tags + asset.tags, title: song.title, artist: song.artist)
+            return song
         }
         return nil
     }

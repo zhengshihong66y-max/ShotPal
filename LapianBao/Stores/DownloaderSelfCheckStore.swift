@@ -43,7 +43,7 @@ final class DownloaderSelfCheckStore: ObservableObject {
         updateDownloaderSelfCheckReport(DownloaderSelfCheckReport(
             status: .running,
             checkedAt: startedAt,
-            message: "正在检查 yt-dlp 可用性",
+            message: L10n.text("正在检查 yt-dlp 可用性"),
             progress: 0.01
         ))
 

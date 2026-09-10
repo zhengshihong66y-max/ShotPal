@@ -73,7 +73,8 @@ nonisolated struct MusicDownloadLookupCaches: Sendable {
 
         var jobsByPath: [String: MusicDownloadJob] = [:]
         for job in jobs {
-            guard let filePath = completionSnapshot.filePathByJobID[job.id]
+            // File provenance survives retries; availability is checked separately.
+            guard let filePath = job.filePath
             else { continue }
             let key = LibraryStore.normalizedLocalFilePath(filePath)
             jobsByPath[key] = job
@@ -117,12 +118,26 @@ nonisolated struct MusicWorkspaceLaunchPreparationStatus: Equatable, Sendable {
     }
 }
 
+nonisolated enum MusicWorkspaceSearchMode: String, Sendable {
+    case library
+    case onlineCatalog
+}
+
 @MainActor
 final class MusicWorkspaceViewModel: ObservableObject {
+    // Online search is deferred. Only explicit offline fixtures opt in for now.
+    let searchMode: MusicWorkspaceSearchMode
+
+    init(searchMode: MusicWorkspaceSearchMode = .library) {
+        self.searchMode = searchMode
+    }
+
     @Published var searchText = ""
     @Published var searchResults: [AppleMusicSearchResult] = []
     @Published var isSearching = false
     @Published var searchMessage: String?
+    @Published private(set) var searchResultsQuery = ""
+    private var searchGeneration: UInt64 = 0
     @Published var selectedMusicFilters: Set<MusicFilterOption> = []
     @Published var isMusicTagFilterBarPresented = true
     @Published var projection = MusicWorkspaceProjection.empty
@@ -138,6 +153,8 @@ final class MusicWorkspaceViewModel: ObservableObject {
     private var workspacePreparationTask: Task<Void, Never>?
     private var workspaceMaintenanceTask: Task<Void, Never>?
     private var projectionRefreshTask: Task<Void, Never>?
+    private var requestedProjectionSignature: MusicWorkspaceProjectionSignature?
+    private var appliedProjectionSignature: MusicWorkspaceProjectionSignature?
     private var heavyRowMediaTask: Task<Void, Never>?
     private var launchPreparationTask: Task<Void, Never>?
     private var launchPreparationKey: String?
@@ -159,6 +176,7 @@ final class MusicWorkspaceViewModel: ObservableObject {
         workspaceMaintenanceTask = nil
         projectionRefreshTask?.cancel()
         projectionRefreshTask = nil
+        requestedProjectionSignature = nil
         heavyRowMediaTask?.cancel()
         heavyRowMediaTask = nil
         launchPreparationTask?.cancel()
@@ -221,7 +239,7 @@ final class MusicWorkspaceViewModel: ObservableObject {
         launchPreparationTask?.cancel()
         launchPreparationKey = key
         launchPreparationLibraryPath = libraryPath
-        launchPreparationStatus = .loading(progress: 0.04, message: "读取音乐缓存")
+        launchPreparationStatus = .loading(progress: 0.04, message: L10n.text("读取音乐缓存"))
 
         launchPreparationTask = Task { [weak self, libraryURL, normalizedWidth, scale] in
             try? await Task.sleep(nanoseconds: 220_000_000)
@@ -236,7 +254,7 @@ final class MusicWorkspaceViewModel: ObservableObject {
             if let cachedProjection {
                 preparedProjection = cachedProjection
             } else {
-                self.launchPreparationStatus = .loading(progress: 0.16, message: "生成音乐列表")
+                self.launchPreparationStatus = .loading(progress: 0.16, message: L10n.text("生成音乐列表"))
                 preparedProjection = await Task.detached(priority: .utility) {
                     let projection = MusicWorkspaceProjectionBuilder(input: fallbackInput).makeProjection()
                     let cacheSignature = MusicWorkspaceDisplayCache.signature(for: fallbackInput)
@@ -250,12 +268,12 @@ final class MusicWorkspaceViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
             }
 
-            self.launchPreparationStatus = .loading(progress: 0.28, message: "准备音乐列表")
+            self.launchPreparationStatus = .loading(progress: 0.28, message: L10n.text("准备音乐列表"))
             self.applyPreparedProjection(preparedProjection)
             self.allowsHeavyRowMedia = true
             guard !Task.isCancelled else { return }
 
-            self.launchPreparationStatus = .loading(progress: 0.45, message: "加载波形缓存")
+            self.launchPreparationStatus = .loading(progress: 0.45, message: L10n.text("加载波形缓存"))
             let requests = await Task.detached(priority: .utility) {
                 MusicWorkspaceDisplayCacheHydrator.waveformRenderPrewarmRequests(
                     projection: preparedProjection,
@@ -267,13 +285,13 @@ final class MusicWorkspaceViewModel: ObservableObject {
             if !requests.isEmpty {
                 self.launchPreparationStatus = .loading(
                     progress: 0.45,
-                    message: "加载波形缓存 \(requests.count)"
+                    message: L10n.text("加载波形缓存 \(requests.count)")
                 )
             }
             await DownloadedMusicWaveformRenderPrewarmQueue.shared.prewarm(requests)
             guard !Task.isCancelled else { return }
 
-            self.launchPreparationStatus = .loading(progress: 0.82, message: "加载封面缓存")
+            self.launchPreparationStatus = .loading(progress: 0.82, message: L10n.text("加载封面缓存"))
             let artworkURLs = await Task.detached(priority: .utility) {
                 MusicWorkspaceDisplayCacheHydrator.artworkURLs(projection: preparedProjection)
             }.value
@@ -281,7 +299,7 @@ final class MusicWorkspaceViewModel: ObservableObject {
             if !artworkURLs.isEmpty {
                 self.launchPreparationStatus = .loading(
                     progress: 0.82,
-                    message: "加载封面缓存 \(artworkURLs.count)"
+                    message: L10n.text("加载封面缓存 \(artworkURLs.count)")
                 )
             }
             await MusicArtworkCache.prewarmCachedArtwork(urls: artworkURLs)
@@ -325,6 +343,7 @@ final class MusicWorkspaceViewModel: ObservableObject {
     ) {
         let nextProjection = build()
         Self.storeProjection(nextProjection, for: signature)
+        appliedProjectionSignature = signature
         projection = nextProjection
         displayCacheHydrationRevision &+= 1
     }
@@ -334,6 +353,8 @@ final class MusicWorkspaceViewModel: ObservableObject {
         delayNanoseconds: UInt64 = 140_000_000,
         build: @escaping @Sendable () -> MusicWorkspaceProjection
     ) {
+        guard requestedProjectionSignature != signature else { return }
+        requestedProjectionSignature = signature
         projectionRefreshTask?.cancel()
         if applyCachedProjection(for: signature) {
             markInitialProjectionReady()
@@ -363,7 +384,9 @@ final class MusicWorkspaceViewModel: ObservableObject {
     private static var latestProjection: MusicWorkspaceProjection?
 
     private func applyCachedProjection(for signature: MusicWorkspaceProjectionSignature) -> Bool {
+        if appliedProjectionSignature == signature { return true }
         guard let cachedProjection = Self.projectionCache[signature] else { return false }
+        appliedProjectionSignature = signature
         projection = cachedProjection
         displayCacheHydrationRevision &+= 1
         return true
@@ -371,12 +394,16 @@ final class MusicWorkspaceViewModel: ObservableObject {
 
     func applyLatestProjectionIfAvailable() -> Bool {
         guard let latestProjection = Self.latestProjection else { return false }
+        requestedProjectionSignature = nil
+        appliedProjectionSignature = nil
         projection = latestProjection
         displayCacheHydrationRevision &+= 1
         return true
     }
 
     func applyPreparedProjection(_ preparedProjection: MusicWorkspaceProjection) {
+        requestedProjectionSignature = nil
+        appliedProjectionSignature = nil
         projection = preparedProjection
         Self.latestProjection = preparedProjection
         displayCacheHydrationRevision &+= 1
@@ -484,39 +511,50 @@ final class MusicWorkspaceViewModel: ObservableObject {
         }
     }
 
+    var isShowingSearchProgress: Bool {
+        guard searchMode == .onlineCatalog else { return false }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !query.isEmpty && (isSearching || searchResultsQuery != query || projection.searchQuery != query)
+    }
+
     func runAppleMusicSearch(
         prepareExternalServiceWork: () -> Void,
-        search: (String) async throws -> [AppleMusicSearchResult]
+        search: (String) async throws -> [AppleMusicSearchResult],
+        debounceNanoseconds: UInt64 = 350_000_000
     ) async {
+        searchGeneration &+= 1
+        let generation = searchGeneration
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
-            searchResults = []
-            searchMessage = nil
+        searchResultsQuery = ""
+        searchResults = []
+        searchMessage = nil
+        guard searchMode == .onlineCatalog, !query.isEmpty else {
             isSearching = false
             return
         }
-
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        guard !Task.isCancelled else { return }
-
         isSearching = true
-        searchMessage = nil
-        if !searchResults.isEmpty {
-            searchResults = []
+        defer {
+            // Cancellation of an older query must not hide the newer query's loading feedback.
+            if searchGeneration == generation { isSearching = false }
         }
-
+        try? await Task.sleep(nanoseconds: debounceNanoseconds)
+        guard !Task.isCancelled, searchGeneration == generation,
+              searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
         prepareExternalServiceWork()
         do {
             let results = try await search(query)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, searchGeneration == generation,
+                  searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            searchResultsQuery = query
             searchResults = results
-            searchMessage = results.isEmpty ? "没有搜索结果" : nil
+            searchMessage = results.isEmpty ? L10n.text("没有搜索结果") : nil
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, searchGeneration == generation,
+                  searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            searchResultsQuery = query
             searchResults = []
-            searchMessage = "搜索失败"
+            searchMessage = (error as? AppleMusicSearchError)?.errorDescription ?? L10n.text("搜索失败")
         }
-        isSearching = false
     }
 }
 
@@ -548,7 +586,7 @@ nonisolated struct RecognizedMusicAsset: Identifiable, Codable, Sendable {
         if names.count <= 2 {
             return names.joined(separator: "、")
         }
-        return "\(first) 等 \(names.count) 个视频"
+        return L10n.text("\(first) 等 \(names.count) 个视频")
     }
 }
 
@@ -564,8 +602,8 @@ nonisolated struct LocalMusicGroup: Identifiable, Codable, Sendable {
     var instrumentalAsset: LocalMusicAsset?
     var unknownAssets: [LocalMusicAsset]
 
-    var primaryAsset: LocalMusicAsset {
-        originalAsset ?? instrumentalAsset ?? unknownAssets.first ?? assets[0]
+    var primaryAsset: LocalMusicAsset? {
+        originalAsset ?? instrumentalAsset ?? unknownAssets.first ?? assets.first
     }
 
     var hasBothRecognizedRoles: Bool {
@@ -673,6 +711,7 @@ nonisolated enum MusicLibraryRowProjection: Identifiable, Codable, Sendable {
 }
 
 nonisolated struct MusicWorkspaceProjection: Codable, Sendable {
+    var searchQuery: String = ""
     var recognizedAssets: [RecognizedMusicAsset] = []
     var displayedLocalMusicGroups: [LocalMusicGroup] = []
     var allEntries: [MusicLibraryRowProjection] = []
@@ -849,6 +888,7 @@ nonisolated struct MusicWorkspaceProjectionSignature: Hashable, Sendable {
         var hasher = Hasher()
         var recognizedSongCount = 0
 
+        hasher.combine(Bundle.main.preferredLocalizations.first ?? "en")
         hasher.combine("videos")
         for video in input.videos {
             hasher.combine(video.url.path)
@@ -890,7 +930,7 @@ nonisolated struct MusicWorkspaceProjectionSignature: Hashable, Sendable {
             hasher.combine(job.recognitionID)
             hasher.combine(job.type.rawValue)
             hasher.combine(Self.statusSignature(job.status))
-            hasher.combine(job.downloadProgress)
+            if let song = job.song { Self.combine(song, into: &hasher) }
             hasher.combine(job.filePath)
             hasher.combine(job.waveformSamples?.count ?? 0)
             hasher.combine(job.isPreparingWaveform)
@@ -922,6 +962,7 @@ nonisolated struct MusicWorkspaceProjectionSignature: Hashable, Sendable {
         }
 
         hasher.combine("query")
+        hasher.combine(input.searchMode.rawValue)
         hasher.combine(input.searchText)
         for result in input.searchResults {
             hasher.combine(result.trackID)
@@ -991,9 +1032,10 @@ nonisolated struct MusicWorkspaceProjectionSignature: Hashable, Sendable {
 }
 
 nonisolated struct MusicWorkspaceDisplayCacheFile: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 8
 
     var version: Int
+    var language: String
     var signature: String
     var generatedAt: Date
     var projection: MusicWorkspaceProjection
@@ -1008,7 +1050,8 @@ nonisolated enum MusicWorkspaceDisplayCache {
                 from: url,
                 decoder: ProjectRepository.makeDecoder(dateDecodingStrategy: .iso8601)
             ),
-            cache.version == MusicWorkspaceDisplayCacheFile.currentVersion
+            cache.version == MusicWorkspaceDisplayCacheFile.currentVersion,
+            cache.language == (Bundle.main.preferredLocalizations.first ?? "en")
         else { return nil }
         return applyingAdaptiveArtistFilterLimit(to: cache.projection)
     }
@@ -1020,6 +1063,7 @@ nonisolated enum MusicWorkspaceDisplayCache {
     ) {
         let cache = MusicWorkspaceDisplayCacheFile(
             version: MusicWorkspaceDisplayCacheFile.currentVersion,
+            language: Bundle.main.preferredLocalizations.first ?? "en",
             signature: signature,
             generatedAt: Date(),
             projection: projection
@@ -1058,6 +1102,7 @@ nonisolated enum MusicWorkspaceDisplayCache {
 
         digest.combine("music-workspace-cache-v\(MusicWorkspaceDisplayCacheFile.currentVersion)")
 
+        digest.combine(Bundle.main.preferredLocalizations.first ?? "en")
         digest.combine("videos")
         for video in input.videos.sorted(by: { $0.url.path < $1.url.path }) {
             digest.combine(video.url.path)
@@ -1097,7 +1142,7 @@ nonisolated enum MusicWorkspaceDisplayCache {
             digest.combine(job.recognitionID)
             digest.combine(job.type.rawValue)
             digest.combine(statusSignature(job.status))
-            digest.combine(job.downloadProgress)
+            if let song = job.song { combine(song, into: &digest) }
             digest.combine(job.filePath)
             digest.combine(job.waveformSamples?.count ?? 0)
             if let samples = job.waveformSamples {
@@ -1124,6 +1169,7 @@ nonisolated enum MusicWorkspaceDisplayCache {
         digest.combine(input.allMusicTags)
 
         digest.combine("query")
+        digest.combine(input.searchMode.rawValue)
         digest.combine(input.searchText)
         for result in input.searchResults.sorted(by: { $0.trackID < $1.trackID }) {
             digest.combine(result.trackID)

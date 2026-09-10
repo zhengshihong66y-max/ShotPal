@@ -116,11 +116,17 @@ enum Design {
     }
 }
 
+struct SearchFieldPopover {
+    var content: AnyView
+    var size: NSSize
+}
+
 struct LibraryToolbarSearchField: View {
     let placeholder: String
     let accessibilityLabel: String
     let accessibilityIdentifier: String
     @Binding var text: String
+    var searchPopover: SearchFieldPopover? = nil
 
     var body: some View {
         HStack(spacing: 6) {
@@ -132,7 +138,8 @@ struct LibraryToolbarSearchField: View {
                 placeholder: placeholder,
                 text: $text,
                 accessibilityLabel: accessibilityLabel,
-                accessibilityIdentifier: accessibilityIdentifier
+                accessibilityIdentifier: accessibilityIdentifier,
+                searchPopover: searchPopover
             )
         }
         .padding(.horizontal, 9)
@@ -156,12 +163,14 @@ struct LibraryToolbar<Actions: View>: View {
     let searchAccessibilityIdentifier: String
     @Binding private var text: String
     private let actions: () -> Actions
+    private let searchPopover: SearchFieldPopover?
 
     init(
         placeholder: String,
         text: Binding<String>,
-        searchAccessibilityLabel: String = "搜索",
+        searchAccessibilityLabel: String = L10n.text("搜索"),
         searchAccessibilityIdentifier: String = "library_toolbar_search_field",
+        searchPopover: SearchFieldPopover? = nil,
         @ViewBuilder actions: @escaping () -> Actions
     ) {
         self.placeholder = placeholder
@@ -169,6 +178,7 @@ struct LibraryToolbar<Actions: View>: View {
         self.searchAccessibilityIdentifier = searchAccessibilityIdentifier
         self._text = text
         self.actions = actions
+        self.searchPopover = searchPopover
     }
 
     var body: some View {
@@ -177,7 +187,8 @@ struct LibraryToolbar<Actions: View>: View {
                 placeholder: placeholder,
                 accessibilityLabel: searchAccessibilityLabel,
                 accessibilityIdentifier: searchAccessibilityIdentifier,
-                text: $text
+                text: $text,
+                searchPopover: searchPopover
             )
 
             LibraryToolbarActionRow {
@@ -270,6 +281,7 @@ struct ClickActivatedSearchTextField: NSViewRepresentable {
     @Binding var text: String
     let accessibilityLabel: String
     let accessibilityIdentifier: String
+    var searchPopover: SearchFieldPopover? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -277,6 +289,9 @@ struct ClickActivatedSearchTextField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SearchNSTextField {
         let textField = SearchNSTextField()
+        if searchPopover != nil { textField.cell = SearchPopoverTextFieldCell(textCell: "") }
+        textField.isEditable = true
+        textField.isSelectable = true
         textField.delegate = context.coordinator
         textField.isBordered = false
         textField.isBezeled = false
@@ -291,6 +306,7 @@ struct ClickActivatedSearchTextField: NSViewRepresentable {
         textField.cell?.wraps = false
         textField.setAccessibilityLabel(accessibilityLabel)
         textField.setAccessibilityIdentifier(accessibilityIdentifier)
+        context.coordinator.configure(searchPopover, field: textField)
         return textField
     }
 
@@ -302,34 +318,141 @@ struct ClickActivatedSearchTextField: NSViewRepresentable {
         nsView.placeholderString = placeholder
         nsView.setAccessibilityLabel(accessibilityLabel)
         nsView.setAccessibilityIdentifier(accessibilityIdentifier)
+        context.coordinator.configure(searchPopover, field: nsView)
     }
 
-    final class Coordinator: NSObject, NSTextFieldDelegate {
+    static func dismantleNSView(_ nsView: SearchNSTextField, coordinator: Coordinator) {
+        coordinator.popover.close()
+        nsView.onActivate = nil
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate, NSPopoverDelegate {
         var text: Binding<String>
+        let popover = NSPopover()
+        private var configuration: SearchFieldPopover?
+        private weak var field: SearchNSTextField?
+        private var host: NSHostingController<AnyView>?
 
         init(text: Binding<String>) {
             self.text = text
+            super.init()
+            popover.behavior = .semitransient
+            popover.animates = false
+            popover.delegate = self
+        }
+
+        func configure(_ configuration: SearchFieldPopover?, field: SearchNSTextField) {
+            self.configuration = configuration
+            self.field = field
+            field.onActivate = { [weak self] in self?.showPopover() }
+            field.onDetach = { [weak self] in self?.popover.close() }
+            guard let configuration else {
+                popover.close()
+                return
+            }
+            if popover.isShown {
+                host?.rootView = popoverContent(configuration)
+                popover.contentSize = configuration.size
+            }
+        }
+
+        private func popoverContent(_ configuration: SearchFieldPopover) -> AnyView {
+            AnyView(configuration.content.onExitCommand { [weak self] in self?.popover.close() })
+        }
+
+        func showPopover() {
+            guard !popover.isShown, let configuration, let field, let window = field.window else { return }
+            // Keep the original editor and selection: the popover contains results, not a second input.
+            let editor = field.currentEditor()
+            let selection = editor?.selectedRange
+            let controller = NSHostingController(rootView: popoverContent(configuration))
+            host = controller
+            popover.contentViewController = controller
+            popover.contentSize = configuration.size
+            popover.appearance = field.effectiveAppearance
+            popover.show(relativeTo: field.bounds, of: field, preferredEdge: .maxY)
+            if editor != nil {
+                window.makeKey()
+                field.restoreSearchEditor()
+                if let selection { field.currentEditor()?.selectedRange = selection }
+            }
+        }
+
+        func popoverShouldClose(_ popover: NSPopover) -> Bool {
+            guard let field, let event = NSApp.currentEvent, event.window === field.window else { return true }
+            if event.type == .keyDown || event.type == .keyUp {
+                return event.keyCode == 53 || field.currentEditor() == nil
+            }
+            // Native dismissal must not consume clicks/drags in the anchoring editor.
+            return !field.bounds.contains(field.convert(event.locationInWindow, from: nil))
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard commandSelector == #selector(NSResponder.cancelOperation(_:)), popover.isShown else { return false }
+            popover.close()
+            return true
         }
 
         func controlTextDidChange(_ notification: Notification) {
             guard let textField = notification.object as? NSTextField else { return }
             text.wrappedValue = textField.stringValue
+            showPopover()
         }
+    }
+}
+
+// AppKit routes clicks to the field editor once editing has begun. Keep this editor local
+// to popover-enabled fields so reopening never needs an application-wide mouse monitor.
+final class SearchPopoverTextFieldCell: NSTextFieldCell {
+    override func fieldEditor(for controlView: NSView) -> NSTextView? {
+        (controlView as? SearchNSTextField)?.popoverFieldEditor
+    }
+}
+
+final class SearchPopoverFieldEditor: NSTextView {
+    var onActivate: (() -> Void)?
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        onActivate?()
     }
 }
 
 final class SearchNSTextField: NSTextField {
     private var isMouseActivating = false
+    var onActivate: (() -> Void)?
+    var onDetach: (() -> Void)?
+    lazy var popoverFieldEditor: SearchPopoverFieldEditor = {
+        let editor = SearchPopoverFieldEditor()
+        editor.isFieldEditor = true
+        editor.onActivate = { [weak self] in self?.onActivate?() }
+        return editor
+    }()
+
+    func restoreSearchEditor() {
+        isMouseActivating = true
+        defer { isMouseActivating = false }
+        window?.makeFirstResponder(self)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { onDetach?() }
+    }
+
+    // Borderless text fields must still own mouse drags for text selection.
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override var acceptsFirstResponder: Bool {
-        isMouseActivating
+        isMouseActivating || currentEditor() != nil
     }
 
     override func mouseDown(with event: NSEvent) {
         isMouseActivating = true
-        window?.makeFirstResponder(self)
+        defer { isMouseActivating = false }
         super.mouseDown(with: event)
-        isMouseActivating = false
+        onActivate?()
     }
 }
 

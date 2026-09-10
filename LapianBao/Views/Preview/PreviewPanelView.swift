@@ -93,9 +93,9 @@ struct PreviewPanelView: View {
                 previewWorkspace(for: selectedVideo)
             } else {
                 AppEmptyState(
-                    title: "选择一个视频",
+                    title: L10n.text("选择一个视频"),
                     systemImage: "play.rectangle",
-                    description: "点击左侧视频后，会在这里直接播放。",
+                    description: L10n.text("点击左侧视频后，会在这里直接播放。"),
                     style: .large
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -185,10 +185,10 @@ struct PreviewPanelView: View {
             completePendingStoryboardExportIfReady()
             focusSceneTimelineOnOpeningIfNeeded()
         }
-        .onReceive(libraryStore.$transcriptSegmentsByVideoPath) { _ in
+        .onChange(of: libraryStore.transcriptSegmentsByVideoPath) { _, _ in
             completePendingTimelineExpansionIfReady()
         }
-        .onReceive(libraryStore.$transcriptStatusByVideoPath) { statuses in
+        .onChange(of: libraryStore.transcriptStatusByVideoPath) { _, statuses in
             completePendingTimelineExpansionIfReady()
             guard
                 pendingTimelineExpansionTab == .audio,
@@ -382,7 +382,7 @@ struct PreviewPanelView: View {
                         } else {
                             previewExportOverlayButton(
                                 systemImage: "square.and.arrow.up",
-                                help: "打开导出区"
+                                help: L10n.text("打开导出区")
                             ) {
                                 withAnimation(.easeInOut(duration: 0.18)) {
                                     isExportPanelPresented = true

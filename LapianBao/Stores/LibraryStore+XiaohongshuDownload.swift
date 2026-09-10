@@ -36,13 +36,13 @@ extension LibraryStore {
             from: html,
             noteID: noteID
         ) else {
-            throw RemoteImportError.downloaderFailed("小红书：未找到视频信息。请确认是视频笔记；若网页要求验证，请先在 Chrome 打开该链接，再到设置同步浏览器 cookies。")
+            throw RemoteImportError.downloaderFailed(L10n.text("小红书：未找到视频信息。请确认是视频笔记；若网页要求验证，请先在 Chrome 打开该链接，再到设置同步浏览器 cookies。"))
         }
         let noteObj = parsed.note
         let videoObj = parsed.video
 
         guard let downloadURL = xiaohongshuVideoDownloadURL(from: videoObj) else {
-            throw RemoteImportError.downloaderFailed("小红书：找不到视频下载地址，该视频可能仅限好友可见")
+            throw RemoteImportError.downloaderFailed(L10n.text("小红书：找不到视频下载地址，该视频可能仅限好友可见"))
         }
 
         // 下载视频文件
@@ -135,7 +135,7 @@ extension LibraryStore {
             guard (200..<300).contains(result.statusCode),
                   let html = String(data: result.data, encoding: .utf8)
             else {
-                throw RemoteImportError.downloaderFailed("小红书页面读取失败（HTTP \(result.statusCode)）")
+                throw RemoteImportError.downloaderFailed(L10n.text("小红书页面读取失败（HTTP \(result.statusCode)）"))
             }
             return html
         }.value

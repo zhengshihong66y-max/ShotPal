@@ -1,0 +1,5 @@
+"CFBundleDisplayName" = "拉片宝";
+"CFBundleName" = "拉片宝";
+"NSDesktopFolderUsageDescription" = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
+"NSDocumentsFolderUsageDescription" = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";
+"NSDownloadsFolderUsageDescription" = "拉片宝需要访问你选择的素材库文件夹，用于读取视频并保存分析数据。";

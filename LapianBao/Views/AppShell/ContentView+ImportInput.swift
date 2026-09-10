@@ -35,7 +35,7 @@ extension ContentView {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("打开导入面板")
+        .accessibilityLabel(L10n.text("打开导入面板"))
         .accessibilityIdentifier("library_import_tile")
     }
 
@@ -45,7 +45,7 @@ extension ContentView {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             !clip.isEmpty
         else { return }
-        pasteImportURLs(Self.supportedImportURLs(from: clip))
+        pasteImportURLs(unqueuedClipboardImportURLs(from: clip))
     }
 
     func handleClipboardChangeIfNeeded() {
@@ -60,10 +60,17 @@ extension ContentView {
             !clip.isEmpty
         else { return }
 
-        let urls = Self.supportedImportURLs(from: clip)
+        let urls = unqueuedClipboardImportURLs(from: clip)
         guard !urls.isEmpty else { return }
 
         openImportPanel(with: urls)
+    }
+
+    func unqueuedClipboardImportURLs(from text: String) -> [String] {
+        let existingIDs = queuedOrImportedImportCandidateIDs
+        return Self.supportedImportURLs(from: text).filter {
+            !existingIDs.contains(importCandidateID(for: $0))
+        }
     }
 
     func handleImportDrop(_ providers: [NSItemProvider]) -> Bool {

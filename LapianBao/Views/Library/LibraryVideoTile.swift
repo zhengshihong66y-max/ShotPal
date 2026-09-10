@@ -95,7 +95,7 @@ struct LibraryVideoTile: View, Equatable {
 
     var body: some View {
         tileSurface
-        .accessibilityLabel("视频：\(displayName)")
+        .accessibilityLabel(L10n.text("视频：\(displayName)"))
         .accessibilityIdentifier("library_video_tile_\(accessibilityVideoKey)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
@@ -252,7 +252,7 @@ struct LibraryVideoTile: View, Equatable {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("设置视频平台：\(platform)")
+        .accessibilityLabel(L10n.text("设置视频平台：\(VideoSourcePlatform.displayName(for: platform))"))
         .accessibilityIdentifier("library_video_platform_button_\(accessibilityVideoKey)")
         .popover(isPresented: $isSourcePlatformMenuPresented, arrowEdge: .bottom) {
             sourcePlatformMenu
@@ -289,7 +289,7 @@ struct LibraryVideoTile: View, Equatable {
         }
         .buttonStyle(.plain)
         .frame(width: CardOverlayMoreIcon.size, height: CardOverlayMoreIcon.size)
-        .accessibilityLabel("打开视频操作菜单")
+        .accessibilityLabel(L10n.text("打开视频操作菜单"))
         .accessibilityIdentifier("library_video_more_button_\(accessibilityVideoKey)")
         .popover(isPresented: $isMorePresented, arrowEdge: .trailing) {
             morePopover
@@ -325,21 +325,21 @@ struct LibraryVideoTile: View, Equatable {
                     isMorePresented = false
                     NSWorkspace.shared.activateFileViewerSelecting([video.url])
                 } label: {
-                    Label("在访达中显示", systemImage: "folder")
+                    Label(L10n.text("在访达中显示"), systemImage: "folder")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("在访达中显示视频")
+                .accessibilityLabel(L10n.text("在访达中显示视频"))
                 .accessibilityIdentifier("library_video_show_in_finder_button_\(accessibilityVideoKey)")
 
                 Button(role: .destructive) {
                     isMorePresented = false
                     onDelete()
                 } label: {
-                    Label("删除视频", systemImage: "trash")
+                    Label(L10n.text("删除视频"), systemImage: "trash")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -347,7 +347,7 @@ struct LibraryVideoTile: View, Equatable {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)
-                .accessibilityLabel("删除视频")
+                .accessibilityLabel(L10n.text("删除视频"))
                 .accessibilityIdentifier("library_video_delete_button_\(accessibilityVideoKey)")
             }
             .padding(.vertical, 6)
@@ -408,7 +408,7 @@ private struct SourcePlatformMenuRow: View {
                     .foregroundStyle(platform.color)
                     .frame(width: 14, height: 14)
 
-                Text(platform.rawValue)
+                Text(platform.title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.86))
                     .lineLimit(1)
@@ -428,7 +428,7 @@ private struct SourcePlatformMenuRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("选择平台：\(platform.rawValue)")
+        .accessibilityLabel(L10n.text("选择平台：\(platform.title)"))
         .accessibilityIdentifier("source_platform_\(platformAccessibilityKey)_button")
     }
 

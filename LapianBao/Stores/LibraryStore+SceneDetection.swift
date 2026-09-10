@@ -65,19 +65,19 @@ nonisolated enum SceneDetectionError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .pluginPythonMissing:
-            return "未检测到场景识别 Python 环境，且自动安装没有完成"
+            return L10n.text("内置场景识别环境缺失，请重新安装完整安装包")
         case .pluginScriptMissing:
-            return "未找到场景识别脚本：Tools/detect_scene_cuts_transnet.py"
+            return L10n.text("未找到场景识别脚本：Tools/detect_scene_cuts_transnet.py")
         case .videoMissing:
-            return "视频文件不存在，无法识别场景"
+            return L10n.text("视频文件不存在，无法识别场景")
         case .videoUnreadable:
-            return "视频文件不可读取，无法识别场景"
+            return L10n.text("视频文件不可读取，无法识别场景")
         case .runtimeSetupFailed(let message):
-            return message.isEmpty ? "场景识别运行环境准备失败" : "场景识别运行环境准备失败：\(message)"
+            return message.isEmpty ? L10n.text("场景识别运行环境准备失败") : L10n.text("场景识别运行环境准备失败：\(message)")
         case .processFailed(let message):
-            return message.isEmpty ? "场景识别模型运行失败" : "场景识别模型运行失败：\(message)"
+            return message.isEmpty ? L10n.text("场景识别模型运行失败") : L10n.text("场景识别模型运行失败：\(message)")
         case .invalidOutput(let message):
-            return message.isEmpty ? "场景识别模型输出无效" : "场景识别模型输出无效：\(message)"
+            return message.isEmpty ? L10n.text("场景识别模型输出无效") : L10n.text("场景识别模型输出无效：\(message)")
         }
     }
 }
@@ -86,143 +86,19 @@ nonisolated struct SceneDetectionPlugin: Sendable {
     let pythonURL: URL
     let scriptURL: URL
 
-    var environment: [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        let binURL = pythonURL.deletingLastPathComponent()
-        let envURL = binURL.deletingLastPathComponent()
-        let bundledToolBinURL = scriptURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("bin", isDirectory: true)
-        let toolPath = [
-            bundledToolBinURL.path,
-            binURL.path,
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin"
-        ].joined(separator: ":")
+    var environment: [String: String] { LibraryStore.recognitionEnvironment }
 
-        environment["VIRTUAL_ENV"] = envURL.path
-        environment["PATH"] = [toolPath, environment["PATH"]]
-            .compactMap { $0 }
-            .joined(separator: ":")
-        environment["PYTHONUNBUFFERED"] = "1"
-        environment["PYTHONIOENCODING"] = "utf-8"
-        environment["PYTHONNOUSERSITE"] = "1"
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment.removeValue(forKey: "PYTHONPATH")
-        environment["OMP_NUM_THREADS"] = "1"
-        environment["OPENBLAS_NUM_THREADS"] = "1"
-        environment["MKL_NUM_THREADS"] = "1"
-        environment["VECLIB_MAXIMUM_THREADS"] = "1"
-        environment["NUMEXPR_NUM_THREADS"] = "1"
-        return environment
-    }
-
-#if DEBUG
-    private static var defaultSourceFilePath: String { #filePath }
-#else
-    private static var defaultSourceFilePath: String { "" }
-#endif
-
-    static func resolve(sourceFilePath: String = defaultSourceFilePath) throws -> SceneDetectionPlugin {
-        let fileManager = FileManager.default
-        let roots = candidateProjectRoots(sourceFilePath: sourceFilePath)
-        let pythonRelativePaths = [
-            "Tools/transnet-env/bin/python",
-            "Tools/transnet-env/bin/python3"
-        ]
-
-        guard let scriptURL = firstToolURL(
-            relativePaths: ["Tools/detect_scene_cuts_transnet.py"],
-            roots: roots,
-            mustBeExecutable: false,
-            fileManager: fileManager
-        ) else {
+    static func resolve() throws -> SceneDetectionPlugin {
+        let scriptURL = YTDLPRuntime.toolsURL.appendingPathComponent("detect_scene_cuts_transnet.py")
+        guard FileManager.default.isReadableFile(atPath: scriptURL.path) else {
             throw SceneDetectionError.pluginScriptMissing
         }
-        let pythonURL: URL
-        if let existingPythonURL = firstToolURL(
-            relativePaths: pythonRelativePaths,
-            roots: roots,
-            mustBeExecutable: true,
-            fileManager: fileManager
-        ) {
-            pythonURL = existingPythonURL
-        } else {
-            do {
-                pythonURL = try LibraryStore.ensurePythonRuntime(
-                    named: "transnet-env",
-                    requirementsRelativePath: "Tools/requirements-transnet.txt",
-                    probeModules: ["numpy", "torch", "transnetv2_pytorch", "ffmpeg"]
-                )
-            } catch {
-                throw SceneDetectionError.runtimeSetupFailed(error.localizedDescription)
-            }
+        do {
+            let pythonURL = try LibraryStore.bundledRecognitionPython(named: "scene")
+            return SceneDetectionPlugin(pythonURL: pythonURL, scriptURL: scriptURL)
+        } catch {
+            throw SceneDetectionError.runtimeSetupFailed(error.localizedDescription)
         }
-
-        return SceneDetectionPlugin(pythonURL: pythonURL, scriptURL: scriptURL)
-    }
-
-    private static func firstToolURL(
-        relativePaths: [String],
-        roots: [URL],
-        mustBeExecutable: Bool,
-        fileManager: FileManager
-    ) -> URL? {
-        var checkedPaths = Set<String>()
-        for root in roots {
-            for relativePath in relativePaths {
-                let url = root.appendingPathComponent(relativePath)
-                guard checkedPaths.insert(url.path).inserted else { continue }
-                if mustBeExecutable {
-                    if fileManager.isExecutableFile(atPath: url.path) { return url }
-                } else if fileManager.fileExists(atPath: url.path) {
-                    return url
-                }
-            }
-        }
-        return nil
-    }
-
-    private static func candidateProjectRoots(sourceFilePath: String) -> [URL] {
-        let fileManager = FileManager.default
-        let currentDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
-        var candidates = [URL]()
-
-        if let bundleResourceURL = Bundle.main.resourceURL {
-            candidates.append(bundledRuntimeToolsResourceRoot(from: bundleResourceURL))
-            candidates.append(contentsOf: ancestors(from: bundleResourceURL, limit: 8))
-        }
-        if !sourceFilePath.isEmpty {
-            let sourceDirectory = URL(fileURLWithPath: sourceFilePath).deletingLastPathComponent()
-            candidates.append(contentsOf: ancestors(from: sourceDirectory, limit: 6))
-        }
-        candidates.append(contentsOf: ancestors(from: currentDirectory, limit: 8))
-
-        return deduplicatedURLs(candidates)
-    }
-
-    private static func bundledRuntimeToolsResourceRoot(from bundleResourceURL: URL) -> URL {
-        bundleResourceURL
-            .appendingPathComponent("RuntimeTools.bundle", isDirectory: true)
-            .appendingPathComponent("Contents", isDirectory: true)
-            .appendingPathComponent("Resources", isDirectory: true)
-    }
-
-    private static func ancestors(from url: URL, limit: Int) -> [URL] {
-        var result = [URL]()
-        var current = url
-        for _ in 0..<limit {
-            result.append(current)
-            current.deleteLastPathComponent()
-        }
-        return result
-    }
-
-    private static func deduplicatedURLs(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 }
 
@@ -342,14 +218,14 @@ extension LibraryStore {
         progressCallback?(0.01)
         let plugin = try SceneDetectionPlugin.resolve()
         progressCallback?(0.02)
-        let arguments = [
-            plugin.scriptURL.path,
+        let arguments = Self.recognitionArguments([
+            "scene",
             url.path,
             "--threshold",
             "0.35",
             "--device",
             sceneDetectionDeviceArgument()
-        ]
+        ])
 
         let result = ExternalProcessRunner.run(
             executableURL: plugin.pythonURL,
@@ -673,15 +549,15 @@ extension LibraryStore {
         var errorDescription: String? {
             switch self {
             case .downloaderMissing:
-                return "下载失败：请检查网络连接，或在高级设置中配置自定义 API。"
+                return L10n.text("下载失败：请检查网络连接，或在高级设置中配置自定义 API。")
             case let .downloaderFailed(message):
-                return message.isEmpty ? "Instagram 下载失败" : message
+                return message.isEmpty ? L10n.text("Instagram 下载失败") : message
             case .invalidAPIEndpoint:
-                return "Instagram 下载 API 地址无效"
+                return L10n.text("Instagram 下载 API 地址无效")
             case .invalidAPIResponse:
-                return "Instagram 下载 API 返回格式不正确"
+                return L10n.text("Instagram 下载 API 返回格式不正确")
             case .downloadFailed:
-                return "下载远程视频文件失败"
+                return L10n.text("下载远程视频文件失败")
             }
         }
     }

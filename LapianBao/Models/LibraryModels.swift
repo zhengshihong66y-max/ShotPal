@@ -55,12 +55,12 @@ enum VideoSortOption: String, CaseIterable, Identifiable, Codable {
 
     var title: String {
         switch self {
-        case .name: return "名称"
-        case .importDate: return "导入时间"
-        case .duration: return "片长"
-        case .fileSize: return "文件大小"
-        case .resolution: return "分辨率"
-        case .tags: return "标签"
+        case .name: return L10n.text("名称")
+        case .importDate: return L10n.text("导入时间")
+        case .duration: return L10n.text("片长")
+        case .fileSize: return L10n.text("文件大小")
+        case .resolution: return L10n.text("分辨率")
+        case .tags: return L10n.text("标签")
         }
     }
 
@@ -82,8 +82,8 @@ nonisolated enum VideoSortDirection: String, CaseIterable, Identifiable, Codable
 
     var title: String {
         switch self {
-        case .ascending: return "升序"
-        case .descending: return "降序"
+        case .ascending: return L10n.text("升序")
+        case .descending: return L10n.text("降序")
         }
     }
 
@@ -111,7 +111,7 @@ struct VideoMetadata: Codable, Equatable, Sendable {
 
     var frameRateText: String? {
         guard let frameRate, frameRate.isFinite, frameRate > 0 else { return nil }
-        return "\(Int(frameRate.rounded())) 帧"
+        return L10n.text("\(Int(frameRate.rounded())) 帧")
     }
 }
 
@@ -152,9 +152,9 @@ struct AnnotationItem: Identifiable, Codable, Equatable, Sendable {
 
         var title: String {
             switch self {
-            case .frame: return "画面"
-            case .audio: return "声音"
-            case .content: return "内容"
+            case .frame: return L10n.text("画面")
+            case .audio: return L10n.text("声音")
+            case .content: return L10n.text("内容")
             }
         }
     }
@@ -530,6 +530,17 @@ nonisolated struct AppleMusicSearchResponse: Decodable, Sendable {
     var results: [AppleMusicSearchResult]
 }
 
+nonisolated enum AppleMusicSearchError: LocalizedError {
+    case httpStatus(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .httpStatus(let status):
+            return L10n.text("Apple Music 搜索暂时不可用（HTTP \(status)），请稍后重试。")
+        }
+    }
+}
+
 nonisolated struct AppleMusicSearchResult: Identifiable, Codable, Equatable, Sendable {
     var trackID: Int
     var title: String
@@ -637,9 +648,9 @@ struct LocalMusicAsset: Identifiable, Codable, Equatable, Sendable {
 
         nonisolated var label: String {
             switch self {
-            case .original: return "原曲"
-            case .instrumental: return "伴奏"
-            case .unknown: return "音乐"
+            case .original: return L10n.text("原曲")
+            case .instrumental: return L10n.text("伴奏")
+            case .unknown: return L10n.text("音乐")
             }
         }
     }
@@ -688,7 +699,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         case original
         case instrumental
 
-        nonisolated var label: String { self == .original ? "原曲" : "伴奏" }
+        nonisolated var label: String { self == .original ? L10n.text("原曲") : L10n.text("伴奏") }
         nonisolated var searchSuffix: String { self == .original ? "" : " instrumental" }
     }
 
@@ -696,6 +707,8 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
     var songKey: String
     var recognitionID: UUID?
     var type: DownloadType
+    // Persist display metadata so a download remains a normal row after search is cleared.
+    var song: MusicRecognitionItem?
     var status: RemoteImportJob.Status
     var downloadProgress: Double?
     var filePath: String?
@@ -704,7 +717,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
     var createdAt: Date = Date()
 
     private enum CodingKeys: String, CodingKey {
-        case id, songKey, recognitionID, type, status, statusMessage, downloadProgress, filePath, waveformSamples, isPreparingWaveform, createdAt
+        case id, songKey, recognitionID, type, song, status, statusMessage, downloadProgress, filePath, waveformSamples, isPreparingWaveform, createdAt
     }
 
     private enum PersistedStatus: String, Codable {
@@ -723,6 +736,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         recognitionID: UUID? = nil,
         type: DownloadType,
         status: RemoteImportJob.Status,
+        song: MusicRecognitionItem? = nil,
         downloadProgress: Double? = nil,
         filePath: String? = nil,
         waveformSamples: [Double]? = nil,
@@ -733,6 +747,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         self.songKey = songKey
         self.recognitionID = recognitionID
         self.type = type
+        self.song = song
         self.status = status
         self.downloadProgress = downloadProgress
         self.filePath = filePath
@@ -747,6 +762,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         songKey = try container.decode(String.self, forKey: .songKey)
         recognitionID = try container.decodeIfPresent(UUID.self, forKey: .recognitionID)
         type = try container.decode(DownloadType.self, forKey: .type)
+        song = try container.decodeIfPresent(MusicRecognitionItem.self, forKey: .song)
         downloadProgress = try container.decodeIfPresent(Double.self, forKey: .downloadProgress)
         filePath = try container.decodeIfPresent(String.self, forKey: .filePath)
         waveformSamples = try container.decodeIfPresent([Double].self, forKey: .waveformSamples)
@@ -773,6 +789,7 @@ struct MusicDownloadJob: Identifiable, Codable, Equatable, Sendable {
         try container.encode(songKey, forKey: .songKey)
         try container.encodeIfPresent(recognitionID, forKey: .recognitionID)
         try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(song, forKey: .song)
         try container.encodeIfPresent(downloadProgress, forKey: .downloadProgress)
         try container.encodeIfPresent(filePath, forKey: .filePath)
         try container.encodeIfPresent(waveformSamples, forKey: .waveformSamples)

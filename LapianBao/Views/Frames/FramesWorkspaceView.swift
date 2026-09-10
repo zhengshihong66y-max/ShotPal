@@ -174,7 +174,7 @@ private struct FrameCardTagMenuButton: View {
                     isMorePresented = false
                     onJumpToVideo()
                 } label: {
-                    Label("回到原视频位置", systemImage: "arrowshape.turn.up.left.fill")
+                    Label(L10n.text("回到原视频位置"), systemImage: "arrowshape.turn.up.left.fill")
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -191,7 +191,7 @@ private struct FrameCardTagMenuButton: View {
                     isMorePresented = false
                     onShowInFinder()
                 } label: {
-                    Label("在访达中显示", systemImage: "folder")
+                    Label(L10n.text("在访达中显示"), systemImage: "folder")
                         .foregroundStyle(frameMenuActionForeground(isEnabled: isEnabled))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
@@ -210,7 +210,7 @@ private struct FrameCardTagMenuButton: View {
                     isMorePresented = false
                     onDelete()
                 } label: {
-                    Label("删除图片", systemImage: "trash")
+                    Label(L10n.text("删除图片"), systemImage: "trash")
                         .foregroundStyle(frameMenuActionForeground(isEnabled: isEnabled, destructive: true))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 10)
@@ -443,16 +443,16 @@ struct FramesWorkspaceView: View {
             }
         } else if libraryStore.videos.isEmpty {
             AppEmptyState(
-                title: "暂无视频",
+                title: L10n.text("暂无视频"),
                 systemImage: "play.rectangle",
-                description: "导入视频后，分镜模式会按视频展示分镜和截图。",
+                description: L10n.text("导入视频后，分镜模式会按视频展示分镜和截图。"),
                 style: .large
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 14)
         } else {
             AppEmptyState(
-                title: "没有匹配视频",
+                title: L10n.text("没有匹配视频"),
                 systemImage: "line.3.horizontal.decrease.circle",
                 style: .large
             )
@@ -465,7 +465,7 @@ struct FramesWorkspaceView: View {
     private var allExportedFrameBoard: some View {
         if allExportedFrames.isEmpty {
             AppEmptyState(
-                title: "暂无收藏图片",
+                title: L10n.text("暂无收藏图片"),
                 systemImage: "photo.on.rectangle",
                 style: .large
             )
@@ -473,7 +473,7 @@ struct FramesWorkspaceView: View {
             .padding(.horizontal, 14)
         } else if visibleExportedFrames.isEmpty {
             AppEmptyState(
-                title: "没有匹配图片",
+                title: L10n.text("没有匹配图片"),
                 systemImage: "line.3.horizontal.decrease.circle",
                 style: .large
             )
@@ -531,7 +531,7 @@ struct FramesWorkspaceView: View {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .accessibilityLabel(isFrameTagFilterPresented ? "隐藏画面标签筛选" : "显示画面标签筛选")
+        .accessibilityLabel(isFrameTagFilterPresented ? L10n.text("隐藏画面标签筛选") : L10n.text("显示画面标签筛选"))
         .accessibilityIdentifier("frames_tag_filter_toggle_button")
     }
 
@@ -539,7 +539,7 @@ struct FramesWorkspaceView: View {
         VStack(alignment: .leading, spacing: 8) {
             if libraryStore.allFrameTags.isEmpty {
                 HStack(spacing: 8) {
-                    Text("暂无图片标签")
+                    Text(L10n.text("暂无图片标签"))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer(minLength: 0)
@@ -783,7 +783,7 @@ struct FramesWorkspaceView: View {
                 Button {
                     handleFrameModeMenuSelection(mode)
                 } label: {
-                    Label(mode.rawValue, systemImage: boardMode == mode ? "checkmark" : mode.icon)
+                    Label(mode.title, systemImage: boardMode == mode ? "checkmark" : mode.icon)
                 }
             }
 
@@ -792,7 +792,7 @@ struct FramesWorkspaceView: View {
                 Button {
                     isStoryboardVideoPickerPresented.toggle()
                 } label: {
-                    Label("选择分镜视频", systemImage: "rectangle.stack")
+                    Label(L10n.text("选择分镜视频"), systemImage: "rectangle.stack")
                 }
             }
         } label: {
@@ -801,7 +801,7 @@ struct FramesWorkspaceView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .accessibilityLabel("画面模式菜单")
+        .accessibilityLabel(L10n.text("画面模式菜单"))
         .accessibilityIdentifier("frames_mode_menu")
         .popover(isPresented: $isStoryboardVideoPickerPresented, arrowEdge: .bottom) {
             storyboardVideoPickerPopover
@@ -821,9 +821,9 @@ struct FramesWorkspaceView: View {
     private func frameModeButtonHelp(for mode: FramesBoardMode) -> String {
         switch mode {
         case .storyboard:
-            return selectedStoryboardVideo.map { "分镜：\($0.name)" } ?? "分镜"
+            return selectedStoryboardVideo.map { L10n.text("分镜：\($0.name)") } ?? L10n.text("分镜")
         case .collection:
-            return "全部图片"
+            return L10n.text("全部图片")
         }
     }
 
@@ -1023,7 +1023,7 @@ struct FramesWorkspaceView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         } else if libraryStore.sceneRecognitionCutCount(for: video) != nil {
             HStack(spacing: 5) {
-                Text("已识别")
+                Text(L10n.text("已识别"))
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
             }
@@ -1129,19 +1129,19 @@ struct FramesWorkspaceView: View {
             Button {
                 frameBoardGridSize = 0
             } label: {
-                Label("密集", systemImage: frameBoardGridSize == 0 ? "checkmark" : "square.grid.3x3")
+                Label(L10n.text("密集"), systemImage: frameBoardGridSize == 0 ? "checkmark" : "square.grid.3x3")
             }
 
             Button {
                 frameBoardGridSize = 1
             } label: {
-                Label("标准", systemImage: frameBoardGridSize == 1 ? "checkmark" : "square.grid.2x2")
+                Label(L10n.text("标准"), systemImage: frameBoardGridSize == 1 ? "checkmark" : "square.grid.2x2")
             }
 
             Button {
                 frameBoardGridSize = 2
             } label: {
-                Label("大图", systemImage: frameBoardGridSize == 2 ? "checkmark" : "rectangle")
+                Label(L10n.text("大图"), systemImage: frameBoardGridSize == 2 ? "checkmark" : "rectangle")
             }
         } label: {
             frameToolbarIcon(systemName: "square.grid.3x3", size: 12)
@@ -1149,7 +1149,7 @@ struct FramesWorkspaceView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .accessibilityLabel("画面网格尺寸菜单")
+        .accessibilityLabel(L10n.text("画面网格尺寸菜单"))
         .accessibilityIdentifier("frames_grid_size_menu")
     }
 
@@ -1272,7 +1272,7 @@ struct FramesWorkspaceView: View {
             storyboardRecognitionFailureStatus(message: message, video: video)
                 .padding(.vertical, 10)
         } else if libraryStore.isHydratingSceneThumbnails(for: video) {
-            RecognitionProgressRow(message: "正在补齐分镜缩略图...", progress: nil, showPercent: false)
+            RecognitionProgressRow(message: L10n.text("正在补齐分镜缩略图..."), progress: nil, showPercent: false)
                 .recognitionProgressCard()
         }
     }
@@ -1294,7 +1294,7 @@ struct FramesWorkspaceView: View {
     }
 
     private func storyboardRecognitionStatus(progress: Double) -> some View {
-        Text("正在识别分镜 \(progressPercentText(progress))")
+        Text(L10n.text("正在识别分镜 \(progressPercentText(progress))"))
             .font(.title3.weight(.semibold))
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -1309,7 +1309,7 @@ struct FramesWorkspaceView: View {
                 .foregroundStyle(.red.opacity(0.9))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("场景识别失败")
+                Text(L10n.text("场景识别失败"))
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text(message)
@@ -1332,16 +1332,16 @@ struct FramesWorkspaceView: View {
 
     private func storyboardEmptyTitle(for video: VideoItem) -> String {
         if libraryStore.sceneDetectionProgress[video.url.path] != nil {
-            return "正在生成分镜"
+            return L10n.text("正在生成分镜")
         }
-        return libraryStore.sceneCutsByVideoPath[video.url.path] == nil ? "暂无分镜" : "这个视频暂无分镜或截图"
+        return libraryStore.sceneCutsByVideoPath[video.url.path] == nil ? L10n.text("暂无分镜") : L10n.text("这个视频暂无分镜或截图")
     }
 
     private func storyboardEmptyDescription(for video: VideoItem) -> String? {
         if libraryStore.sceneDetectionProgress[video.url.path] != nil {
-            return "识别完成后会显示这个视频的分镜和截图。"
+            return L10n.text("识别完成后会显示这个视频的分镜和截图。")
         }
-        return "切到主页截图或完成分镜识别后会出现在这里。"
+        return L10n.text("切到主页截图或完成分镜识别后会出现在这里。")
     }
 
     private func toggleFrameTag(_ tag: String) {
@@ -1571,7 +1571,7 @@ struct FramesWorkspaceView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("关闭图片详情")
+                        .accessibilityLabel(L10n.text("关闭图片详情"))
                         .accessibilityIdentifier("frame_detail_dismiss_hotspot")
 
                         Spacer(minLength: 0)
@@ -1747,14 +1747,14 @@ struct FramesWorkspaceView: View {
             HStack(spacing: 8) {
                 frameDetailIconButton(
                     systemName: "arrowshape.turn.up.left.fill",
-                    accessibilityLabel: "回到原视频位置",
+                    accessibilityLabel: L10n.text("回到原视频位置"),
                     accessibilityIdentifier: "frame_detail_jump_to_video_button",
                     action: onJumpToVideo
                 )
 
                 frameDetailIconButton(
                     systemName: "folder",
-                    accessibilityLabel: "在访达中显示",
+                    accessibilityLabel: L10n.text("在访达中显示"),
                     accessibilityIdentifier: "frame_detail_show_in_finder_button",
                     action: onShowInFinder
                 )
@@ -1771,14 +1771,14 @@ struct FramesWorkspaceView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isPlaying ? "暂停播放" : "播放")
+            .accessibilityLabel(isPlaying ? L10n.text("暂停播放") : L10n.text("播放"))
             .accessibilityIdentifier("frame_detail_play_button")
             .frame(maxWidth: .infinity, alignment: .center)
 
             HStack {
                 frameDetailIconButton(
                     systemName: "trash",
-                    accessibilityLabel: "删除图片",
+                    accessibilityLabel: L10n.text("删除图片"),
                     accessibilityIdentifier: "frame_detail_delete_button",
                     tint: .red.opacity(0.92),
                     action: onDelete

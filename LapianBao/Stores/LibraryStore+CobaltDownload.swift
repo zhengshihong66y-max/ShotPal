@@ -56,7 +56,7 @@ extension LibraryStore {
             let resp = httpResp as? HTTPURLResponse,
             (200..<300).contains(resp.statusCode)
         else {
-            throw RemoteImportError.downloaderFailed("cobalt.tools 无法处理该链接，请安装 yt-dlp 后重试")
+            throw RemoteImportError.downloaderFailed(L10n.text("cobalt.tools 无法处理该链接，请安装 yt-dlp 后重试"))
         }
 
         let cobalt = try JSONDecoder().decode(CobaltResponse.self, from: data)
@@ -86,7 +86,7 @@ extension LibraryStore {
             else { throw RemoteImportError.invalidAPIResponse }
             downloadURL = item.url
         default:
-            throw RemoteImportError.downloaderFailed("cobalt.tools 无法解析该链接，请安装 yt-dlp 后重试")
+            throw RemoteImportError.downloaderFailed(L10n.text("cobalt.tools 无法解析该链接，请安装 yt-dlp 后重试"))
         }
 
         let fallbackName = downloadURL.lastPathComponent.isEmpty

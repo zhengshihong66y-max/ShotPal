@@ -72,7 +72,7 @@ final class AppStartupCoordinator {
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "退出 拉片宝",
+            withTitle: L10n.text("退出 拉片宝"),
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -80,9 +80,9 @@ final class AppStartupCoordinator {
         mainMenu.addItem(appMenuItem)
 
         let fileMenuItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "文件")
+        let fileMenu = NSMenu(title: L10n.text("文件"))
         let openFolderItem = NSMenuItem(
-            title: "打开文件夹",
+            title: L10n.text("打开文件夹"),
             action: chooseFolderAction,
             keyEquivalent: "o"
         )
@@ -92,35 +92,35 @@ final class AppStartupCoordinator {
         mainMenu.addItem(fileMenuItem)
 
         let editMenuItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
+        let editMenu = NSMenu(title: L10n.text("编辑"))
         editMenu.addItem(
-            withTitle: "撤销",
+            withTitle: L10n.text("撤销"),
             action: Selector(("undo:")),
             keyEquivalent: "z"
         )
         editMenu.addItem(
-            withTitle: "重做",
+            withTitle: L10n.text("重做"),
             action: Selector(("redo:")),
             keyEquivalent: "Z"
         )
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(
-            withTitle: "剪切",
+            withTitle: L10n.text("剪切"),
             action: #selector(NSText.cut(_:)),
             keyEquivalent: "x"
         )
         editMenu.addItem(
-            withTitle: "拷贝",
+            withTitle: L10n.text("拷贝"),
             action: #selector(NSText.copy(_:)),
             keyEquivalent: "c"
         )
         editMenu.addItem(
-            withTitle: "粘贴",
+            withTitle: L10n.text("粘贴"),
             action: #selector(NSText.paste(_:)),
             keyEquivalent: "v"
         )
         editMenu.addItem(
-            withTitle: "全选",
+            withTitle: L10n.text("全选"),
             action: #selector(NSText.selectAll(_:)),
             keyEquivalent: "a"
         )

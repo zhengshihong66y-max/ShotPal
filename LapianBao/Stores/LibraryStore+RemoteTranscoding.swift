@@ -51,7 +51,7 @@ extension LibraryStore {
                 return firstURL
             }
             guard let ffmpegURL = localFFmpegURL() else {
-                throw RemoteImportError.downloaderFailed("未找到 ffmpeg，无法合并 Instagram 轮播视频")
+                throw RemoteImportError.downloaderFailed(L10n.text("未找到 ffmpeg，无法合并 Instagram 轮播视频"))
             }
 
             let probes = try inputURLs.map { try videoConcatProbe(for: $0) }
@@ -114,7 +114,7 @@ extension LibraryStore {
             )
 
             if result.terminationStatus == nil, !result.didTimeOut {
-                throw RemoteImportError.downloaderFailed("无法启动 ffmpeg 合并 Instagram 轮播：\(result.errorText)")
+                throw RemoteImportError.downloaderFailed(L10n.text("无法启动 ffmpeg 合并 Instagram 轮播：\(result.errorText)"))
             }
 
             guard result.succeeded,
@@ -125,8 +125,8 @@ extension LibraryStore {
                 try? FileManager.default.removeItem(at: tmpURL)
                 throw RemoteImportError.downloaderFailed(
                     !message.isEmpty
-                        ? "Instagram 轮播合并失败：\(message)"
-                        : "Instagram 轮播合并失败"
+                        ? L10n.text("Instagram 轮播合并失败：\(message)")
+                        : L10n.text("Instagram 轮播合并失败")
                 )
             }
 
@@ -138,7 +138,7 @@ extension LibraryStore {
 
     nonisolated static func videoConcatProbe(for url: URL) throws -> VideoConcatProbe {
         guard let ffprobeURL = localFFprobeURL() else {
-            throw RemoteImportError.downloaderFailed("未找到 ffprobe，无法检查 Instagram 轮播视频")
+            throw RemoteImportError.downloaderFailed(L10n.text("未找到 ffprobe，无法检查 Instagram 轮播视频"))
         }
 
         let result = ExternalProcessRunner.run(
@@ -151,10 +151,10 @@ extension LibraryStore {
             ]
         )
         guard result.terminationStatus != nil else {
-            throw RemoteImportError.downloaderFailed("无法启动 ffprobe 检查 Instagram 轮播视频")
+            throw RemoteImportError.downloaderFailed(L10n.text("无法启动 ffprobe 检查 Instagram 轮播视频"))
         }
         guard result.succeeded else {
-            throw RemoteImportError.downloaderFailed("无法读取 Instagram 轮播视频参数")
+            throw RemoteImportError.downloaderFailed(L10n.text("无法读取 Instagram 轮播视频参数"))
         }
         let response = try JSONDecoder().decode(FFProbeStreamsResponse.self, from: result.outputData)
         guard let video = response.streams.first(where: { $0.codecType == "video" }),
@@ -163,7 +163,7 @@ extension LibraryStore {
               width > 0,
               height > 0
         else {
-            throw RemoteImportError.downloaderFailed("Instagram 轮播视频缺少可合并的视频轨")
+            throw RemoteImportError.downloaderFailed(L10n.text("Instagram 轮播视频缺少可合并的视频轨"))
         }
 
         return VideoConcatProbe(

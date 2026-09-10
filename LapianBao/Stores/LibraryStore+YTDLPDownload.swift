@@ -23,10 +23,11 @@ extension LibraryStore {
         progressCallback: (@Sendable (Double?, String?) -> Void)? = nil,
         processCallback: (@Sendable (Process?) -> Void)? = nil
     ) async throws -> DownloadedVideoResult {
-        try await Task.detached(priority: .utility) {
+        let registry = ToolProcessRegistry()
+        let worker = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
             let process = Process()
             defer { processCallback?(nil) }
-            process.executableURL = executableURL
 
             // 确保 yt-dlp 能找到 ffmpeg（App 启动时 PATH 不完整）
             let env = downloaderProcessEnvironment()
@@ -47,7 +48,8 @@ extension LibraryStore {
                     executableURL: executableURL,
                     sourceURL: sourceURL,
                     environment: env,
-                    extraArguments: extraArguments
+                    extraArguments: extraArguments,
+                    processRegistry: registry
                 )
             }
             let authorName = normalizedSourceAuthorName(videoInfo?.bestUploader ?? "")
@@ -125,7 +127,7 @@ extension LibraryStore {
                 ]
             }
             arguments.append(downloaderSourceURL.absoluteString)
-            process.arguments = arguments
+            YTDLPRuntime.configure(process, archive: executableURL, arguments: arguments)
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -157,6 +159,7 @@ extension LibraryStore {
             }
 
             do {
+                try Task.checkCancellation()
                 try process.run()
             } catch {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
@@ -167,7 +170,9 @@ extension LibraryStore {
                 )
             }
             processCallback?(process)
-            process.waitUntilExit()
+            registry.set(process)
+            let didTimeOut = ExternalProcessRunner.waitForExit(process, timeout: 3600, progressTick: nil)
+            registry.set(nil)
 
             // nil 掉 handler（内部会等当前 handler 执行完毕），再排空剩余数据
             outputPipe.fileHandleForReading.readabilityHandler = nil
@@ -181,9 +186,14 @@ extension LibraryStore {
             ) ?? ""
             let errorOutput = String(data: errorCollector.data, encoding: .utf8) ?? ""
 
+            try Task.checkCancellation()
+            guard !didTimeOut else {
+                throw YTDLPDownloaderFailure(message: L10n.text("下载超时（单次尝试上限 60 分钟）"), authorName: authorName)
+            }
             guard process.terminationStatus == 0 else {
                 throw YTDLPDownloaderFailure(
-                    message: userFacingYTDLPFailureMessage(errorOutput, sourceURL: sourceURL),
+                    message: userFacingYTDLPFailureMessage(errorOutput, sourceURL: sourceURL,
+                                                         usedCookies: extraArguments.contains("--cookies")),
                     authorName: authorName
                 )
             }
@@ -198,7 +208,8 @@ extension LibraryStore {
                     message: userFacingYTDLPFailureMessage(
                         [errorOutput, output].joined(separator: "\n"),
                         sourceURL: sourceURL,
-                        fallback: "yt-dlp 下载完成，但找不到输出视频文件"
+                        fallback: L10n.text("yt-dlp 下载完成，但找不到输出视频文件"),
+                        usedCookies: extraArguments.contains("--cookies")
                     ),
                     authorName: authorName
                 )
@@ -242,7 +253,13 @@ extension LibraryStore {
                     sourceURL: sourceURL
                 )
             )
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+            registry.cancelRunningProcess()
+        }
     }
 
     /// FNV-1a 稳定摘要:同一源 URL 跨启动生成相同的临时文件名(Swift hashValue 不稳定)
@@ -473,79 +490,30 @@ extension LibraryStore {
     }
 
     nonisolated static func downloaderProcessEnvironment() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
-        return env
+        YTDLPRuntime.environment
     }
 
     nonisolated static func fetchYTDLPVideoInfo(
         executableURL: URL,
         sourceURL: URL,
         environment: [String: String],
-        extraArguments: [String] = []
+        extraArguments: [String] = [],
+        processRegistry: ExternalProcessRegistry? = nil
     ) -> YTDLPVideoInfo? {
-        let process = Process()
-        process.executableURL = executableURL
-        process.environment = environment
         let downloaderSourceURL = ytdlpSourceURL(for: sourceURL)
         var arguments = ytdlpPlaylistSelectionArguments(for: sourceURL) + [
-            "--skip-download",
-            "--dump-single-json",
-            "--no-warnings",
+            "--skip-download", "--dump-single-json", "--no-warnings",
         ]
         arguments += ytdlpProbeNetworkArguments(isYouTube: isYouTubeURL(downloaderSourceURL))
         arguments += ytdlpFormatSelectionArguments()
         if isBilibiliURL(sourceURL) {
             arguments += ytdlpBilibiliHTTPHeaderArguments()
         }
-        arguments += extraArguments
-        arguments += [
-            downloaderSourceURL.absoluteString
-        ]
-        process.arguments = arguments
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        let outputCollector = PipeDataCollector()
-        let errorCollector = PipeDataCollector()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
-            outputCollector.append(handle.availableData)
-        }
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            errorCollector.append(handle.availableData)
-        }
-
-        do {
-            try process.run()
-        } catch {
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            return nil
-        }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            semaphore.signal()
-        }
-
-        if semaphore.wait(timeout: .now() + 35) == .timedOut {
-            if process.isRunning {
-                process.terminate()
-            }
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            return nil
-        }
-
-        outputPipe.fileHandleForReading.readabilityHandler = nil
-        errorPipe.fileHandleForReading.readabilityHandler = nil
-        outputCollector.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-        errorCollector.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
-        guard process.terminationStatus == 0 else { return nil }
-        return try? JSONDecoder().decode(YTDLPVideoInfo.self, from: outputCollector.data)
+        arguments += extraArguments + [downloaderSourceURL.absoluteString]
+        let result = YTDLPRuntime.run(archive: executableURL, arguments: arguments,
+                                     timeout: 35, processRegistry: processRegistry)
+        guard result.succeeded else { return nil }
+        return try? JSONDecoder().decode(YTDLPVideoInfo.self, from: result.outputData)
     }
 
     nonisolated struct YTDLPArgumentAttempt: Sendable {
@@ -553,12 +521,27 @@ extension LibraryStore {
         var arguments: [String]
     }
 
+    /// A rejection is specific to one authenticated client/route, not proof that all routes fail.
+    nonisolated struct YTDLPAuthenticationRetryState {
+        private(set) var verificationFailure: String?
+
+        mutating func recordFailure(_ message: String, arguments: [String]) {
+            if arguments.contains("--cookies"), LibraryStore.isYouTubeBotVerificationFailure(message) {
+                verificationFailure = message
+            }
+        }
+
+        func allows(arguments: [String]) -> Bool {
+            verificationFailure == nil || arguments.contains("--cookies")
+        }
+    }
+
     nonisolated static func ytdlpArgumentAttempts(for sourceURL: URL) -> [YTDLPArgumentAttempt] {
         if isYouTubeURL(sourceURL) {
             return ytdlpYouTubeArgumentAttempts()
         }
         if isInstagramURL(sourceURL) {
-            var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
+            var attempts = [YTDLPArgumentAttempt(label: L10n.text("本地解析"), arguments: [])]
             for proxyURL in currentYTDLPProxyURLs() {
                 let proxyArguments = ["--proxy", proxyURL]
                 let label = ytdlpProxyAttemptLabel(for: proxyURL)
@@ -584,8 +567,8 @@ extension LibraryStore {
         let multiFLVArguments = ["--extractor-args", "bilibili:prefer_multi_flv=True"]
         var attempts = [
             YTDLPArgumentAttempt(label: "Bilibili DASH", arguments: dashArguments),
-            YTDLPArgumentAttempt(label: "Bilibili 单文件 MP4", arguments: dashArguments + ["-f", "b[ext=mp4]/b"]),
-            YTDLPArgumentAttempt(label: "Bilibili 兼容格式", arguments: dashArguments + ["-f", "b"]),
+            YTDLPArgumentAttempt(label: L10n.text("Bilibili 单文件 MP4"), arguments: dashArguments + ["-f", "b[ext=mp4]/b"]),
+            YTDLPArgumentAttempt(label: L10n.text("Bilibili 兼容格式"), arguments: dashArguments + ["-f", "b"]),
             YTDLPArgumentAttempt(label: "Bilibili multi-FLV", arguments: multiFLVArguments + ["-f", "b"])
         ]
 
@@ -593,24 +576,24 @@ extension LibraryStore {
             let proxyArguments = ["--proxy", proxyURL]
             let label = ytdlpProxyAttemptLabel(for: proxyURL)
             attempts.append(YTDLPArgumentAttempt(label: "\(label) Bilibili DASH", arguments: proxyArguments + dashArguments))
-            attempts.append(YTDLPArgumentAttempt(label: "\(label) Bilibili 兼容格式", arguments: proxyArguments + dashArguments + ["-f", "b"]))
+            attempts.append(YTDLPArgumentAttempt(label: L10n.text("\(label) Bilibili 兼容格式"), arguments: proxyArguments + dashArguments + ["-f", "b"]))
         }
         return uniqueYTDLPArgumentAttempts(attempts)
     }
 
     nonisolated static func ytdlpYouTubeArgumentAttempts() -> [YTDLPArgumentAttempt] {
         let clientArguments = ytdlpYouTubeClientArguments()
-        var attempts = [YTDLPArgumentAttempt(label: "本地解析", arguments: [])]
+        var attempts = [YTDLPArgumentAttempt(label: L10n.text("本地解析"), arguments: [])]
 
         for proxyURL in currentYTDLPProxyURLs() {
             let proxyArguments = ["--proxy", proxyURL]
             let label = ytdlpProxyAttemptLabel(for: proxyURL)
             attempts.append(YTDLPArgumentAttempt(label: label, arguments: proxyArguments))
-            attempts.append(YTDLPArgumentAttempt(label: "\(label)备用客户端", arguments: proxyArguments + clientArguments))
+            attempts.append(YTDLPArgumentAttempt(label: L10n.text("\(label)备用客户端"), arguments: proxyArguments + clientArguments))
         }
 
-        attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
-        attempts.append(YTDLPArgumentAttempt(label: "远程组件", arguments: ["--remote-components", "ejs:github"] + clientArguments))
+        attempts.append(YTDLPArgumentAttempt(label: L10n.text("备用客户端"), arguments: clientArguments))
+        attempts.append(YTDLPArgumentAttempt(label: L10n.text("远程组件"), arguments: ["--remote-components", "ejs:github"] + clientArguments))
         return uniqueYTDLPArgumentAttempts(attempts)
     }
 
@@ -634,17 +617,13 @@ extension LibraryStore {
         let cookieArguments = ["--cookies", workingCookieURL.path]
         var attempts: [YTDLPArgumentAttempt] = []
 
-        // 第一发客户端按用途分流,都跳过 HLS/DASH 清单(请求数最少):
-        // - 视频用 tv:播放器响应带完整 DASH 分辨率阶梯,画质与默认一致。
-        //   ⚠️ 不要换成 web_safari/mweb:它们的清晰度走 HLS,叠加 skip=hls
-        //   后只剩 360p 以下兜底格式,曾导致画质暴跌。
-        // - 纯音频用 web_safari:tv 客户端单独拉音频流会被 403,
-        //   曾导致歌曲第一发全灭、进度条卡 0 后直接跳 94。
-        // 特例(直播等)由后续多客户端、不带 skip 的尝试兜底。
+        // Let the shipped yt-dlp choose current video clients and manifests. Forcing
+        // tv + skip=hls,dash can reject a valid session while the defaults succeed.
+        // Keep the audio optimization, with a default-client fallback immediately after it.
         let primaryClientArguments: [String]
         switch purpose {
         case .video:
-            primaryClientArguments = ["--extractor-args", "youtube:player_client=tv;skip=hls,dash"]
+            primaryClientArguments = []
         case .audio:
             primaryClientArguments = ["--extractor-args", "youtube:player_client=web_safari;skip=hls,dash"]
         }
@@ -652,13 +631,14 @@ extension LibraryStore {
             label: "cookies.txt",
             arguments: cookieArguments + primaryClientArguments
         ))
-        attempts.append(YTDLPArgumentAttempt(label: "cookies.txt备用客户端", arguments: cookieArguments + clientArguments))
+        attempts.append(YTDLPArgumentAttempt(label: L10n.text("cookies.txt默认客户端"), arguments: cookieArguments))
+        attempts.append(YTDLPArgumentAttempt(label: L10n.text("cookies.txt备用客户端"), arguments: cookieArguments + clientArguments))
 
         for proxyURL in currentYTDLPProxyURLs() {
             let proxyArguments = ["--proxy", proxyURL]
             let proxyLabel = ytdlpProxyAttemptLabel(for: proxyURL)
             attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel) cookies.txt", arguments: proxyArguments + cookieArguments))
-            attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel) cookies.txt备用客户端", arguments: proxyArguments + cookieArguments + clientArguments))
+            attempts.append(YTDLPArgumentAttempt(label: L10n.text("\(proxyLabel) cookies.txt备用客户端"), arguments: proxyArguments + cookieArguments + clientArguments))
         }
 
         return uniqueYTDLPArgumentAttempts(attempts)
@@ -677,7 +657,7 @@ extension LibraryStore {
         return ytdlpArgumentAttempts(for: sourceURL).map { attempt in
             let suffix = attempt.label.isEmpty ? "" : " · \(attempt.label)"
             return YTDLPArgumentAttempt(
-                label: "浏览器 cookies\(suffix)",
+                label: L10n.text("浏览器 cookies\(suffix)"),
                 arguments: cookieArguments + attempt.arguments
             )
         }
@@ -722,12 +702,12 @@ extension LibraryStore {
             let proxyArguments = ["--proxy", proxyURL]
             let proxyLabel = ytdlpProxyAttemptLabel(for: proxyURL)
             attempts.append(YTDLPArgumentAttempt(label: proxyLabel, arguments: proxyArguments))
-            attempts.append(YTDLPArgumentAttempt(label: "\(proxyLabel)备用客户端", arguments: proxyArguments + clientArguments))
+            attempts.append(YTDLPArgumentAttempt(label: L10n.text("\(proxyLabel)备用客户端"), arguments: proxyArguments + clientArguments))
         } else {
-            attempts.append(YTDLPArgumentAttempt(label: "备用客户端", arguments: clientArguments))
+            attempts.append(YTDLPArgumentAttempt(label: L10n.text("备用客户端"), arguments: clientArguments))
         }
 
-        attempts.append(YTDLPArgumentAttempt(label: "本地解析", arguments: []))
+        attempts.append(YTDLPArgumentAttempt(label: L10n.text("本地解析"), arguments: []))
         return Array(uniqueYTDLPArgumentAttempts(attempts).prefix(4))
     }
 
@@ -858,11 +838,11 @@ extension LibraryStore {
         guard let components = URLComponents(string: proxyURL),
               let host = components.host,
               let port = components.port
-        else { return "系统代理" }
+        else { return L10n.text("系统代理") }
         if isLoopbackProxyHost(host) {
-            return "本机代理 \(port)"
+            return L10n.text("本机代理 \(port)")
         }
-        return "系统代理 \(host):\(port)"
+        return L10n.text("系统代理 \(host):\(port)")
     }
 
     nonisolated static func isLocalProxyURLReachable(_ proxyURL: String) -> Bool {
@@ -946,24 +926,25 @@ extension LibraryStore {
     nonisolated static func userFacingYTDLPFailureMessage(
         _ message: String,
         sourceURL: URL,
-        fallback: String = "yt-dlp 下载失败"
+        fallback: String = L10n.text("yt-dlp 下载失败"),
+        usedCookies: Bool = false
     ) -> String {
         let concise = conciseYTDLPError(message, fallback: fallback)
         if isBilibiliURL(sourceURL), isBilibiliPreconditionFailure(concise) {
-            return "Bilibili 返回 412 风控：请先在 Chrome 打开 bilibili.com，再到设置同步浏览器 cookies 后重试；也可更换网络出口。"
+            return L10n.text("Bilibili 返回 412 风控：请先在 Chrome 打开 bilibili.com，再到设置同步浏览器 cookies 后重试；也可更换网络出口。")
         }
         if isDouyinURL(sourceURL), isDouyinFreshCookieFailure(concise) {
-            return "抖音要求新鲜会话：请先在 Chrome 打开 douyin.com，再到设置同步浏览器 cookies 后重试。"
+            return L10n.text("抖音要求新鲜会话：请先在 Chrome 打开 douyin.com，再到设置同步浏览器 cookies 后重试。")
         }
 
         guard isYouTubeURL(sourceURL),
               isYouTubeBotVerificationFailure(concise)
         else { return concise }
 
-        if configuredYouTubeCookieFileURL() == nil {
-            return "YouTube 要求登录验证：请在设置里选择从浏览器导出的 cookies.txt，或换公开链接、配置可用代理后重试。"
+        if !usedCookies {
+            return L10n.text("YouTube 要求登录验证：本次请求未携带 cookies。请在设置里同步浏览器 cookies 后重试；公开链接也可能触发验证。")
         }
-        return "YouTube 要求登录验证：已配置 cookies.txt，拉片宝会用它重试；仍失败时，请重新导出 cookies.txt 或换公开链接。"
+        return L10n.text("YouTube 要求登录验证：本次携带的 cookies 未通过验证。请在 Chrome 确认可播放此视频后重新同步 cookies；公开链接也可能触发验证。")
     }
 
     nonisolated static func isYouTubeBotVerificationFailure(_ message: String) -> Bool {
@@ -971,6 +952,7 @@ extension LibraryStore {
         return (lowercased.contains("sign in to confirm")
             && lowercased.contains("not a bot"))
             || lowercased.contains("youtube 要求登录验证")
+            || lowercased.contains("youtube requires sign-in verification")
             || (lowercased.contains("youtube") && lowercased.contains("登录验证"))
     }
 
@@ -1083,13 +1065,13 @@ extension LibraryStore {
         return metadata.hasAnyValue ? metadata : nil
     }
 
-    nonisolated static func ytdlpRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
+    @concurrent nonisolated static func ytdlpRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata {
         if isBilibiliURL(sourceURL),
            let metadata = await ytdlpPrintedRemoteImportCandidateMetadata(for: sourceURL) {
             return metadata
         }
 
-        guard let ytdlp = localYTDLPURL() else {
+        guard let ytdlp = await readyYTDLPURL() else {
             return RemoteImportCandidateMetadata()
         }
 
@@ -1140,7 +1122,7 @@ extension LibraryStore {
     }
 
     nonisolated static func ytdlpPrintedRemoteImportCandidateMetadata(for sourceURL: URL) async -> RemoteImportCandidateMetadata? {
-        guard let ytdlp = localYTDLPURL() else { return nil }
+        guard let ytdlp = await readyYTDLPURL() else { return nil }
 
         return await Task.detached(priority: .utility) {
             let downloaderSourceURL = ytdlpSourceURL(for: sourceURL)
@@ -1159,11 +1141,9 @@ extension LibraryStore {
             arguments += [
                 downloaderSourceURL.absoluteString
             ]
-            let result = ExternalProcessRunner.run(
-                executableURL: ytdlp,
+            let result = YTDLPRuntime.run(
+                archive: ytdlp,
                 arguments: arguments,
-                environment: downloaderProcessEnvironment(),
-                qualityOfService: .utility,
                 timeout: 20
             )
             guard result.succeeded else { return nil }
@@ -1203,11 +1183,10 @@ extension LibraryStore {
     }
 
     nonisolated static func remoteThumbnailData(for sourceURL: URL) async -> Data? {
-        guard let ytdlp = localYTDLPURL() else { return nil }
+        guard let ytdlp = await readyYTDLPURL() else { return nil }
 
         return await Task.detached(priority: .utility) {
             let process = Process()
-            process.executableURL = ytdlp
             process.environment = downloaderProcessEnvironment()
             let downloaderSourceURL = ytdlpSourceURL(for: sourceURL)
             var arguments = ytdlpPlaylistSelectionArguments(for: sourceURL) + [
@@ -1223,7 +1202,7 @@ extension LibraryStore {
             arguments += [
                 downloaderSourceURL.absoluteString
             ]
-            process.arguments = arguments
+            YTDLPRuntime.configure(process, archive: ytdlp, arguments: arguments)
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()

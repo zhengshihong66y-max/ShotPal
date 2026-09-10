@@ -119,5 +119,5 @@ func formatDuration(_ seconds: Double) -> String {
     let total = max(0, Int(seconds.rounded()))
     let m = total / 60
     let s = total % 60
-    return m > 0 ? "\(m) 分 \(s) 秒" : "\(s) 秒"
+    return m > 0 ? L10n.text("\(m) 分 \(s) 秒") : L10n.text("\(s) 秒")
 }

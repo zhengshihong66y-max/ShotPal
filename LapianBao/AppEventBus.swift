@@ -9,6 +9,14 @@ import Combine
 import Foundation
 
 nonisolated enum AppEventBus {
+    private static let metadataPersistenceChangedName = Notification.Name("lapianBaoMetadataPersistenceChanged")
+    static var metadataPersistenceChangedPublisher: NotificationCenter.Publisher {
+        NotificationCenter.default.publisher(for: metadataPersistenceChangedName)
+    }
+    static func metadataPersistenceChanged() {
+        NotificationCenter.default.post(name: metadataPersistenceChangedName, object: nil)
+    }
+
     struct SeekRequest: Equatable {
         let path: String
         let time: Double

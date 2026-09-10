@@ -24,7 +24,7 @@ extension LibraryStore {
             return
         }
 
-        libraryScanProgress = LibraryScanProgress(message: "正在扫描素材结构", completed: 0, total: 1)
+        libraryScanProgress = LibraryScanProgress(message: L10n.text("正在扫描素材结构"), completed: 0, total: 1)
 
         libraryScanTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -58,7 +58,7 @@ extension LibraryStore {
                   self.libraryURL?.path == libraryPath
             else { return }
 
-            self.libraryScanProgress = LibraryScanProgress(message: "正在识别音乐素材", completed: 0, total: 1)
+            self.libraryScanProgress = LibraryScanProgress(message: L10n.text("正在识别音乐素材"), completed: 0, total: 1)
             let snapshot = await Self.scanResourceLibrarySnapshot(in: folder)
             guard !Task.isCancelled,
                   self.libraryScanGeneration == scanGeneration,
@@ -82,7 +82,7 @@ extension LibraryStore {
 
             self.flushCurrentVideoLibrarySnapshot()
 
-            self.libraryScanProgress = LibraryScanProgress(message: "素材库扫描完成", completed: 1, total: 1)
+            self.libraryScanProgress = LibraryScanProgress(message: L10n.text("素材库扫描完成"), completed: 1, total: 1)
             try? await Task.sleep(nanoseconds: 450_000_000)
             if self.libraryScanGeneration == scanGeneration {
                 self.libraryScanProgress = nil
@@ -122,7 +122,7 @@ extension LibraryStore {
             scanResourceLibrary(refreshMode: .cachedOnly, loadCachedSnapshotSynchronously: true)
         }
 
-        libraryScanProgress = LibraryScanProgress(message: "正在检查音乐缓存", completed: 0, total: 1)
+        libraryScanProgress = LibraryScanProgress(message: L10n.text("正在检查音乐缓存"), completed: 0, total: 1)
         libraryScanTask = Task { @MainActor [weak self] in
             guard let self,
                   self.libraryScanGeneration == scanGeneration,
@@ -130,7 +130,7 @@ extension LibraryStore {
             else { return }
 
             if cachedResources == nil {
-                self.libraryScanProgress = LibraryScanProgress(message: "正在识别音乐素材", completed: 0, total: 1)
+                self.libraryScanProgress = LibraryScanProgress(message: L10n.text("正在识别音乐素材"), completed: 0, total: 1)
                 let snapshot = await Self.scanResourceLibrarySnapshot(in: folder)
                 guard !Task.isCancelled,
                       self.libraryScanGeneration == scanGeneration,
@@ -156,7 +156,7 @@ extension LibraryStore {
             else { return }
 
             self.flushCurrentVideoLibrarySnapshot()
-            self.libraryScanProgress = LibraryScanProgress(message: "素材库扫描完成", completed: 1, total: 1)
+            self.libraryScanProgress = LibraryScanProgress(message: L10n.text("素材库扫描完成"), completed: 1, total: 1)
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard self.libraryScanGeneration == scanGeneration else { return }
             self.libraryScanProgress = nil
@@ -240,7 +240,7 @@ extension LibraryStore {
         beginLibrarySidebarMetricsBatch()
         defer { endLibrarySidebarMetricsBatch() }
 
-        flushProjectDataSave()
+        guard flushProjectDataSave() else { return }
         projectLoadTask?.cancel()
         projectLoadTask = nil
         projectDataLoadState = .idle
@@ -359,11 +359,11 @@ extension LibraryStore {
     ) async {
         let total = videos.count
         guard total > 0 else {
-            libraryScanProgress = LibraryScanProgress(message: "没有发现视频素材", completed: 1, total: 1)
+            libraryScanProgress = LibraryScanProgress(message: L10n.text("没有发现视频素材"), completed: 1, total: 1)
             return
         }
 
-        libraryScanProgress = LibraryScanProgress(message: "正在识别视频元数据 · 0/\(total)", completed: 0, total: total)
+        libraryScanProgress = LibraryScanProgress(message: L10n.text("正在识别视频元数据 · 0/\(total)"), completed: 0, total: total)
         let paths = Set(videos.map(\.url.path))
         thumbnailLoadingPaths.formUnion(paths)
         let metadataGeneration = thumbnailLoadGeneration
@@ -401,7 +401,7 @@ extension LibraryStore {
                             let remaining = self.thumbnailLoadingPaths.intersection(paths).count
                             let completed = total - remaining
                             self.libraryScanProgress = LibraryScanProgress(
-                                message: "正在识别视频元数据 · \(completed)/\(total)",
+                                message: L10n.text("正在识别视频元数据 · \(completed)/\(total)"),
                                 completed: completed,
                                 total: total
                             )
@@ -1606,7 +1606,7 @@ extension LibraryStore {
 
     nonisolated static func loadResourceAssetTags(in libraryURL: URL) -> [String: [String]] {
         let url = resourceAssetTagsURL(in: libraryURL)
-        guard let decoded = ProjectRepository.readJSON([String: [String]].self, from: url) else { return [:] }
+        guard let decoded = ProjectRepository.readMetadata([String].self, from: url) else { return [:] }
 
         return decoded.mapValues(cleanedResourceTags)
     }
@@ -1616,7 +1616,7 @@ extension LibraryStore {
         let cleaned = tagsByRelativePath
             .filter { !$0.value.isEmpty }
             .mapValues(cleanedResourceTags)
-        try? ProjectRepository.writeJSON(cleaned, to: url, encoder: ProjectRepository.prettySortedEncoder)
+        ProjectRepository.writeMetadata(cleaned, to: url, recoverValue: ProjectRepository.mergeRecoveredTags)
     }
 
     nonisolated static func resourceFolderTags(for fileURL: URL, under rootURL: URL) -> [String] {

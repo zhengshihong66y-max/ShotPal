@@ -8,6 +8,10 @@
 import Foundation
 
 nonisolated enum ProjectRepository {
+    // Serialize commits, including the synchronous quit/switch flush. A cancelled
+    // background snapshot must check cancellation after acquiring this lock.
+    private static let writeLock = NSLock()
+
     enum FileName {
         static let projectData = ".lapianbao_project.json"
         static let videoTags = ".lapianbaotags.json"
@@ -106,8 +110,21 @@ nonisolated enum ProjectRepository {
         encoder: JSONEncoder = JSONEncoder()
     ) throws {
         let data = try encoder.encode(value)
+        writeLock.lock()
+        defer { writeLock.unlock() }
         try Task.checkCancellation()
         try data.write(to: url, options: .atomic)
+    }
+
+    static func readProjectDataResult(from url: URL) -> Result<ProjectDataFile?, Error> {
+        do {
+            let data = try Data(contentsOf: url)
+            return .success(try makeDecoder(dateDecodingStrategy: .iso8601).decode(ProjectDataFile.self, from: data))
+        } catch CocoaError.fileReadNoSuchFile {
+            return .success(nil)
+        } catch {
+            return .failure(error)
+        }
     }
 
     static func readProjectData(from url: URL) -> ProjectDataFile? {
@@ -138,6 +155,9 @@ nonisolated enum ProjectRepository {
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         else { return }
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard !Task.isCancelled else { return }
         try? data.write(to: url, options: .atomic)
     }
 }

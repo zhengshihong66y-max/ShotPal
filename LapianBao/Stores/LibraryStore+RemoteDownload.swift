@@ -13,7 +13,7 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension LibraryStore {
-    nonisolated static func downloadVideo(
+    @concurrent nonisolated static func downloadVideo(
         from sourceURL: URL,
         into libraryURL: URL,
         platform: String,
@@ -33,7 +33,10 @@ extension LibraryStore {
 
         var ytdlpFailure: Error?
         var xiaohongshuNativeFailure: Error?
-        let ytdlp = usableYTDLPURL()
+        var routeFailures: [String] = []
+        let ytdlp = await readyYTDLPURL()
+        try Task.checkCancellation()
+        if ytdlp == nil { routeFailures.append(YTDLPRuntime.unavailableMessage) }
         let isBilibiliSource = platform == "Bilibili" || isBilibiliURL(sourceURL)
 
         // Instagram 图文轮播里可能有多段视频：先按轮播顺序打包成一个视频再入库。
@@ -52,7 +55,7 @@ extension LibraryStore {
             sourceTitle = result.sourceTitle
         }
 
-        // 1. yt-dlp（YouTube / Bilibili / 抖音完美，Instagram / 小红书公开内容也能用）
+        // 1. yt-dlp；平台可用性仍受网络、登录和上游接口变化影响。
         if rawURL == nil, let ytdlp,
            !Task.isCancelled {
             let isYouTubeSource = isYouTubeURL(sourceURL)
@@ -74,12 +77,14 @@ extension LibraryStore {
                     sourceURL: sourceURL
                 )
             let attempts = cookieAttempts + ytdlpArgumentAttempts(for: sourceURL)
+            var authenticationRetry = YTDLPAuthenticationRetryState()
             var sawYouTubeLoginVerification = false
             // YouTube 走免探测快速启动:单进程一次解析直接开下,命名与进度
             // 信息由下载进程自己的打印行提供;其他平台保持原有探测行为。
             let usesFastStart = isYouTubeURL(sourceURL)
                 && instagramCarouselItemIndex(from: sourceURL) == nil
             for attempt in attempts {
+                if isYouTubeSource, !authenticationRetry.allows(arguments: attempt.arguments) { continue }
                 do {
                     let result = try await runYTDLPOnce(
                         executableURL: ytdlp,
@@ -97,27 +102,26 @@ extension LibraryStore {
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
+                    try Task.checkCancellation()
+                    routeFailures.append(downloadRouteFailure(route: "yt-dlp \(attempt.label)", error: error))
                     if let failure = error as? YTDLPDownloaderFailure {
                         authorName = authorName ?? failure.authorName
                     }
                     if isYouTubeSource, isYouTubeBotVerificationFailure(error.localizedDescription) {
                         sawYouTubeLoginVerification = true
+                        authenticationRetry.recordFailure(error.localizedDescription, arguments: attempt.arguments)
                         ytdlpFailure = error
-                        // 已配置 cookie 仍被风控拦下:剩余更弱的匿名尝试不可能成功,
-                        // 立刻结束梯子,让上层尽快走 cookie 自动更新并重试。
-                        if cookieFileURL != nil {
-                            break
-                        }
+                        // Exhaust the remaining authenticated clients/routes before refreshing cookies.
                         continue
                     }
                     ytdlpFailure = error
                 }
             }
 
-            if rawURL == nil,
-               sawYouTubeLoginVerification,
-               cookieFileURL == nil,
-               let ytdlpFailure {
+            if rawURL == nil, let verificationFailure = authenticationRetry.verificationFailure {
+                throw YTDLPDownloaderFailure(message: verificationFailure, authorName: authorName)
+            }
+            if rawURL == nil, sawYouTubeLoginVerification, cookieFileURL == nil, let ytdlpFailure {
                 throw ytdlpFailure
             }
             if rawURL == nil, let ytdlpFailure, isHardYouTubeYTDLPFailure(ytdlpFailure) {
@@ -140,33 +144,29 @@ extension LibraryStore {
                 throw CancellationError()
             } catch {
                 xiaohongshuNativeFailure = error
+                routeFailures.append(downloadRouteFailure(route: L10n.text("小红书页面解析"), error: error))
             }
         }
 
         // 3. 用户自定义 API
         if rawURL == nil,
            instagramCarouselItemIndex(from: sourceURL) == nil,
-           !endpoint.isEmpty,
-           let result = try? await importViaConfiguredAPI(
-               sourceURL: sourceURL,
-               endpoint: endpoint,
-               destinationDirectory: destinationDirectory,
-               progressCallback: progressCallback
-           ) {
-            rawURL = result
-            sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
+           !endpoint.isEmpty {
+            do {
+                let result = try await importViaConfiguredAPI(
+                    sourceURL: sourceURL, endpoint: endpoint,
+                    destinationDirectory: destinationDirectory, progressCallback: progressCallback
+                )
+                rawURL = result
+                sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                routeFailures.append(downloadRouteFailure(route: L10n.text("自定义 API"), error: error))
+            }
         }
-
-        // 4. cobalt.tools 兜底（对 Instagram / YouTube 有效，需要服务可用）
-        if rawURL == nil,
-           let result = try? await importViaCobalt(
-               sourceURL: sourceURL,
-               destinationDirectory: destinationDirectory,
-               progressCallback: progressCallback
-           ) {
-            rawURL = result
-            sourceTitle = sourceTitle ?? Self.sourceTitle(from: [], fileName: result.lastPathComponent)
-        }
+        // Public Cobalt requires service authorization; never attempt an unauthenticated fallback.
+        try Task.checkCancellation()
 
         guard let downloadedURL = rawURL else {
             if isYouTubeURL(sourceURL), let ytdlpFailure {
@@ -177,13 +177,15 @@ extension LibraryStore {
                     throw ytdlpFailure
                 }
                 if ytdlp == nil {
-                    throw RemoteImportError.downloaderFailed("Bilibili 下载需要 yt-dlp，请先在设置里运行 yt-dlp 自检。")
+                    throw RemoteImportError.downloaderFailed(L10n.text("Bilibili 下载需要 yt-dlp，请先在设置里运行 yt-dlp 自检。"))
                 }
             }
             if platform == "小红书", let xiaohongshuNativeFailure {
                 throw xiaohongshuNativeFailure
             }
-            throw RemoteImportError.downloaderFailed("所有下载方式均失败，请确认链接是否可公开访问")
+            throw RemoteImportError.downloaderFailed(routeFailures.isEmpty
+                ? L10n.text("没有可用的下载途径；请查看下载器自检或配置已授权的自定义 API。")
+                : routeFailures.suffix(5).joined(separator: "\n"))
         }
 
         // 后处理：VP9 / AV1 在 MP4 容器中不被 macOS AVFoundation 支持，转码为 H.264。
@@ -196,6 +198,25 @@ extension LibraryStore {
             authorName: authorName,
             sourceTitle: sourceTitle ?? Self.sourceTitle(from: [], fileName: finalURL.lastPathComponent)
         )
+    }
+
+    nonisolated static func downloadRouteFailure(route: String, error: Error) -> String {
+        let text = error.localizedDescription
+        let lower = text.lowercased()
+        let category: String
+        if lower.contains("sign in") || lower.contains("login") || lower.contains("cookie") || text.contains("登录") {
+            category = L10n.text("登录/会话验证")
+        } else if lower.contains("unsupported url") {
+            category = L10n.text("不支持的链接")
+        } else if lower.contains("timed out") || lower.contains("timeout") || text.contains("超时") {
+            category = L10n.text("网络超时")
+        } else if lower.contains("403") || lower.contains("429") || lower.contains("forbidden") {
+            category = L10n.text("平台拒绝请求")
+        } else { category = L10n.text("解析/下载失败") }
+        // Never echo signed media URLs or proxy credentials in a route summary.
+        let redacted = text.replacingOccurrences(of: #"https?://[^\s\"'<>]+"#, with: "[URL]", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)(authorization|cookie|token|password)\s*[:=]\s*[^\s]+"#, with: "$1=[redacted]", options: .regularExpression)
+        return "\(route) · \(category)：\(singleLineRepairMessage(redacted))"
     }
 
 }

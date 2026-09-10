@@ -19,7 +19,7 @@ nonisolated enum MusicFilterKind: String, CaseIterable, Codable, Hashable, Senda
 }
 
 nonisolated struct MusicFilterOption: Identifiable, Codable, Hashable, Sendable {
-    static let local = MusicFilterOption(kind: .local, value: "本地")
+    static let local = MusicFilterOption(kind: .local, value: L10n.text("本地"))
 
     var kind: MusicFilterKind
     var value: String
@@ -63,9 +63,9 @@ nonisolated enum MusicSortOption: String, CaseIterable, Codable, Identifiable, S
 
     var title: String {
         switch self {
-        case .title: return "按名称排序"
-        case .addedDate: return "按添加日期排序"
-        case .artist: return "按作者排序"
+        case .title: return L10n.text("按名称排序")
+        case .addedDate: return L10n.text("按添加日期排序")
+        case .artist: return L10n.text("按作者排序")
         }
     }
 }
@@ -114,25 +114,6 @@ struct MusicPreviewToggleRequest: Equatable {
     let token = UUID()
 }
 
-nonisolated func musicDownloadTitle(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
-    guard let job else { return type.label }
-    switch job.status {
-    case .succeeded:
-        return type.label
-    case .importing, .transcoding, .finalizing:
-        if let progress = job.downloadProgress {
-            return "\(Int((normalizedProgressFraction(progress) * 100).rounded()))%"
-        }
-        return "下载中"
-    case .failed:
-        return "失败"
-    case .paused:
-        return "暂停"
-    case .idle:
-        return type.label
-    }
-}
-
 nonisolated func musicDownloadTypeAccessibilityKey(_ type: MusicDownloadJob.DownloadType) -> String {
     switch type {
     case .original:
@@ -143,18 +124,22 @@ nonisolated func musicDownloadTypeAccessibilityKey(_ type: MusicDownloadJob.Down
 }
 
 func musicDownloadHelp(type: MusicDownloadJob.DownloadType, job: MusicDownloadJob?) -> String {
-    guard let job else { return "下载\(type.label)" }
+    guard let job else { return L10n.text("下载\(type.label)") }
     switch job.status {
     case .succeeded:
-        return "播放已下载\(type.label)"
-    case .importing, .transcoding, .finalizing:
-        return "正在下载\(type.label)"
+        return L10n.text("播放已下载\(type.label)")
+    case .importing:
+        return L10n.text("正在下载\(type.label)")
+    case .transcoding:
+        return L10n.text("正在转码\(type.label)")
+    case .finalizing:
+        return L10n.text("正在整理\(type.label)")
     case .failed(let message):
-        return message.isEmpty ? "\(type.label)下载失败" : message
+        return message.isEmpty ? L10n.text("\(type.label)下载失败") : message
     case .paused:
-        return "\(type.label)下载已暂停"
+        return L10n.text("\(type.label)下载已暂停")
     case .idle:
-        return "下载\(type.label)"
+        return L10n.text("下载\(type.label)")
     }
 }
 
@@ -173,7 +158,7 @@ func musicDownloadDisplayName(for job: MusicDownloadJob) -> String {
     }
 
     let baseName = title.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackName
-    return job.type == .instrumental ? "\(baseName)（伴奏版）" : baseName
+    return job.type == .instrumental ? L10n.text("\(baseName)（伴奏版）") : baseName
 }
 
 func sanitizedMusicFilenameStem(_ name: String) -> String {
@@ -182,7 +167,7 @@ func sanitizedMusicFilenameStem(_ name: String) -> String {
         .components(separatedBy: forbidden)
         .joined(separator: "-")
         .trimmingCharacters(in: .whitespacesAndNewlines)
-    return sanitized.isEmpty ? "音乐" : sanitized
+    return sanitized.isEmpty ? L10n.text("音乐") : sanitized
 }
 
 func musicDownloadSuggestedFilename(for job: MusicDownloadJob, fileURL: URL) -> String {
@@ -201,7 +186,7 @@ func musicDownloadFileDragProvider(for job: MusicDownloadJob?) -> (() -> NSItemP
             suggestedName: suggestedName,
             fallbackTypeIdentifier: UTType.audio.identifier,
             errorDomain: "LapianBao.MusicDragExport",
-            missingFileMessage: "音频文件不存在"
+            missingFileMessage: L10n.text("音频文件不存在")
         )
     }
 }
@@ -268,13 +253,13 @@ struct MusicRecognitionActionColumn: View {
                 Button {
                     libraryStore.downloadMusic(song: song, type: .original, recognitionID: song.id)
                 } label: {
-                    Label("下载原曲", systemImage: "arrow.down.circle")
+                    Label(L10n.text("下载原曲"), systemImage: "arrow.down.circle")
                 }
 
                 Button {
                     libraryStore.downloadMusic(song: song, type: .instrumental, recognitionID: song.id)
                 } label: {
-                    Label("下载伴奏", systemImage: "arrow.down.circle")
+                    Label(L10n.text("下载伴奏"), systemImage: "arrow.down.circle")
                 }
             } label: {
                 actionIcon(
@@ -303,7 +288,7 @@ struct MusicRecognitionActionColumn: View {
                         Button {
                             NSWorkspace.shared.activateFileViewerSelecting([url])
                         } label: {
-                            Label("显示\(job.type.label)文件", systemImage: "folder")
+                            Label(L10n.text("显示\(job.type.label)文件"), systemImage: "folder")
                         }
                     }
                 }
@@ -313,13 +298,13 @@ struct MusicRecognitionActionColumn: View {
                 Button {
                     libraryStore.downloadMusic(song: song, type: .original, recognitionID: song.id)
                 } label: {
-                    Label("重新下载原曲", systemImage: "arrow.clockwise")
+                    Label(L10n.text("重新下载原曲"), systemImage: "arrow.clockwise")
                 }
 
                 Button {
                     libraryStore.downloadMusic(song: song, type: .instrumental, recognitionID: song.id)
                 } label: {
-                    Label("重新下载伴奏", systemImage: "arrow.clockwise")
+                    Label(L10n.text("重新下载伴奏"), systemImage: "arrow.clockwise")
                 }
             }
         }
@@ -390,7 +375,7 @@ struct ExportMusicRecognitionActionColumn: View {
                     Button {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     } label: {
-                        Label("显示\(job.type.label)", systemImage: "folder")
+                        Label(L10n.text("显示\(job.type.label)"), systemImage: "folder")
                     }
                 }
             }
@@ -429,7 +414,7 @@ struct ExportMusicRecognitionActionColumn: View {
             height: MusicRecognitionLayout.actionButtonSize
         )
         .offset(x: MusicRecognitionLayout.circledDownloadIconOpticalOffsetX)
-        .accessibilityLabel(allDownloadsCompleted ? "音乐下载已完成" : "选择下载音乐")
+        .accessibilityLabel(allDownloadsCompleted ? L10n.text("音乐下载已完成") : L10n.text("选择下载音乐"))
         .accessibilityIdentifier("export_music_download_menu_button")
         .disabled(allDownloadsCompleted)
         .popover(isPresented: $isDownloadOptionsPresented, arrowEdge: .trailing) {
@@ -446,7 +431,7 @@ struct ExportMusicRecognitionActionColumn: View {
     private func downloadOptionButton(for type: MusicDownloadJob.DownloadType) -> some View {
         let job = job(for: type)
         let isDownloaded = completedFileURL(for: job) != nil
-        let title = isDownloaded ? "已下载\(type.label)" : "下载\(type.label)"
+        let title = isDownloaded ? L10n.text("已下载\(type.label)") : L10n.text("下载\(type.label)")
 
         return Button {
             libraryStore.downloadMusic(song: song, type: type, recognitionID: song.id)
@@ -524,7 +509,7 @@ struct ExportMusicRecognitionRow: View {
                         artwork
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(song.title.isEmpty ? "未知音乐" : song.title)
+                            Text(song.title.isEmpty ? L10n.text("未知音乐") : song.title)
                                 .font(.caption.weight(.semibold))
                                 .lineLimit(1)
                             if !song.artist.isEmpty {
@@ -533,7 +518,7 @@ struct ExportMusicRecognitionRow: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
-                            Text("出现于 \(clockText(song.detectedAt))")
+                            Text(L10n.text("出现于 \(clockText(song.detectedAt))"))
                                 .font(Design.numericCaption2())
                                 .foregroundStyle(.tertiary)
                         }
@@ -588,7 +573,7 @@ struct MusicRecognitionRow: View {
                         .frame(width: 42, height: 42)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(song.title.isEmpty ? "未知音乐" : song.title)
+                            Text(song.title.isEmpty ? L10n.text("未知音乐") : song.title)
                                 .font(.caption.weight(.semibold))
                                 .lineLimit(1)
                             if !song.artist.isEmpty {
@@ -597,7 +582,7 @@ struct MusicRecognitionRow: View {
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
-                            Text("出现于 \(clockText(song.detectedAt))")
+                            Text(L10n.text("出现于 \(clockText(song.detectedAt))"))
                                 .font(Design.numericCaption2())
                                 .foregroundStyle(.tertiary)
                             let musicTags = song.displayTags
@@ -803,9 +788,10 @@ struct MusicDownloadControlsAndWaveform: View {
             syncSelectionIfNeeded(force: true)
         }
         .onChange(of: downloadJobs) { _, _ in
-            selectedAudioTimeText = nil
-            requestDownloadedMediaInfoIfNeeded()
             syncSelectionIfNeeded(force: false)
+        }
+        .onChange(of: downloadJobs.map(\.filePath)) { _, _ in
+            requestDownloadedMediaInfoIfNeeded()
         }
     }
 
@@ -850,7 +836,10 @@ struct MusicDownloadControlsAndWaveform: View {
     }
 
     private func job(for type: MusicDownloadJob.DownloadType) -> MusicDownloadJob? {
-        downloadJobs.first { $0.type == type }
+        MusicDownloadRowState.liveJob(
+            for: song, type: type, projected: downloadJobs.first { $0.type == type },
+            in: libraryStore.musicDownloadJobs
+        )
     }
 
     private func completedFileURL(for job: MusicDownloadJob?) -> URL? {
@@ -918,10 +907,19 @@ struct MusicDownloadControlsAndWaveform: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: displayJob))
-                    .font(.system(size: 11, weight: .semibold))
+                if musicDownloadPercentage(job: displayJob) == nil {
+                    if musicDownloadIsIndeterminate(job: displayJob) {
+                        ProgressView()
+                            .controlSize(.mini).frame(width: 11, height: 11)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: isPreviewing ? "pause.circle.fill" : musicDownloadIcon(type: type, job: displayJob))
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                }
                 Text(musicDownloadTitle(type: type, job: displayJob))
                     .font(.caption2.weight(.semibold))
+                    .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
             }
@@ -935,14 +933,18 @@ struct MusicDownloadControlsAndWaveform: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isPreviewing ? "暂停已下载\(type.label)" : musicDownloadHelp(type: type, job: displayJob))
+        .accessibilityLabel(isPreviewing ? L10n.text("暂停已下载\(type.label)") : musicDownloadHelp(type: type, job: displayJob))
         .accessibilityIdentifier("music_download_\(musicDownloadTypeAccessibilityKey(type))_button")
+        .accessibilityValue(musicDownloadTitle(type: type, job: displayJob))
         .contextMenu {
+            if let displayJob, !isDownloaded {
+                Text(musicDownloadHelp(type: type, job: displayJob))
+            }
             if let url = completedFileURL(for: job) {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 } label: {
-                    Label("显示\(type.label)文件", systemImage: "folder")
+                    Label(L10n.text("显示\(type.label)文件"), systemImage: "folder")
                 }
             }
 
@@ -950,7 +952,7 @@ struct MusicDownloadControlsAndWaveform: View {
                 selectedType = type
                 libraryStore.downloadMusic(song: song, type: type, recognitionID: recognitionID)
             } label: {
-                Label("重新下载\(type.label)", systemImage: "arrow.clockwise")
+                Label(L10n.text("重新下载\(type.label)"), systemImage: "arrow.clockwise")
             }
         }
     }
@@ -1112,7 +1114,6 @@ struct MusicDownloadWaveformPanel: View {
             else { return }
             toggleAudioPreview()
         }
-        .animation(.easeInOut(duration: 0.18), value: job?.downloadProgress)
         .animation(.easeInOut(duration: 0.22), value: job?.waveformSamples?.count ?? 0)
         .animation(.easeInOut(duration: 0.18), value: isPreviewing)
     }
@@ -1124,19 +1125,19 @@ struct MusicDownloadWaveformPanel: View {
             succeededPanel(for: job)
         case .importing:
             progressPanel(
-                title: "正在下载\(job.type.label)",
+                title: L10n.text("正在下载\(job.type.label)"),
                 systemImage: "arrow.down.circle.fill",
                 progress: job.downloadProgress
             )
         case .transcoding:
-            progressPanel(title: "正在处理\(job.type.label)", systemImage: "waveform", progress: nil)
+            progressPanel(title: L10n.text("正在处理\(job.type.label)"), systemImage: "waveform", progress: nil)
         case .finalizing:
-            progressPanel(title: "正在整理\(job.type.label)", systemImage: "checkmark.seal.fill", progress: job.downloadProgress)
+            progressPanel(title: L10n.text("正在整理\(job.type.label)"), systemImage: "checkmark.seal.fill", progress: job.downloadProgress)
         case .paused:
-            statusPanel(title: "\(job.type.label)已暂停", systemImage: "pause.circle.fill")
+            statusPanel(title: L10n.text("\(job.type.label)已暂停"), systemImage: "pause.circle.fill")
         case let .failed(message):
             statusPanel(
-                title: message.isEmpty ? "\(job.type.label)下载失败" : message,
+                title: message.isEmpty ? L10n.text("\(job.type.label)下载失败") : message,
                 systemImage: "xmark.circle.fill"
             )
         case .idle:
@@ -1517,7 +1518,7 @@ struct MusicDownloadStatusView: View {
         }
 
         let baseName = title.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackName
-        return job.type == .instrumental ? "\(baseName)（伴奏版）" : baseName
+        return job.type == .instrumental ? L10n.text("\(baseName)（伴奏版）") : baseName
     }
 
     private var cleanedSuggestedFilename: String? {
@@ -1537,7 +1538,7 @@ struct MusicDownloadStatusView: View {
                 suggestedName: suggestedName,
                 fallbackTypeIdentifier: UTType.audio.identifier,
                 errorDomain: "LapianBao.MusicDragExport",
-                missingFileMessage: "音频文件不存在"
+                missingFileMessage: L10n.text("音频文件不存在")
             )
         }
     }
@@ -1582,7 +1583,7 @@ struct MusicDownloadStatusView: View {
         VStack(alignment: .leading, spacing: isCompact ? 5 : 7) {
             switch job.status {
             case .importing:
-                progressHeader(text: "正在下载\(job.type.label)…", systemImage: "arrow.down.circle.fill")
+                progressHeader(text: L10n.text("正在下载\(job.type.label)…"), systemImage: "arrow.down.circle.fill")
                 if let progress = job.downloadProgress {
                     ProgressView(value: normalizedProgressFraction(progress))
                         .controlSize(.mini)
@@ -1593,12 +1594,12 @@ struct MusicDownloadStatusView: View {
                         .tint(.white)
                 }
             case .transcoding:
-                progressHeader(text: "正在处理\(job.type.label)…", systemImage: "waveform")
+                progressHeader(text: L10n.text("正在处理\(job.type.label)…"), systemImage: "waveform")
                 ProgressView()
                     .controlSize(.mini)
                     .tint(.white)
             case .finalizing:
-                progressHeader(text: "正在整理\(job.type.label)…", systemImage: "checkmark.seal.fill")
+                progressHeader(text: L10n.text("正在整理\(job.type.label)…"), systemImage: "checkmark.seal.fill")
                 if let progress = job.downloadProgress {
                     ProgressView(value: normalizedProgressFraction(progress))
                         .controlSize(.mini)
@@ -1609,7 +1610,7 @@ struct MusicDownloadStatusView: View {
                         .tint(.white)
                 }
             case .paused:
-                progressHeader(text: "\(job.type.label)已暂停", systemImage: "pause.circle.fill")
+                progressHeader(text: L10n.text("\(job.type.label)已暂停"), systemImage: "pause.circle.fill")
             case .succeeded:
                 HStack(spacing: 6) {
                     Button {
@@ -1623,7 +1624,7 @@ struct MusicDownloadStatusView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!canPreviewAudio)
-                    .accessibilityLabel(isPreviewing ? "暂停已下载\(job.type.label)" : "播放已下载\(job.type.label)")
+                    .accessibilityLabel(isPreviewing ? L10n.text("暂停已下载\(job.type.label)") : L10n.text("播放已下载\(job.type.label)"))
                     .accessibilityIdentifier("export_music_download_status_\(musicDownloadTypeAccessibilityKey(job.type))_play_button")
                     Text(cleanedDisplayName)
                         .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
@@ -1661,7 +1662,7 @@ struct MusicDownloadStatusView: View {
                     )
                 } else if job.isPreparingWaveform {
                     GenerationProgressRow(
-                        message: "正在生成波形",
+                        message: L10n.text("正在生成波形"),
                         progress: nil,
                         tint: .white,
                         systemImage: "waveform",
@@ -1674,7 +1675,7 @@ struct MusicDownloadStatusView: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.72))
-                    Text("\(job.type.label)下载失败")
+                    Text(L10n.text("\(job.type.label)下载失败"))
                         .font(isCompact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
                         .foregroundStyle(.white.opacity(0.72))
                     Spacer(minLength: 6)

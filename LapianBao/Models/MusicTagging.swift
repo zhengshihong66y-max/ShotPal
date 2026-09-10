@@ -233,6 +233,13 @@ extension MusicRecognitionItem {
 
     nonisolated static func canonicalMusicGenreTag(_ tag: String) -> String? {
         let key = canonicalMusicGenreKey(tag)
+        if let alias = musicGenreAliases[key] { return alias }
+        guard recognizedMusicGenreKeys.contains(key) else { return nil }
+        // The recognized catalog includes genres without a broader-family alias.
+        return key.capitalized
+    }
+
+    nonisolated private static let musicGenreAliases: [String: String] = {
         let aliases: [String: String] = [
             "adult alternative": "Alternative",
             "alternative rock": "Alternative",
@@ -246,6 +253,8 @@ extension MusicRecognitionItem {
             "christian & gospel": "Christian & Gospel",
             "classical": "Classical",
             "classical crossover": "Classical",
+            "children's music": "Children's Music",
+            "fitness & workout": "Fitness & Workout",
             "country": "Country",
             "dance": "Dance",
             "disco": "Dance",
@@ -343,10 +352,97 @@ extension MusicRecognitionItem {
             "soul": "R&B/Soul",
             "funk": "R&B/Soul",
             "world": "World",
-            "arabic": "World"
+            "arabic": "World",
+            // Localized catalog labels are genre metadata, not missing classifications.
+            "国际流行": "Pop",
+            "國際流行": "Pop",
+            "流行音乐": "Pop",
+            "流行音樂": "Pop",
+            "國語流行": "Mandopop",
+            "華語流行": "Mandopop",
+            "粵語流行": "Cantopop",
+            "另类音乐": "Alternative",
+            "另類音樂": "Alternative",
+            "另类摇滚": "Alternative",
+            "另類搖滾": "Alternative",
+            "独立音乐": "Indie",
+            "獨立音樂": "Indie",
+            "独立流行": "Indie",
+            "獨立流行": "Indie",
+            "独立摇滚": "Indie",
+            "獨立搖滾": "Indie",
+            "电子音乐": "Electronic",
+            "電子音樂": "Electronic",
+            "電子": "Electronic",
+            "电子舞曲": "Electronic",
+            "電子舞曲": "Electronic",
+            "r&b/灵魂乐": "R&B/Soul",
+            "r&b/靈魂樂": "R&B/Soul",
+            "节奏布鲁斯": "R&B/Soul",
+            "節奏藍調": "R&B/Soul",
+            "灵魂乐": "R&B/Soul",
+            "靈魂樂": "R&B/Soul",
+            "嘻哈/说唱": "Hip-Hop/Rap",
+            "嘻哈/饶舌": "Hip-Hop/Rap",
+            "嘻哈/饒舌": "Hip-Hop/Rap",
+            "hip-hop/说唱": "Hip-Hop/Rap",
+            "hip-hop/饒舌": "Hip-Hop/Rap",
+            "爵士乐": "Jazz",
+            "爵士樂": "Jazz",
+            "布鲁斯": "Blues",
+            "藍調": "Blues",
+            "古典音乐": "Classical",
+            "古典音樂": "Classical",
+            "乡村音乐": "Country",
+            "鄉村音樂": "Country",
+            "鄉村": "Country",
+            "搖滾": "Rock",
+            "摇滚乐": "Rock",
+            "搖滾樂": "Rock",
+            "硬搖滾": "Hard Rock",
+            "重金屬": "Metal",
+            "拉丁音乐": "Latin",
+            "拉丁音樂": "Latin",
+            "雷鬼音乐": "Reggae",
+            "雷鬼音樂": "Reggae",
+            "新世纪音乐": "Ambient",
+            "新世紀音樂": "Ambient",
+            "氛围音乐": "Ambient",
+            "氛圍音樂": "Ambient",
+            "輕音樂": "Ambient",
+            "世界音樂": "World",
+            "唱作歌手": "Singer/Songwriter",
+            "创作歌手": "Singer/Songwriter",
+            "創作歌手": "Singer/Songwriter",
+            "原声音乐": "Soundtrack",
+            "原聲音樂": "Soundtrack",
+            "原声带": "Soundtrack",
+            "原聲帶": "Soundtrack",
+            "电影原声带": "Soundtrack",
+            "電影原聲帶": "Soundtrack",
+            "动画": "Soundtrack",
+            "動畫": "Soundtrack",
+            "日本流行乐": "J-Pop",
+            "日本流行音樂": "J-Pop",
+            "日本流行": "J-Pop",
+            "日语流行": "J-Pop",
+            "日語流行": "J-Pop",
+            "韩国流行乐": "K-Pop",
+            "韓國流行音樂": "K-Pop",
+            "韩国流行": "K-Pop",
+            "韓國流行": "K-Pop",
+            "儿童音乐": "Children's Music",
+            "兒童音樂": "Children's Music",
+            "基督教与福音": "Christian & Gospel",
+            "基督教與福音": "Christian & Gospel",
+            "节日音乐": "Holiday",
+            "節日音樂": "Holiday",
+            "健身与锻炼": "Fitness & Workout",
+            "健身與運動": "Fitness & Workout"
         ]
-        return aliases[key]
-    }
+        return Dictionary(aliases.map { (canonicalMusicGenreKey($0.key), $0.value) },
+                          uniquingKeysWith: { first, _ in first })
+    }()
 
     nonisolated static func inferredMusicGenreTags(
         title: String,

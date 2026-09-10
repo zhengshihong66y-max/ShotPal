@@ -17,6 +17,7 @@ struct MusicWorkspaceView: View {
     @ObservedObject var viewModel: MusicWorkspaceViewModel
     let toolbarWidth: CGFloat?
     let goHome: (String, Double) -> Void
+    var searchAppleMusic: (String) async throws -> [AppleMusicSearchResult] = LibraryStore.searchAppleMusic(query:)
 
     @AppStorage(AppSettings.Key.musicSortOption) private var musicSortOptionRawValue = MusicSortOption.title.rawValue
     @AppStorage(AppSettings.Key.musicSortDirection) private var musicSortDirectionRawValue = VideoSortDirection.ascending.rawValue
@@ -51,7 +52,6 @@ struct MusicWorkspaceView: View {
                                 allLocalGroups: projection.displayedLocalMusicGroups,
                                 filteredEntries: projection.filteredEntries
                             )
-                            searchSection(results: projection.filteredSearchItems)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background {
@@ -65,6 +65,9 @@ struct MusicWorkspaceView: View {
                         .padding(.vertical, 2)
                         .padding(.horizontal, Design.libraryContentInset)
                         .padding(.bottom, 12)
+                        .transaction { transaction in
+                            transaction.animation = nil
+                        }
                     }
                     .fadingVerticalScrollIndicators()
                     .accessibilityIdentifier("music_workspace_scroll_view")
@@ -101,7 +104,7 @@ struct MusicWorkspaceView: View {
             scheduleMusicProjectionRefresh()
             scheduleDeferredMusicWorkspaceMaintenance()
         }
-        .onChange(of: libraryStore.musicDownloadJobs) { _, _ in
+        .onChange(of: MusicDownloadRowState.structuralJobs(libraryStore.musicDownloadJobs)) { _, _ in
             scheduleMusicProjectionRefresh()
             let completionSnapshot = currentMusicDownloadCompletionSnapshot()
             if viewModel.completedMusicDownloadLibraryChanged(snapshot: completionSnapshot) {
@@ -130,6 +133,7 @@ struct MusicWorkspaceView: View {
             scheduleMusicProjectionRefresh()
         }
         .task(id: viewModel.searchText) {
+            guard viewModel.searchMode == .onlineCatalog else { return }
             await runAppleMusicSearch()
         }
         .task(id: musicWorkspaceDisplayCacheHydrationID) {
@@ -257,11 +261,21 @@ struct MusicWorkspaceView: View {
     }
 
     private func musicHeader() -> some View {
-        LibraryToolbar(placeholder: "", text: $viewModel.searchText) {
+        LibraryToolbar(placeholder: "", text: $viewModel.searchText,
+                       searchAccessibilityLabel: viewModel.searchMode == .library ? L10n.text("搜索音乐库") : L10n.text("在线搜索音乐"),
+                       searchPopover: musicSearchPopoverConfiguration) {
             musicTagFilterButton
             musicSortMenu
         }
         .frame(width: toolbarWidth, alignment: .leading)
+    }
+
+    private var musicSearchPopoverConfiguration: SearchFieldPopover? {
+        guard viewModel.searchMode == .onlineCatalog else { return nil }
+        return SearchFieldPopover(
+            content: AnyView(musicSearchPopover.environmentObject(libraryStore)),
+            size: NSSize(width: musicSearchPopoverWidth, height: musicSearchPopoverHeight)
+        )
     }
 
     private func musicCacheLoadingProgressBar(_ status: MusicWorkspaceLaunchPreparationStatus) -> some View {
@@ -307,13 +321,13 @@ struct MusicWorkspaceView: View {
         .buttonStyle(.plain)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
         .contentShape(Rectangle())
-        .accessibilityLabel(viewModel.isMusicTagFilterBarPresented ? "隐藏音乐标签筛选" : "显示音乐标签筛选")
+        .accessibilityLabel(viewModel.isMusicTagFilterBarPresented ? L10n.text("隐藏音乐标签筛选") : L10n.text("显示音乐标签筛选"))
         .accessibilityIdentifier("music_tag_filter_toggle_button")
     }
 
     private var musicSortMenu: some View {
         Menu {
-            Section("排序方式") {
+            Section(L10n.text("排序方式")) {
                 ForEach(MusicSortOption.allCases) { option in
                     Button {
                         let previousOption = selectedMusicSortOption
@@ -327,7 +341,7 @@ struct MusicWorkspaceView: View {
                 }
             }
 
-            Section("方向") {
+            Section(L10n.text("方向")) {
                 ForEach(VideoSortDirection.allCases) { direction in
                     Button {
                         musicSortDirectionRawValue = direction.rawValue
@@ -342,7 +356,7 @@ struct MusicWorkspaceView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: Design.libraryToolbarButtonSlotWidth, height: Design.libraryToolbarButtonSlotHeight)
-        .accessibilityLabel("音乐排序菜单")
+        .accessibilityLabel(L10n.text("音乐排序菜单"))
         .accessibilityIdentifier("music_sort_menu")
     }
 
@@ -355,15 +369,15 @@ struct MusicWorkspaceView: View {
         VStack(alignment: .leading, spacing: 8) {
             if viewModel.isMusicTagFilterBarPresented {
                 musicQuickFilterChipRow(
-                    title: "作者",
+                    title: L10n.text("作者"),
                     kind: .artist,
                     values: filterValues[.artist, default: []],
                     counts: artistSongCounts,
                     allSystemImage: nil,
-                    emptyText: "暂无可显示作者"
+                    emptyText: L10n.text("暂无可显示作者")
                 )
                 musicQuickFilterChipRow(
-                    title: "类型",
+                    title: L10n.text("类型"),
                     kind: .tag,
                     values: filterValues[.tag, default: []],
                     counts: musicTagCounts,
@@ -393,7 +407,7 @@ struct MusicWorkspaceView: View {
                 .foregroundStyle(.tertiary)
 
             if values.isEmpty && leadingOptions.isEmpty {
-                Text(emptyText ?? "暂无\(title)")
+                Text(emptyText ?? L10n.text("暂无\(title)"))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .frame(minHeight: 28, alignment: .leading)
@@ -433,16 +447,40 @@ struct MusicWorkspaceView: View {
         }
     }
 
-    @ViewBuilder
-    private func searchSection(
-        results: [AppleMusicSearchResultRowProjection]
-    ) -> some View {
-        let query = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty && !viewModel.isSearching {
-            VStack(alignment: .leading, spacing: 10) {
-                sectionHeader(title: "AM 搜索", count: results.count, icon: "magnifyingglass")
+    private var musicSearchPopoverWidth: CGFloat {
+        // Enough room for the existing cover/title/genre/download columns, independent of page width.
+        min(680, max(540, musicWorkspaceContentWidth))
+    }
 
-                if let searchMessage = viewModel.searchMessage {
+    private var musicSearchPopoverHeight: CGFloat {
+        let results = viewModel.projection.filteredSearchItems
+        guard !viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !viewModel.isShowingSearchProgress, viewModel.searchMessage == nil, !results.isEmpty else { return 112 }
+        let height = results.reduce(CGFloat(24)) { total, row in
+            total + musicRowHeight(containerWidth: musicSearchPopoverWidth - 24,
+                                   tags: row.visibleTags, hasWaveform: row.hasDownloadedWaveform,
+                                   includesSafari: false, actionWidth: MusicRowMetrics.verticalButtonsWidth) + 8
+        }
+        return min(420, height)
+    }
+
+    private var musicSearchPopover: some View {
+        let query = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let results = viewModel.projection.filteredSearchItems
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if query.isEmpty {
+                    AppEmptyState(title: L10n.text("输入歌曲或歌手名称"), systemImage: "magnifyingglass", style: .compact, minHeight: 86)
+                } else if viewModel.isShowingSearchProgress {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(L10n.text("正在搜索…"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                    .accessibilityIdentifier("music_search_loading")
+                } else if let searchMessage = viewModel.searchMessage {
                     AppEmptyState(
                         title: searchMessage,
                         systemImage: "magnifyingglass",
@@ -451,7 +489,7 @@ struct MusicWorkspaceView: View {
                     )
                 } else if results.isEmpty {
                     AppEmptyState(
-                        title: "没有匹配条目",
+                        title: L10n.text("没有匹配条目"),
                         systemImage: "line.3.horizontal.decrease.circle",
                         style: .compact,
                         minHeight: 86
@@ -459,12 +497,17 @@ struct MusicWorkspaceView: View {
                 } else {
                     LazyVStack(spacing: 8) {
                         ForEach(results) { row in
-                            appleMusicResultRow(row)
+                            appleMusicResultRow(row, containerWidth: musicSearchPopoverWidth - 24)
                         }
                     }
                 }
             }
+            .padding(12)
         }
+        .frame(width: musicSearchPopoverWidth, height: musicSearchPopoverHeight)
+        .background(Design.sidebarBg)
+        .environment(\.colorScheme, .dark)
+        .transaction { $0.animation = nil }
     }
 
     @ViewBuilder
@@ -476,14 +519,14 @@ struct MusicWorkspaceView: View {
         VStack(alignment: .leading, spacing: 8) {
             if allAssets.isEmpty && allLocalGroups.isEmpty {
                 AppEmptyState(
-                    title: "主页暂无识别音乐",
+                    title: L10n.text("主页暂无识别音乐"),
                     systemImage: "music.note.list",
                     style: .compact,
                     minHeight: 90
                 )
             } else if filteredEntries.isEmpty {
                 AppEmptyState(
-                    title: "没有匹配条目",
+                    title: L10n.text("没有匹配条目"),
                     systemImage: "line.3.horizontal.decrease.circle",
                     style: .compact,
                     minHeight: 90
@@ -680,7 +723,7 @@ struct MusicWorkspaceView: View {
             : MusicRowMetrics.minimumInfoWidthRegular
     }
 
-    private func appleMusicResultRow(_ row: AppleMusicSearchResultRowProjection) -> some View {
+    private func appleMusicResultRow(_ row: AppleMusicSearchResultRowProjection, containerWidth: CGFloat) -> some View {
         let item = row.item
         let song = row.song
         let downloadJobs = row.downloadJobs
@@ -688,7 +731,7 @@ struct MusicWorkspaceView: View {
         let hasDownloadedWaveform = row.hasDownloadedWaveform
         let rowDragProvider = musicDownloadDragProvider(from: downloadJobs)
         let estimatedRowHeight = musicRowHeight(
-            containerWidth: musicWorkspaceContentWidth,
+            containerWidth: containerWidth,
             tags: visibleTags,
             hasWaveform: hasDownloadedWaveform,
             includesSafari: false,
@@ -718,8 +761,8 @@ struct MusicWorkspaceView: View {
                 )
 
                 musicInfoColumn(
-                    title: item.title.isEmpty ? "未知曲目" : item.title,
-                    artist: item.artist.isEmpty ? "未知作者" : item.artist,
+                    title: item.title.isEmpty ? L10n.text("未知曲目") : item.title,
+                    artist: item.artist.isEmpty ? L10n.text("未知作者") : item.artist,
                     sourceText: nil,
                     width: layout.infoWidth
                 )
@@ -805,8 +848,8 @@ struct MusicWorkspaceView: View {
                         )
 
                         musicInfoColumn(
-                            title: asset.song.title.isEmpty ? "未知曲目" : asset.song.title,
-                            artist: asset.song.artist.isEmpty ? "未知作者" : asset.song.artist,
+                            title: asset.song.title.isEmpty ? L10n.text("未知曲目") : asset.song.title,
+                            artist: asset.song.artist.isEmpty ? L10n.text("未知作者") : asset.song.artist,
                             sourceText: asset.sourceText,
                             width: layout.infoWidth
                         )
@@ -911,14 +954,14 @@ struct MusicWorkspaceView: View {
                         artist: displayArtist,
                         shouldLoad: viewModel.allowsHeavyRowMedia
                     )
-                    .opacity(primaryFileURL == nil ? 0.45 : 1)
+                    .opacity(primaryFileURL == nil && !group.assets.isEmpty ? 0.45 : 1)
                 }
                 .buttonStyle(.plain)
                 .disabled(primaryFileURL == nil)
                 .frame(width: MusicRowMetrics.artworkSize, height: MusicRowMetrics.artworkSize, alignment: .center)
 
                 musicInfoColumn(
-                    title: displayTitle.isEmpty ? "未知曲目" : displayTitle,
+                    title: displayTitle.isEmpty ? L10n.text("未知曲目") : displayTitle,
                     artist: displayArtist,
                     sourceText: sourceText,
                     width: layout.infoWidth
@@ -987,6 +1030,7 @@ struct MusicWorkspaceView: View {
             musicFeaturedButton(isFeatured: hasFeaturedMusicTag(group.tags)) {
                 toggleFeaturedLocalMusicGroup(group)
             }
+            .disabled(group.assets.isEmpty)
         }
         .frame(
             width: MusicRowMetrics.sideActionWidth,
@@ -1117,24 +1161,6 @@ struct MusicWorkspaceView: View {
         }
     }
 
-    private func sectionHeader(title: String, count: Int, icon: String) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(Design.annotationAccent)
-            Text(title)
-                .font(.headline.weight(.semibold))
-            Text("\(count)")
-                .font(Design.numericCaption2(weight: .bold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(.white.opacity(0.08))
-                .clipShape(Capsule())
-            Spacer()
-        }
-    }
-
     private func toolbarIcon(
         systemName: String,
         size: CGFloat,
@@ -1178,7 +1204,8 @@ struct MusicWorkspaceView: View {
                 completionSnapshot: completionSnapshot
             ),
             localMusicWaveformSamplesByPath: libraryStore.localMusicWaveformSamplesByPath,
-            knownLocalResourcePaths: libraryStore.knownLocalResourcePaths
+            knownLocalResourcePaths: libraryStore.knownLocalResourcePaths,
+            searchMode: viewModel.searchMode
         )
     }
 
@@ -1284,7 +1311,7 @@ struct MusicWorkspaceView: View {
     private func runAppleMusicSearch() async {
         await viewModel.runAppleMusicSearch(
             prepareExternalServiceWork: prepareMusicWorkspaceExternalServiceWork,
-            search: LibraryStore.searchAppleMusic(query:)
+            search: searchAppleMusic
         )
     }
 
@@ -1483,6 +1510,6 @@ func fileDragProvider(for fileURL: URL, suggestedName: String) -> NSItemProvider
         suggestedName: suggestedName,
         fallbackTypeIdentifier: UTType.data.identifier,
         errorDomain: "LapianBao.FileDrag",
-        missingFileMessage: "文件不存在"
+        missingFileMessage: L10n.text("文件不存在")
     )
 }

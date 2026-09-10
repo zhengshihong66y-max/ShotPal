@@ -434,7 +434,7 @@ struct TagEditorSection: View {
     var domain: TagEditorDomain
     let tags: [String]
     let suggestedTags: [String]
-    var emptyTitle = "暂无标签"
+    var emptyTitle = L10n.text("暂无标签")
     var chipSize: VideoTagChipSize = .regular
     var suggestionLimit = 12
     var verticalSpacing: CGFloat = 10
@@ -618,10 +618,10 @@ struct TagEditorSection: View {
 
             if onAdd != nil {
                 VStack(alignment: .leading, spacing: inputSpacing) {
-                    TextField("添加标签", text: $draftTag)
+                    TextField(L10n.text("添加标签"), text: $draftTag)
                         .textFieldStyle(.roundedBorder)
                         .focused($isTagFieldFocused)
-                        .accessibilityLabel("\(domain.accessibilityKey) 标签输入框")
+                        .accessibilityLabel(L10n.text("\(domain.accessibilityKey) 标签输入框"))
                         .accessibilityIdentifier("tag_editor_\(domain.accessibilityKey)_input_field")
                         .onSubmit(addDraftTag)
                         .onAppear {
@@ -705,7 +705,7 @@ struct TagEditorSection: View {
         ) {
             toggleTag(tag, isSelected: isSelected)
         }
-        .accessibilityLabel("\(isSelected ? "移除" : "添加")标签：\(tag)")
+        .accessibilityLabel(L10n.text("\(isSelected ? L10n.text("移除") : L10n.text("添加"))标签：\(tag)"))
         .accessibilityIdentifier("tag_editor_\(domain.accessibilityKey)_choice_\(Self.accessibilityTagKey(tag))")
     }
 

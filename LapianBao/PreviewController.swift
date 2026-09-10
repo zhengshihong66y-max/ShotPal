@@ -87,8 +87,8 @@ final class PreviewController: ObservableObject {
     private var reverseProxyTask: Task<Void, Never>?
     private var pendingReverseProxyRate: Double?
     private var activeForwardPlaybackEndTime: Double?
-    private let unsupportedReversePlaybackMessage = "这个视频编码不支持流畅倒放"
-    private let reverseProxyPreparationMessage = "正在准备流畅倒放代理"
+    private let unsupportedReversePlaybackMessage = L10n.text("这个视频编码不支持流畅倒放")
+    private let reverseProxyPreparationMessage = L10n.text("正在准备流畅倒放代理")
     /// AVPlayer 原生周期观察者：只同步控制 UI；视频帧刷新不走 SwiftUI。
     private var timeObserverToken: Any?
 
@@ -309,6 +309,12 @@ final class PreviewController: ObservableObject {
         seekToSeconds(seconds, snapToFrame: snapToFrame, clearsForwardPlaybackLimit: true)
     }
 
+    /// Subtitle navigation starts normal playback, without a segment end limit.
+    func playContinuously(from seconds: Double) {
+        seekToSeconds(seconds, snapToFrame: false)
+        setRate(1)
+    }
+
     @discardableResult
     func playSegment(from startSeconds: Double, to endSeconds: Double) -> Bool {
         let d = effectiveDuration; guard let d, d > 0 else { return false }
@@ -375,7 +381,7 @@ final class PreviewController: ObservableObject {
 
         if let item = player.currentItem, item.status == .failed {
             if isPlaying { isPlaying = false }
-            let msg = item.error?.localizedDescription ?? "这个视频无法播放"
+            let msg = item.error?.localizedDescription ?? L10n.text("这个视频无法播放")
             if playbackMessage != msg { playbackMessage = msg }
             if elapsed != 0 { elapsed = 0 }
             if progress != 0 { progress = 0 }

@@ -60,7 +60,7 @@ extension LibraryStore {
                 (try? md.write(to: url, atomically: true, encoding: .utf8)) != nil
             }.value
             guard didWrite else {
-                self?.failTranscriptExport(path: path, message: "无法写入字幕 Markdown")
+                self?.failTranscriptExport(path: path, message: L10n.text("无法写入字幕 Markdown"))
                 return
             }
 
@@ -310,7 +310,7 @@ extension LibraryStore {
             throw NSError(
                 domain: "LapianBao.StoryboardExport",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: result.errorText.isEmpty ? "无法生成分镜表 Word 文件" : result.errorText]
+                userInfo: [NSLocalizedDescriptionKey: result.errorText.isEmpty ? L10n.text("无法生成分镜表 Word 文件") : result.errorText]
             )
         }
     }
@@ -355,7 +355,7 @@ extension LibraryStore {
 
     nonisolated static func storyboardDocumentXML(shots: [StoryboardExportShot], duration: Double) -> String {
         let columns = [605, 2664, 1613, 893, 1080, 5544, 2333, 1152]
-        let headers = ["镜号", "画面", "起止时间", "长度", "景别", "对应脚本/字幕", "音乐/声音", "备注"]
+        let headers = [L10n.text("镜号"), L10n.text("画面"), L10n.text("起止时间"), L10n.text("长度"), L10n.text("景别"), L10n.text("对应脚本/字幕"), L10n.text("音乐/声音"), L10n.text("备注")]
         let grid = columns.map { #"      <w:gridCol w:w="\#($0)"/>"# }.joined(separator: "\n")
         let headerCells = zip(headers, columns).map { title, width in
             storyboardTableCell(
@@ -387,7 +387,7 @@ extension LibraryStore {
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
           <w:body>
-            \(storyboardParagraph("分镜填写版", size: 32, bold: true, spacingAfter: 100))
+            \(storyboardParagraph(L10n.text("分镜填写版"), size: 32, bold: true, spacingAfter: 100))
             <w:tbl>
               <w:tblPr>
                 <w:tblW w:w="15884" w:type="dxa"/>
@@ -406,8 +406,8 @@ extension LibraryStore {
               </w:tblGrid>
               <w:tr>
                 <w:trPr><w:cantSplit/><w:trHeight w:val="403" w:hRule="atLeast"/></w:trPr>
-                \(storyboardTableCell(width: 7942, fill: "EDF2F7", content: storyboardParagraph("总时长：\(storyboardClockText(duration))", size: 15, bold: true, color: "5F6B7A", alignment: "center"), gridSpan: 4))
-                \(storyboardTableCell(width: 7942, fill: "EDF2F7", content: storyboardParagraph("总分镜数：\(shots.count)", size: 15, bold: true, color: "5F6B7A", alignment: "center"), gridSpan: 4))
+                \(storyboardTableCell(width: 7942, fill: "EDF2F7", content: storyboardParagraph(L10n.text("总时长：\(storyboardClockText(duration))"), size: 15, bold: true, color: "5F6B7A", alignment: "center"), gridSpan: 4))
+                \(storyboardTableCell(width: 7942, fill: "EDF2F7", content: storyboardParagraph(L10n.text("总分镜数：\(shots.count)"), size: 15, bold: true, color: "5F6B7A", alignment: "center"), gridSpan: 4))
               </w:tr>
               <w:tr>
                 <w:trPr><w:tblHeader/><w:cantSplit/><w:trHeight w:val="461" w:hRule="atLeast"/></w:trPr>
@@ -577,22 +577,22 @@ extension LibraryStore {
         let transcriptBody = orderedSegments
             .map { "- [\(clockText($0.start)) - \(clockText($0.end))] \(singleLineMarkdownText($0.text))" }
             .joined(separator: "\n")
-        let sceneSource = sceneCutTimes.isEmpty ? "未检测到分镜切点，使用整条时间线作为单个分镜。" : "使用场景识别切点划分分镜。"
+        let sceneSource = sceneCutTimes.isEmpty ? L10n.text("未检测到分镜切点，使用整条时间线作为单个分镜。") : L10n.text("使用场景识别切点划分分镜。")
 
         return """
         # \(videoName)
 
-        ## AI 分镜字幕索引
+        ## \(L10n.text("AI 分镜字幕索引"))
 
-        - 视频文件：\(videoFileName)
-        - 分镜数：\(sceneBlocks.count)
-        - 字幕段数：\(orderedSegments.count)
-        - 时间格式：HH:MM:SS 或 MM:SS
-        - 分镜来源：\(sceneSource)
+        - \(L10n.text("视频文件")): \(videoFileName)
+        - \(L10n.text("分镜数")): \(sceneBlocks.count)
+        - \(L10n.text("字幕段数")): \(orderedSegments.count)
+        - \(L10n.text("时间格式")): HH:MM:SS / MM:SS
+        - \(L10n.text("分镜来源")): \(sceneSource)
 
         \(sceneBody)
 
-        ## 原脚本
+        ## \(L10n.text("原脚本"))
 
         \(transcriptBody)
         """
@@ -643,9 +643,9 @@ extension LibraryStore {
         let subtitles = block.subtitles
             .map { "- [\(clockText($0.start)) - \(clockText($0.end))] \(singleLineMarkdownText($0.text))" }
             .joined(separator: "\n")
-        let subtitleBody = subtitles.isEmpty ? "- 无对应字幕" : subtitles
+        let subtitleBody = subtitles.isEmpty ? L10n.text("- 无对应字幕") : subtitles
         return """
-        ### 分镜 \(block.index) [\(clockText(block.start)) - \(clockText(block.end))]
+        ### \(L10n.text("分镜")) \(block.index) [\(clockText(block.start)) - \(clockText(block.end))]
 
         - scene_index: \(block.index)
         - scene_start: \(clockText(block.start))

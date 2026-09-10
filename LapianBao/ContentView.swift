@@ -90,6 +90,21 @@ struct ContentView: View {
             }
             .ignoresSafeArea(.container, edges: .top)
         }
+        .alert(L10n.text("素材库保存提醒"), isPresented: Binding(
+            get: { libraryStore.projectPersistenceError != nil || libraryStore.metadataPersistenceError != nil },
+            set: { if !$0 { libraryStore.projectPersistenceError = nil; libraryStore.metadataPersistenceError = nil } }
+        )) {
+            Button(L10n.text("重试")) {
+                _ = libraryStore.flushProjectDataSave()
+                libraryStore.refreshMetadataPersistenceError()
+            }
+            Button(L10n.text("好"), role: .cancel) {}
+        } message: {
+            Text(libraryStore.projectPersistenceError ?? libraryStore.metadataPersistenceError ?? "")
+        }
+        .onReceive(AppEventBus.metadataPersistenceChangedPublisher.receive(on: RunLoop.main)) { _ in
+            libraryStore.refreshMetadataPersistenceError()
+        }
         .background(WindowConfigurator())
         .frame(minWidth: Design.minimumWindowWidth, minHeight: Design.minimumWindowHeight)
         .onDrop(
@@ -299,7 +314,7 @@ struct ContentView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("切换到\(workspace.title)")
+        .accessibilityLabel(L10n.text("切换到\(workspace.title)"))
         .accessibilityIdentifier("workspace_\(workspace.rawValue)_button")
     }
 
@@ -481,7 +496,7 @@ struct ContentView: View {
             } else {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("拉片宝")
+                        Text(L10n.text("拉片宝"))
                             .font(.headline.weight(.semibold))
                             .foregroundStyle(.primary)
                         Text("English name: ShotPal")
@@ -496,7 +511,7 @@ struct ContentView: View {
             }
 
             if !isSidebarCollapsed {
-                sidebarSectionLabel("工作区")
+                sidebarSectionLabel(L10n.text("工作区"))
             }
 
             ForEach(AppWorkspace.allCases) { workspace in
@@ -513,7 +528,7 @@ struct ContentView: View {
             Spacer()
 
             if !isSidebarCollapsed {
-                Text("\(libraryStore.videos.count) 个视频")
+                Text(L10n.text("\(libraryStore.videos.count) 个视频"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -538,7 +553,7 @@ struct ContentView: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏")
+        .accessibilityLabel(isSidebarCollapsed ? L10n.text("展开侧边栏") : L10n.text("收起侧边栏"))
         .accessibilityIdentifier("sidebar_collapse_button")
     }
 
@@ -590,7 +605,7 @@ struct ContentView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("切换到\(label)")
+        .accessibilityLabel(L10n.text("切换到\(label)"))
         .accessibilityIdentifier("sidebar_workspace_\(label)_button")
         .padding(.horizontal, isSidebarCollapsed ? 8 : 4)
         .padding(.vertical, isSidebarCollapsed ? 1 : 0)

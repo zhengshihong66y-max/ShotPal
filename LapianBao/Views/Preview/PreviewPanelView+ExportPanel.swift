@@ -72,7 +72,7 @@ extension PreviewPanelView {
                 if isOverlay {
                     previewExportOverlayButton(
                         systemImage: "xmark",
-                        help: "关闭导出区"
+                        help: L10n.text("关闭导出区")
                     ) {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             isExportPanelPresented = false
@@ -124,9 +124,9 @@ extension PreviewPanelView {
 
     func previewExportButtonIdentifier(for help: String) -> String {
         switch help {
-        case "打开导出区":
+        case L10n.text("打开导出区"):
             return "preview_export_panel_open_button"
-        case "关闭导出区":
+        case L10n.text("关闭导出区"):
             return "preview_export_panel_close_button"
         default:
             return "preview_export_panel_action_button"
@@ -145,7 +145,7 @@ extension PreviewPanelView {
                     exportFilterButtonLabel(for: filter)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("显示\(filter.rawValue)导出项")
+                .accessibilityLabel(L10n.text("显示\(filter.title)导出项"))
                 .accessibilityIdentifier("export_filter_\(exportFilterAccessibilityKey(filter))_button")
             }
         }
@@ -158,7 +158,7 @@ extension PreviewPanelView {
         let isSelected = exportPanelFilter == filter
         let runningProgress = exportFilterRunningProgress(for: filter)
         let title: String = {
-            guard let runningProgress else { return filter.rawValue }
+            guard let runningProgress else { return filter.title }
             return runningProgress.percentText ?? "0%"
         }()
 
@@ -238,7 +238,7 @@ extension PreviewPanelView {
                     switch exportPanelFilter {
                     case .recent:
                         if recentItems.isEmpty {
-                            AppEmptyState(title: "暂无素材", style: .inline, minHeight: 80)
+                            AppEmptyState(title: L10n.text("暂无素材"), style: .inline, minHeight: 80)
                         } else {
                             ForEach(recentItems) { item in
                                 switch item {
@@ -259,7 +259,7 @@ extension PreviewPanelView {
                         }
                     case .images:
                         if frames.isEmpty {
-                            AppEmptyState(title: "暂无图片", style: .inline, minHeight: 80)
+                            AppEmptyState(title: L10n.text("暂无图片"), style: .inline, minHeight: 80)
                         } else {
                             ForEach(sortedFrames) { frame in
                                 let itemID = ExportPanelItem.frame(frame).id
@@ -269,7 +269,7 @@ extension PreviewPanelView {
                         }
                     case .audio:
                         if clips.isEmpty {
-                            AppEmptyState(title: "暂无声音", style: .inline, minHeight: 80)
+                            AppEmptyState(title: L10n.text("暂无声音"), style: .inline, minHeight: 80)
                         } else {
                             ForEach(Array(sortedAudioClips.enumerated()), id: \.element.id) { index, clip in
                                 let itemID = ExportPanelItem.audio(clip).id
@@ -448,14 +448,14 @@ extension PreviewPanelView {
             .highPriorityGesture(TapGesture().onEnded {
                 jumpToExportLocation(path: frame.videoPath, time: frame.time)
             })
-            .accessibilityLabel("跳到这张画面")
+            .accessibilityLabel(L10n.text("跳到这张画面"))
             .accessibilityIdentifier("export_frame_row_\(frame.id.uuidString)")
 
             exportItemActionColumn(
                 showInFinderURL: libraryStore.imageExportURL(for: frame),
                 accessibilityIdentifierPrefix: "export_frame_\(frame.id.uuidString)",
-                jumpHelp: "跳到这张画面",
-                deleteHelp: "删除这张画面",
+                jumpHelp: L10n.text("跳到这张画面"),
+                deleteHelp: L10n.text("删除这张画面"),
                 onJump: {
                     jumpToExportLocation(path: frame.videoPath, time: frame.time)
                 },
@@ -686,7 +686,7 @@ extension PreviewPanelView {
             }
 
             InlineTagAddButton(
-                title: "声音标签",
+                title: L10n.text("声音标签"),
                 domain: .audio,
                 tags: clip.tags,
                 suggestedTags: libraryStore.allAudioTags,
@@ -742,14 +742,14 @@ extension PreviewPanelView {
             .highPriorityGesture(TapGesture().onEnded {
                 toggleExportAudioClipPlayback(clip)
             })
-            .accessibilityLabel(isPlaying ? "暂停导出声音片段" : "播放导出声音片段")
+            .accessibilityLabel(isPlaying ? L10n.text("暂停导出声音片段") : L10n.text("播放导出声音片段"))
             .accessibilityIdentifier("export_audio_row_\(clip.id.uuidString)")
 
             exportItemActionColumn(
                 showInFinderURL: libraryStore.audioClipFileURL(for: clip),
                 accessibilityIdentifierPrefix: "export_audio_\(clip.id.uuidString)",
-                jumpHelp: "回到原视频位置",
-                deleteHelp: "删除声音片段",
+                jumpHelp: L10n.text("回到原视频位置"),
+                deleteHelp: L10n.text("删除声音片段"),
                 onJump: {
                     jumpToExportLocation(path: clip.videoPath, time: clip.inTime)
                 },
@@ -793,12 +793,12 @@ extension PreviewPanelView {
 
                     Spacer(minLength: 0)
 
-                    Text(isFailed ? "失败" : progressPercentText(progress))
+                    Text(isFailed ? L10n.text("失败") : progressPercentText(progress))
                         .font(Design.numericCaption2(weight: .semibold))
                         .foregroundStyle(isFailed ? tint.opacity(0.86) : .white.opacity(0.58))
                 }
 
-                Text(isFailed ? "字幕导出失败：\(job.errorMessage ?? "未知错误")" : "正在生成分镜字幕索引")
+                Text(isFailed ? L10n.text("字幕导出失败：\(job.errorMessage ?? L10n.text("未知错误"))") : L10n.text("正在生成分镜字幕索引"))
                     .font(.caption2)
                     .foregroundStyle(isFailed ? tint.opacity(0.78) : .white.opacity(0.48))
                     .lineLimit(1)
@@ -836,7 +836,7 @@ extension PreviewPanelView {
                 suggestedName: suggestedName,
                 fallbackTypeIdentifier: UTType.plainText.identifier,
                 errorDomain: "LapianBao.TranscriptDragExport",
-                missingFileMessage: "字幕文件不存在"
+                missingFileMessage: L10n.text("字幕文件不存在")
             )
         }
     }
@@ -852,6 +852,7 @@ extension PreviewPanelView {
 
         guard let markdown = try? String(contentsOfFile: export.filePath, encoding: .utf8) else { return 0 }
         let transcriptText = markdown
+            .replacingOccurrences(of: "## Original transcript", with: "## 原脚本")
             .components(separatedBy: "## 原脚本")
             .last?
             .components(separatedBy: .newlines)
@@ -890,7 +891,7 @@ extension PreviewPanelView {
 
                         Spacer(minLength: 4)
 
-                        Text("\(characterCount) 字")
+                        Text(L10n.text("\(characterCount) 字"))
                             .font(Design.numericCaption2())
                             .foregroundStyle(.white.opacity(0.48))
                             .lineLimit(1)
@@ -903,14 +904,14 @@ extension PreviewPanelView {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("跳到字幕起点")
+            .accessibilityLabel(L10n.text("跳到字幕起点"))
             .accessibilityIdentifier("export_transcript_row_\(export.id.uuidString)")
 
             exportItemActionColumn(
                 showInFinderURL: transcriptExportFileURL(for: export),
                 accessibilityIdentifierPrefix: "export_transcript_\(export.id.uuidString)",
-                jumpHelp: "跳到字幕起点",
-                deleteHelp: "删除字幕条目",
+                jumpHelp: L10n.text("跳到字幕起点"),
+                deleteHelp: L10n.text("删除字幕条目"),
                 onJump: {
                     jumpToExportLocation(path: export.videoPath, time: export.startTime)
                 },
@@ -959,7 +960,7 @@ extension PreviewPanelView {
         }
         .buttonStyle(.plain)
         .disabled(!FileManager.default.fileExists(atPath: clip.videoPath))
-        .accessibilityLabel(isPlaying ? "暂停导出声音片段" : "播放导出声音片段")
+        .accessibilityLabel(isPlaying ? L10n.text("暂停导出声音片段") : L10n.text("播放导出声音片段"))
         .accessibilityIdentifier("export_audio_play_button_\(clip.id.uuidString)")
     }
 
@@ -981,7 +982,7 @@ extension PreviewPanelView {
 
     func exportItemActionColumn(
         showInFinderURL: URL?,
-        showInFinderHelp: String = "在访达显示",
+        showInFinderHelp: String = L10n.text("在访达显示"),
         accessibilityIdentifierPrefix: String,
         jumpHelp: String,
         deleteHelp: String,
@@ -1188,6 +1189,7 @@ extension PreviewPanelView {
         let path = video.url.path
         let status = libraryStore.musicDetectionStatusByVideoPath[path]
         let songs = libraryStore.musicsByVideoPath[path, default: []]
+        let presentation = MusicRecognitionPresentation(status: status, songCount: songs.count)
 
         Group {
             if case .running = status {
@@ -1197,20 +1199,21 @@ extension PreviewPanelView {
                         controller.seekToSeconds(song.detectedAt)
                     }
                 }
-            } else if case let .failed(message) = status {
-                RecognitionFailureIndicator(message: message, minHeight: 82)
-            } else if status == .completed, songs.isEmpty {
-                AppEmptyState(
-                    title: "暂无音乐识别结果",
-                    style: .compact,
-                    minHeight: 82,
-                    showsBackground: true
-                )
+            } else if presentation.noticeTitle != nil {
+                ForEach(songs) { song in
+                    ExportMusicRecognitionRow(song: song, videoPath: path) {
+                        controller.pause()
+                        controller.seekToSeconds(song.detectedAt)
+                    }
+                }
+                MusicRecognitionNotice(presentation: presentation) {
+                    libraryStore.detectMusic(for: video)
+                }
             } else if songs.isEmpty {
                 AppEmptyState(
-                    title: "暂无音乐识别记录",
+                    title: L10n.text("暂无音乐识别记录"),
                     systemImage: "music.note",
-                    description: "选择音乐后会自动开始识别。",
+                    description: L10n.text("选择音乐后会自动开始识别。"),
                     style: .compact,
                     minHeight: 82
                 )

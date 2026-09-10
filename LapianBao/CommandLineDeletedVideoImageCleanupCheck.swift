@@ -14,8 +14,8 @@ enum CommandLineDeletedVideoImageCleanupCheck {
         var appDeleteRemovedVideoFile = false
         var appDeleteRemovedImageFile = false
         var appDeleteRemovedFrameRecord = false
-        var missingVideoLoadRemovedImageFile = false
-        var missingVideoLoadRemovedFrameRecord = false
+        var missingVideoLoadPreservedImageFile = false
+        var missingVideoLoadPreservedFrameRecord = false
         var failures: [String] = []
     }
 
@@ -120,17 +120,17 @@ enum CommandLineDeletedVideoImageCleanupCheck {
         ))
         store.projectSaveTask?.cancel()
 
-        report.missingVideoLoadRemovedImageFile = !fileManager.fileExists(atPath: imageURL.path)
-        report.missingVideoLoadRemovedFrameRecord = store.sampledFrames.isEmpty
+        report.missingVideoLoadPreservedImageFile = fileManager.fileExists(atPath: imageURL.path)
+        report.missingVideoLoadPreservedFrameRecord = store.sampledFrames.count == 1
 
         appendFailure(
-            report.missingVideoLoadRemovedImageFile,
-            "loading project data after a video disappears must remove orphan generated image exports",
+            report.missingVideoLoadPreservedImageFile,
+            "loading with unavailable media must preserve generated image exports",
             to: &report
         )
         appendFailure(
-            report.missingVideoLoadRemovedFrameRecord,
-            "loading project data after a video disappears must prune orphan sampled-frame records",
+            report.missingVideoLoadPreservedFrameRecord,
+            "loading with unavailable media must preserve sampled-frame records",
             to: &report
         )
     }

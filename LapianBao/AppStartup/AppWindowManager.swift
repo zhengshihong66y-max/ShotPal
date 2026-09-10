@@ -66,7 +66,7 @@ final class AppWindowManager {
             backing: .buffered,
             defer: false
         )
-        window.title = "拉片宝"
+        window.title = L10n.text("拉片宝")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = .clear

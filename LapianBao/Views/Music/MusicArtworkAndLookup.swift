@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 import Foundation
+import ImageIO
 
 nonisolated enum MusicArtworkCache {
     static let shared: NSCache<NSURL, NSImage> = {
@@ -34,7 +35,7 @@ nonisolated enum MusicArtworkCache {
         }
     }
 
-    private static func prewarmCachedArtwork(_ artworkURL: URL) async {
+    @concurrent nonisolated private static func prewarmCachedArtwork(_ artworkURL: URL) async {
         let cacheKey = artworkURL as NSURL
         if shared.object(forKey: cacheKey) != nil {
             return
@@ -59,11 +60,26 @@ nonisolated enum MusicArtworkCache {
                !(200..<300).contains(httpResponse.statusCode) {
                 return
             }
-            guard let image = NSImage(data: data) else { return }
-            shared.setObject(image, forKey: cacheKey, cost: data.count)
+            guard let image = decodedImage(data: data) else { return }
+            shared.setObject(image, forKey: cacheKey, cost: decodedCost(image))
         } catch {
             return
         }
+    }
+
+    static func decodedImage(data: Data) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 1024,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { return nil }
+        return NSImage(cgImage: thumbnail, size: NSSize(width: thumbnail.width, height: thumbnail.height))
+    }
+
+    static func decodedCost(_ image: NSImage) -> Int {
+        Int(image.size.width * image.size.height * 4)
     }
 }
 
@@ -99,82 +115,33 @@ actor MusicArtworkLoadGate {
 actor MusicArtworkFallbackResolver {
     static let shared = MusicArtworkFallbackResolver()
 
-    private var cachedURLs: [String: URL?] = [:]
+    private var cachedURLs: [String: (url: URL?, expires: Date)] = [:]
+    private var inFlight: [String: Task<URL?, Never>] = [:]
 
     func artworkURL(title rawTitle: String, artist rawArtist: String) async -> URL? {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let artist = rawArtist.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = [normalizedSearch(artist), normalizedSearch(title)].joined(separator: "|")
-        guard key != "|" else { return nil }
+        guard !title.isEmpty, !artist.isEmpty else { return nil }
 
-        if cachedURLs.keys.contains(key) {
-            return cachedURLs[key] ?? nil
+        if let cached = cachedURLs[key], cached.expires > Date() {
+            return cached.url
         }
+        if let task = inFlight[key] { return await task.value }
 
         let query = [artist, title]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        guard !query.isEmpty else {
-            cachedURLs[key] = nil
-            return nil
+        let task = Task<URL?, Never> {
+            guard let results = try? await LibraryStore.searchAppleMusic(query: query) else { return nil }
+            return MusicArtworkSelection.fallbackURL(in: results, title: title, artist: artist)
         }
-
-        do {
-            let results = try await LibraryStore.searchAppleMusic(query: query)
-            let url = bestArtworkURL(in: results, title: title, artist: artist)
-            cachedURLs[key] = url
-            return url
-        } catch {
-            cachedURLs[key] = nil
-            return nil
-        }
-    }
-
-    private func bestArtworkURL(
-        in results: [AppleMusicSearchResult],
-        title: String,
-        artist: String
-    ) -> URL? {
-        results
-            .compactMap { result -> (score: Int, url: URL)? in
-                guard let url = normalizedMusicArtworkURL(result.artworkURL) else { return nil }
-                return (musicArtworkMatchScore(result: result, title: title, artist: artist), url)
-            }
-            .sorted { lhs, rhs in lhs.score > rhs.score }
-            .first?
-            .url
-    }
-
-    private func musicArtworkMatchScore(
-        result: AppleMusicSearchResult,
-        title: String,
-        artist: String
-    ) -> Int {
-        let targetTitle = normalizedSearch(title)
-        let targetArtist = normalizedSearch(artist)
-        let resultTitle = normalizedSearch(result.title)
-        let resultArtist = normalizedSearch(result.artist)
-        var score = 0
-
-        if !targetTitle.isEmpty {
-            if resultTitle == targetTitle {
-                score += 8
-            } else if !resultTitle.isEmpty,
-                      resultTitle.contains(targetTitle) || targetTitle.contains(resultTitle) {
-                score += 4
-            }
-        }
-
-        if !targetArtist.isEmpty {
-            if resultArtist == targetArtist {
-                score += 6
-            } else if !resultArtist.isEmpty,
-                      resultArtist.contains(targetArtist) || targetArtist.contains(resultArtist) {
-                score += 3
-            }
-        }
-
-        return score
+        inFlight[key] = task
+        let url = await task.value
+        inFlight[key] = nil
+        cachedURLs = cachedURLs.filter { $0.value.expires > Date() }
+        cachedURLs[key] = (url, Date().addingTimeInterval(url == nil ? 30 : 3600))
+        return url
     }
 }
 
@@ -186,54 +153,38 @@ struct MusicArtworkView: View {
     var shouldLoad = true
     var allowsFallbackLookup = true
 
-    @State private var image: NSImage?
-    @State private var didFail = false
+    @State private var displayState = MusicArtworkDisplayState()
 
-    private var artworkURL: URL? {
-        normalizedMusicArtworkURL(urlString)
-    }
-
-    private var loadKey: String {
-        [
-            urlString,
-            title,
-            artist,
-            shouldLoad ? "load" : "pause",
-            allowsFallbackLookup ? "fallback" : "direct"
-        ].joined(separator: "|")
-    }
-
-    private var hasPotentialArtwork: Bool {
-        artworkURL != nil
-            || (
-                allowsFallbackLookup
-                && (
-                    !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || !artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
-            )
+    private var request: MusicArtworkRequest {
+        MusicArtworkRequest(urlString: urlString, title: title, artist: artist,
+                            shouldLoad: shouldLoad, allowsFallbackLookup: allowsFallbackLookup)
     }
 
     var body: some View {
-        ZStack {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                placeholder
-                    .redacted(reason: hasPotentialArtwork && !didFail ? .placeholder : [])
+        let request = request
+        let cached = request.url.flatMap { MusicArtworkCache.shared.object(forKey: $0 as NSURL) }
+        let image = cached ?? displayState.visibleImage(for: request)
+        GeometryReader { proxy in
+            ZStack {
+                if let image {
+                    Image(nsImage: image).resizable().scaledToFill()
+                } else {
+                    placeholder
+                }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
         }
-        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .task(id: loadKey) {
-            guard shouldLoad else {
-                image = nil
-                didFail = false
+        .transaction { $0.animation = nil }
+        .task(id: request) {
+            let generation = displayState.begin(request)
+            if let cached {
+                displayState.accept(cached, for: request, generation: generation)
                 return
             }
-            await loadArtwork()
+            guard request.shouldLoad else { return }
+            await loadArtwork(request, generation: generation)
         }
     }
 
@@ -245,94 +196,38 @@ struct MusicArtworkView: View {
             .background(.pink.opacity(0.12))
     }
 
-    private func loadArtwork() async {
-        if let artworkURL,
-           let cached = MusicArtworkCache.shared.object(forKey: artworkURL as NSURL) {
-            image = cached
-            didFail = false
+    private func loadArtwork(_ request: MusicArtworkRequest, generation: UInt64) async {
+        if let url = request.url, let image = await loadImage(from: url) {
+            guard !Task.isCancelled else { return }
+            displayState.accept(image, for: request, generation: generation)
             return
         }
-
-        image = nil
-        didFail = false
-
-        if let artworkURL, await loadImage(from: artworkURL) {
-            return
-        }
-
-        if allowsFallbackLookup,
-           let fallbackURL = await MusicArtworkFallbackResolver.shared.artworkURL(title: title, artist: artist),
-           fallbackURL != artworkURL,
-           await loadImage(from: fallbackURL) {
-            return
-        }
-
         guard !Task.isCancelled else { return }
-        image = nil
-        didFail = true
+        if request.allowsFallbackLookup,
+           let fallbackURL = await MusicArtworkFallbackResolver.shared.artworkURL(title: request.title, artist: request.artist),
+           fallbackURL != request.url {
+            guard !Task.isCancelled else { return }
+            if let image = await loadImage(from: fallbackURL), !Task.isCancelled {
+                displayState.accept(image, for: request, generation: generation)
+            }
+        }
+        // Keep a valid same-song cover if a refreshed URL fails; otherwise keep the stable placeholder.
     }
 
-    private func loadImage(from artworkURL: URL) async -> Bool {
+    private func loadImage(from artworkURL: URL) async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
         if let cached = MusicArtworkCache.shared.object(forKey: artworkURL as NSURL) {
-            image = cached
-            didFail = false
-            return true
+            return cached
         }
-
-        do {
-            var request = URLRequest(url: artworkURL)
-            request.timeoutInterval = 12
-            request.cachePolicy = .returnCacheDataElseLoad
-            request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-            request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-            await MusicArtworkLoadGate.shared.acquire()
-            defer {
-                Task {
-                    await MusicArtworkLoadGate.shared.release()
-                }
-            }
-            guard !Task.isCancelled else { return false }
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200..<300).contains(httpResponse.statusCode) {
-                throw URLError(.badServerResponse)
-            }
-            guard let loadedImage = NSImage(data: data) else {
-                throw URLError(.cannotDecodeContentData)
-            }
-            MusicArtworkCache.shared.setObject(loadedImage, forKey: artworkURL as NSURL, cost: data.count)
-            guard !Task.isCancelled else { return false }
-            image = loadedImage
-            didFail = false
-            return true
-        } catch {
-            return false
-        }
+        guard let data = await MusicArtworkLoader.shared.data(for: artworkURL), !Task.isCancelled else { return nil }
+        _ = await Task.detached(priority: .utility) {
+            guard MusicArtworkCache.shared.object(forKey: artworkURL as NSURL) == nil,
+                  let image = MusicArtworkCache.decodedImage(data: data) else { return }
+            MusicArtworkCache.shared.setObject(image, forKey: artworkURL as NSURL, cost: MusicArtworkCache.decodedCost(image))
+        }.value
+        guard !Task.isCancelled else { return nil }
+        return MusicArtworkCache.shared.object(forKey: artworkURL as NSURL)
     }
-}
-
-nonisolated func normalizedMusicArtworkURL(_ rawURLString: String) -> URL? {
-    var text = rawURLString.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return nil }
-
-    if text.hasPrefix("//") {
-        text = "https:" + text
-    } else if text.hasPrefix("http://") {
-        text = "https://" + String(text.dropFirst("http://".count))
-    }
-
-    text = text.replacingOccurrences(
-        of: #"(\d+)x(\d+)bb(\.[A-Za-z0-9]+)$"#,
-        with: "512x512bb$3",
-        options: .regularExpression
-    )
-
-    if let url = URL(string: text) {
-        return url
-    }
-
-    return URL(string: text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
 }
 
 func youTubeMusicQuery(for song: MusicRecognitionItem) -> String {

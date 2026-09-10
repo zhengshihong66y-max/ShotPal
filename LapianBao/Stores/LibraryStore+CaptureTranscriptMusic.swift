@@ -12,26 +12,6 @@ import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
-/// 歌曲下载进度的发布节流门:变化不足 1% 且距上次发布不足 150ms 时丢弃。
-nonisolated final class MusicProgressThrottleGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var lastPublishedProgress = -1.0
-    private var lastPublishedAt = Date.distantPast
-
-    func shouldPublish(_ progress: Double) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        let now = Date()
-        if progress >= 1 || progress <= 0 || abs(progress - lastPublishedProgress) >= 0.01
-            || now.timeIntervalSince(lastPublishedAt) >= 0.15 {
-            lastPublishedProgress = progress
-            lastPublishedAt = now
-            return true
-        }
-        return false
-    }
-}
-
 extension LibraryStore {
     @discardableResult
     func ensureSceneFrameExported(video: VideoItem, cut: SceneCut, sceneIndex: Int?) async -> SampledFrame? {
@@ -177,7 +157,7 @@ extension LibraryStore {
         if case .running = transcriptStatusByVideoPath[path] { return }
         noteTransientMediaAccess(for: path)
         PerformanceDiagnostics.mark("transcript start", path: path)
-        transcriptStatusByVideoPath[path] = .running("准备字幕分析 1%")
+        transcriptStatusByVideoPath[path] = .running(L10n.text("准备字幕分析 1%"))
         let videoName = video.name
         let processRegistry = ToolProcessRegistry()
         let progressCallback: @Sendable (Double, String) -> Void = { [weak self] progress, message in
@@ -197,8 +177,7 @@ extension LibraryStore {
                 )
                 guard !Task.isCancelled else { throw CancellationError() }
                 guard self?.containsVideoPath(path) == true else { return }
-                self?.transcriptSegmentsByVideoPath[path] = segments
-                self?.transcriptStatusByVideoPath[path] = .idle
+                self?.completeTranscription(path: path, segments: segments)
                 self?.saveProjectData()
                 PerformanceDiagnostics.mark("transcript finished", path: path)
             } catch is CancellationError {
@@ -227,7 +206,7 @@ extension LibraryStore {
         guard transcriptBatchTask == nil else { return }
         let queue = videos.filter { video in
             if onlyMissing {
-                return transcriptSegmentsByVideoPath[video.url.path, default: []].isEmpty
+                return transcriptSegmentsByVideoPath[video.url.path] == nil
             }
             return true
         }
@@ -255,7 +234,7 @@ extension LibraryStore {
                     self.transcriptBatchJob.currentVideoPath = path
                     self.transcriptBatchJob.currentVideoName = video.name
                     self.updateTranscriptBatchProgress(completed: completed, currentProgress: 0)
-                    self.transcriptStatusByVideoPath[path] = .running("准备字幕分析 1%")
+                    self.transcriptStatusByVideoPath[path] = .running(L10n.text("准备字幕分析 1%"))
                 }
 
                 let progressCallback: @Sendable (Double, String) -> Void = { [weak self] progress, message in
@@ -277,8 +256,7 @@ extension LibraryStore {
                     try Task.checkCancellation()
                     completed += 1
                     await MainActor.run {
-                        self.transcriptSegmentsByVideoPath[path] = segments
-                        self.transcriptStatusByVideoPath[path] = .idle
+                        self.completeTranscription(path: path, segments: segments)
                         self.updateTranscriptBatchProgress(completed: completed, currentProgress: 0)
                         self.saveProjectData()
                     }
@@ -312,7 +290,19 @@ extension LibraryStore {
         transcriptBatchJob.status = .running
     }
 
+    func completeTranscription(path: String, segments: [TranscriptSegment]) {
+        // Music/unclear speech may legitimately produce no words. Keep an explicit
+        // empty result to prevent automatic retries, without erasing usable text.
+        if !segments.isEmpty || transcriptSegmentsByVideoPath[path, default: []].isEmpty {
+            transcriptSegmentsByVideoPath[path] = segments
+        }
+        transcriptStatusByVideoPath[path] = .completed
+    }
+
     func updateTranscriptProgress(path: String, progress: Double, message: String) {
+        // Progress callbacks are queued independently; late ones must not revive a
+        // completed/failed/cancelled job and lock the UI back in a running state.
+        guard case .running = transcriptStatusByVideoPath[path] else { return }
         let normalized = Self.normalizedProgress(progress)
         let currentMessage: String
         let currentProgress: Double
@@ -390,7 +380,7 @@ extension LibraryStore {
         let path = video.url.path
         if case .running = musicDetectionStatusByVideoPath[path] { return }
         let existingSongs = musicsByVideoPath[path, default: []]
-        musicDetectionStatusByVideoPath[path] = .running("准备中…")
+        musicDetectionStatusByVideoPath[path] = .running(L10n.text("准备中…"))
 
         weak let weakSelf = self
         musicDetectionTasks.replace(path) {
@@ -424,8 +414,10 @@ extension LibraryStore {
                 weakSelf?.musicsByVideoPath[path] = existingSongs
                 weakSelf?.musicDetectionStatusByVideoPath[path] = .idle
             } catch {
-                weakSelf?.musicsByVideoPath[path] = existingSongs
+                // Keep valid matches already emitted before a later segment
+                // failed. Cancellation still restores the pre-run snapshot.
                 weakSelf?.musicDetectionStatusByVideoPath[path] = .failed(error.localizedDescription)
+                weakSelf?.saveProjectData()
             }
         }
     }
@@ -611,7 +603,7 @@ extension LibraryStore {
                 }
 
                 await MainActor.run {
-                    self.musicDetectionStatusByVideoPath[path] = .running("准备中…")
+                    self.musicDetectionStatusByVideoPath[path] = .running(L10n.text("准备中…"))
                 }
 
                 do {
@@ -650,8 +642,8 @@ extension LibraryStore {
                     }
                 } catch {
                     await MainActor.run {
-                        self.musicsByVideoPath[path] = existingSongs
                         self.musicDetectionStatusByVideoPath[path] = .failed(error.localizedDescription)
+                        self.saveProjectData()
                     }
                 }
             }
@@ -924,8 +916,8 @@ extension LibraryStore {
     }
 
     func downloadMusic(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) {
-        downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
         guard let jobID = prepareMusicDownloadJob(song: song, type: type, recognitionID: recognitionID) else { return }
+        downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
         musicDownloadTasks.start(jobID) { [weak self] in
             guard let self else { return }
             await self.runMusicDownload(jobID: jobID, song: song, type: type)
@@ -936,7 +928,7 @@ extension LibraryStore {
         guard musicDownloadBatchTask == nil else { return }
         downloaderSelfCheck.startExternalServiceSelfCheckPreflightIfNeeded()
         guard libraryURL != nil else {
-            musicDownloadBatchJob = TranscriptBatchJob(status: .failed("请先打开一个素材库文件夹"), total: 0, completed: 0, progress: 0)
+            musicDownloadBatchJob = TranscriptBatchJob(status: .failed(L10n.text("请先打开一个素材库文件夹")), total: 0, completed: 0, progress: 0)
             return
         }
 
@@ -953,7 +945,7 @@ extension LibraryStore {
 
             for entry in queue {
                 if Task.isCancelled { break }
-                let title = entry.song.title.isEmpty ? "未知音乐" : entry.song.title
+                let title = entry.song.title.isEmpty ? L10n.text("未知音乐") : entry.song.title
                 self.musicDownloadBatchJob.status = .running
                 self.musicDownloadBatchJob.currentVideoName = "\(title) · \(entry.type.label)"
                 self.updateMusicDownloadBatchProgress(completed: completed, currentProgress: 0)
@@ -976,43 +968,37 @@ extension LibraryStore {
     }
 
     func prepareMusicDownloadJob(song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType, recognitionID: UUID? = nil) -> UUID? {
-        guard libraryURL != nil else {
-            musicDownloadJobs.append(MusicDownloadJob(
-                songKey: musicSongKey(song),
-                recognitionID: recognitionID,
-                type: type,
-                status: .failed("请先打开一个素材库文件夹")
-            ))
-            return nil
-        }
-
         let songKey = musicSongKey(song)
+        let status: RemoteImportJob.Status = libraryURL == nil
+            ? .failed(L10n.text("请先打开一个素材库文件夹")) : .importing
         // 全局唯一:一首歌 × 一种类型只有一条记录;重试就地更新,永不追加副本
-        if let index = musicDownloadJobs.firstIndex(where: { $0.songKey == songKey && $0.type == type }) {
-            let existing = musicDownloadJobs[index]
+        if let index = musicDownloadJobs.lastIndex(where: { $0.songKey == songKey && $0.type == type }) {
+            var existing = musicDownloadJobs[index]
             if Self.isActiveDownloadStatus(existing.status) {
                 return nil
             }
             if isSatisfiedMusicDownload(existing) {
                 return nil
             }
-            musicDownloadJobs[index].status = .importing
-            musicDownloadJobs[index].downloadProgress = nil
+            existing.status = status
+            existing.downloadProgress = nil
+            existing.song = song
             if let recognitionID {
-                musicDownloadJobs[index].recognitionID = recognitionID
+                existing.recognitionID = recognitionID
             }
-            return existing.id
+            musicDownloadJobs[index] = existing
+            return libraryURL == nil ? nil : existing.id
         }
 
-        let job = MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: .importing)
+        let job = MusicDownloadJob(songKey: songKey, recognitionID: recognitionID, type: type, status: status, song: song)
         musicDownloadJobs.append(job)
-        return job.id
+        return libraryURL == nil ? nil : job.id
     }
 
     func runMusicDownload(jobID: UUID, song: MusicRecognitionItem, type: MusicDownloadJob.DownloadType) async {
         guard let libraryURL else {
             updateMusicDownloadJob(id: jobID) { j in
-                j.status = .failed("请先打开一个素材库文件夹")
+                j.status = .failed(L10n.text("请先打开一个素材库文件夹"))
                 j.downloadProgress = nil
                 j.isPreparingWaveform = false
             }
@@ -1021,19 +1007,19 @@ extension LibraryStore {
 
         let query = musicDownloadQuery(song: song, type: type)
         let preResolvedURL = musicSearchURLBySongKey[musicSearchURLCacheKey(song: song, type: type)]
-        // 进度回调节流:并发分片下载的进度行非常密,逐行更新 @Published
-        // 任务数组会拖垮主线程;小于 1% 且间隔不足 150ms 的更新直接丢弃。
-        let progressGate = MusicProgressThrottleGate()
-        let progressCallback: @Sendable (Double) -> Void = { [weak self] progress in
-            let normalized = Self.normalizedProgress(progress)
-            guard progressGate.shouldPublish(normalized) else { return }
-            Task { @MainActor [weak self] in
-                self?.updateMusicDownloadJob(id: jobID) { j in
-                    // 与视频下载一致:每条进度独立 Task 派发,MainActor 执行顺序
-                    // 不保证,写入取 max 丢弃乱序旧值,进度条只前进不抖动。
-                    j.downloadProgress = max(j.downloadProgress ?? 0, normalized)
-                }
+        // Keep progress visible across searches without flooding the main thread.
+        // nil means unmeasured work (search/extraction), never a synthetic percentage.
+        let progressUpdates = DownloadProgressCoalescer { [weak self] progress, phase in
+            guard let self,
+                  let job = self.musicDownloadJobs.first(where: { $0.id == jobID }),
+                  Self.isActiveDownloadStatus(job.status) else { return }
+            self.updateMusicDownloadJob(id: jobID) { j in
+                j.status = phase == "transcoding" ? .transcoding : .importing
+                j.downloadProgress = progress.map(Self.normalizedProgress)
             }
+        }
+        let progressCallback: @Sendable (Double?, Bool) -> Void = { progress, isPostProcessing in
+            progressUpdates.submit(progress, isPostProcessing ? "transcoding" : nil)
         }
 
         do {
@@ -1116,7 +1102,10 @@ extension LibraryStore {
 
     func updateMusicDownloadJob(id: UUID, mutate: (inout MusicDownloadJob) -> Void) {
         guard let index = musicDownloadJobs.firstIndex(where: { $0.id == id }) else { return }
-        mutate(&musicDownloadJobs[index])
+        var next = musicDownloadJobs[index]
+        mutate(&next)
+        guard next != musicDownloadJobs[index] else { return }
+        musicDownloadJobs[index] = next
         saveProjectData()
     }
 

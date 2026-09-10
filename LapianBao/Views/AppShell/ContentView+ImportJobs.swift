@@ -27,13 +27,12 @@ extension ContentView {
         }
 
         importURLFeedbackMessage = nil
+        // This is a submitted draft, not the download history (which lives in jobs).
+        // Clear before publishing queue changes, and consume the current clipboard.
+        importURLText = ""
+        observedPasteboardChangeCount = NSPasteboard.general.changeCount
         libraryStore.saveInstagramImportEndpoint(importEndpointText)
         libraryStore.importRemoteVideos(from: videos.map(\.urlString).joined(separator: "\n"))
-
-        let importedIDs = Set(videos.map(\.id))
-        let remainingURLs = LibraryStore.remoteImportURLs(from: importURLText)
-            .filter { !importedIDs.contains(importCandidateID(for: $0)) }
-        importURLText = remainingURLs.joined(separator: "\n")
     }
 
     var detectedImportPlatform: String {
@@ -41,7 +40,7 @@ extension ContentView {
             let firstLink = importURLTokens.first,
             let url = URL(string: firstLink),
             let platform = LibraryStore.platformName(for: url)
-        else { return "等待识别平台" }
+        else { return L10n.text("等待识别平台") }
         return platform
     }
 
@@ -63,9 +62,9 @@ extension ContentView {
         if !manualImportVideos.isEmpty {
             let duplicateCount = duplicateManualImportVideos.count
             if duplicateCount > 0 {
-                return "\(manualImportVideos.count) 个可下载 · \(duplicateCount) 个已存在"
+                return L10n.text("\(manualImportVideos.count) 个可下载 · \(duplicateCount) 个已存在")
             }
-            return "\(manualImportVideos.count) 个输入链接"
+            return L10n.text("\(manualImportVideos.count) 个输入链接")
         }
 
         if !duplicateManualImportVideos.isEmpty {
@@ -73,10 +72,10 @@ extension ContentView {
         }
 
         if !importURLTokens.isEmpty {
-            return "\(importURLTokens.count) 个链接待检查"
+            return L10n.text("\(importURLTokens.count) 个链接待检查")
         }
 
-        return "没有识别到有效链接"
+        return L10n.text("没有识别到有效链接")
     }
 
     var importInputStatusIconName: String {
@@ -107,12 +106,12 @@ extension ContentView {
 
     var unavailableImportURLFeedbackText: String {
         if !duplicateManualImportVideos.isEmpty {
-            return "\(duplicateManualImportVideos.count) 个链接已在素材库或下载队列中"
+            return L10n.text("\(duplicateManualImportVideos.count) 个链接已在素材库或下载队列中")
         }
         if !importURLTokens.isEmpty {
-            return "链接已识别，但没有可加入的新任务"
+            return L10n.text("链接已识别，但没有可加入的新任务")
         }
-        return "没有识别到有效链接"
+        return L10n.text("没有识别到有效链接")
     }
 
     var detectedImportPlatformSummary: String {
@@ -120,9 +119,9 @@ extension ContentView {
             .compactMap { URL(string: $0) }
             .compactMap { LibraryStore.platformName(for: $0) }
         let unique = Array(Set(platforms)).sorted()
-        guard !unique.isEmpty else { return "等待识别平台" }
-        if unique.count == 1 { return "\(unique[0]) · \(platforms.count) 个链接" }
-        return "\(unique.joined(separator: " / ")) · \(platforms.count) 个链接"
+        guard !unique.isEmpty else { return L10n.text("等待识别平台") }
+        if unique.count == 1 { return L10n.text("\(unique[0]) · \(platforms.count) 个链接") }
+        return L10n.text("\(unique.joined(separator: " / ")) · \(platforms.count) 个链接")
     }
 
     var importURLTokens: [String] {
@@ -156,7 +155,7 @@ extension ContentView {
         return PendingImportVideo(
             id: importCandidateID(for: rawURL),
             urlString: rawURL,
-            platform: platform ?? "未知平台",
+            platform: platform ?? L10n.text("未知平台"),
             title: pendingImportTitle(for: url, platform: platform),
             subtitle: pendingImportSubtitle(for: url),
             isSupported: platform != nil
@@ -201,13 +200,13 @@ extension ContentView {
     func pendingImportTitle(for url: URL, platform: String?) -> String {
         if platform == "Instagram",
            let content = LibraryStore.instagramContentParts(from: url) {
-            let type = content.type == "reel" ? "Reel" : "帖子"
+            let type = content.type == "reel" ? "Reel" : L10n.text("帖子")
             return "Instagram \(type) · \(content.shortcode)"
         }
 
         if platform == "小红书",
            let noteID = LibraryStore.xiaohongshuNoteID(from: url) {
-            return "小红书视频 · \(noteID)"
+            return L10n.text("小红书视频 · \(noteID)")
         }
 
         if platform == "YouTube" {
@@ -221,7 +220,7 @@ extension ContentView {
             }
         }
 
-        let fallbackPlatform = platform ?? "链接"
+        let fallbackPlatform = platform ?? L10n.text("链接")
         let pathTail = url.pathComponents.last { $0 != "/" && !$0.isEmpty }
         if let pathTail {
             return "\(fallbackPlatform) · \(pathTail)"
@@ -308,7 +307,7 @@ extension ContentView {
                 batchIndexByID[batchID] = items.count
                 items.append(.batch(ImportHistoryBatch(
                     id: batchID,
-                    title: title.map { $0.isEmpty ? "批量导入" : $0 } ?? "批量导入",
+                    title: title.map { $0.isEmpty ? L10n.text("批量导入") : $0 } ?? L10n.text("批量导入"),
                     jobs: [job]
                 )))
             }
@@ -333,10 +332,10 @@ extension ContentView {
 
     var importProgressSummary: String {
         guard !activeImportJobs.isEmpty else {
-            return libraryStore.remoteImportJobs.isEmpty ? "" : "下载任务已完成"
+            return libraryStore.remoteImportJobs.isEmpty ? "" : L10n.text("下载任务已完成")
         }
 
-        return "\(activeImportJobs.count) 个任务"
+        return L10n.text("\(activeImportJobs.count) 个任务")
     }
 
     var downloadTimelineSummary: String {
@@ -346,22 +345,22 @@ extension ContentView {
             if let progress = activeImportOverallProgress {
                 return "\(activeImportJobs.count) · \(progressPercentText(progress))"
             }
-            return "\(activeImportJobs.count) 个任务"
+            return L10n.text("\(activeImportJobs.count) 个任务")
         }
 
         if failedImportCount > 0 {
-            return "\(finishedImportCount) 完成 · \(failedImportCount) 失败"
+            return L10n.text("\(finishedImportCount) 完成 · \(failedImportCount) 失败")
         }
-        return "\(finishedImportCount) 已完成"
+        return L10n.text("\(finishedImportCount) 已完成")
     }
 
     var downloadHistorySummary: String {
         let totalCount = finishedImportCount + failedImportCount
         guard totalCount > 0 else { return "" }
         if failedImportCount > 0 {
-            return "\(finishedImportCount) 完成 · \(failedImportCount) 失败"
+            return L10n.text("\(finishedImportCount) 完成 · \(failedImportCount) 失败")
         }
-        return "\(finishedImportCount) 条记录"
+        return L10n.text("\(finishedImportCount) 条记录")
     }
 
     var activeImportOverallProgress: Double? {
@@ -489,17 +488,17 @@ extension ContentView {
     }
 
     func importBatchTitle(_ batch: ImportHistoryBatch) -> String {
-        "\(batch.title) · \(batch.totalCount) 条"
+        L10n.text("\(batch.title) · \(batch.totalCount) 条")
     }
 
     func importBatchSummaryText(_ batch: ImportHistoryBatch) -> String {
         if batch.failedCount > 0 {
-            return "\(batch.succeededCount) 成功 · \(batch.failedCount) 失败"
+            return L10n.text("\(batch.succeededCount) 成功 · \(batch.failedCount) 失败")
         }
         if batch.completedCount < batch.totalCount {
-            return "已完成 \(batch.completedCount) 条，剩余任务仍在下载"
+            return L10n.text("已完成 \(batch.completedCount) 条，剩余任务仍在下载")
         }
-        return "全部下载完成"
+        return L10n.text("全部下载完成")
     }
 
     func importBatchIconName(_ batch: ImportHistoryBatch) -> String {
@@ -573,9 +572,9 @@ extension ContentView {
         guard let progress = normalizedImportProgress(for: job) else {
             switch job.status {
             case .transcoding:
-                return "转码"
+                return L10n.text("转码")
             case .finalizing:
-                return "整理"
+                return L10n.text("整理")
             default:
                 return "…"
             }
@@ -635,8 +634,8 @@ extension ContentView {
             .controlSize(.mini)
             .tint(tint)
             .padding(.top, 5)
-            .accessibilityLabel("下载进度")
-            .accessibilityValue(progress.map(progressPercentText) ?? "处理中")
+            .accessibilityLabel(L10n.text("下载进度"))
+            .accessibilityValue(progress.map(progressPercentText) ?? L10n.text("处理中"))
     }
 
     func importActiveTitleText(for job: RemoteImportJob) -> String {
@@ -703,7 +702,7 @@ extension ContentView {
             parts.append(resolutionText)
         }
 
-        if let fileSize = metadata?.fileSize ?? importHistoryFileSize(for: outputPath),
+        if let fileSize = metadata?.fileSize,
            let fileSizeText = importHistoryFileSizeText(fileSize) {
             parts.append(fileSizeText)
         }
@@ -716,13 +715,6 @@ extension ContentView {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    func importHistoryFileSize(for outputPath: String) -> Int64? {
-        let url = URL(fileURLWithPath: outputPath)
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        guard let fileSize = values?.fileSize, fileSize > 0 else { return nil }
-        return Int64(fileSize)
-    }
-
     func importHistoryFileSizeText(_ fileSize: Int64) -> String? {
         guard fileSize > 0 else { return nil }
         return ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
@@ -731,31 +723,31 @@ extension ContentView {
     func importActiveStatusText(for job: RemoteImportJob) -> String {
         switch job.status {
         case .idle:
-            return "等待下载"
+            return L10n.text("等待下载")
         case .importing:
             guard let progressText = importStatusProgressText(for: job) else {
-                return "正在处理下载任务 · 等待准确进度"
+                return L10n.text("正在处理下载任务 · 等待准确进度")
             }
-            return "正在下载 \(job.platform) · \(progressText)"
+            return L10n.text("正在下载 \(VideoSourcePlatform.displayName(for: job.platform)) · \(progressText)")
         case .transcoding:
             guard let progressText = importStatusProgressText(for: job) else {
-                return "正在转码 · 等待 ffmpeg 返回进度"
+                return L10n.text("正在转码 · 等待 ffmpeg 返回进度")
             }
-            return "正在转码 · \(progressText)"
+            return L10n.text("正在转码 · \(progressText)")
         case .finalizing:
             guard let progressText = importStatusProgressText(for: job) else {
-                return "正在整理导入结果"
+                return L10n.text("正在整理导入结果")
             }
-            return "正在整理导入结果 · \(progressText)"
+            return L10n.text("正在整理导入结果 · \(progressText)")
         case .paused:
             if let progressText = importStatusProgressText(for: job) {
-                return "\(job.platform) 已暂停 · \(progressText)"
+                return L10n.text("\(VideoSourcePlatform.displayName(for: job.platform)) 已暂停 · \(progressText)")
             }
-            return "\(job.platform) 已暂停"
+            return L10n.text("\(VideoSourcePlatform.displayName(for: job.platform)) 已暂停")
         case let .succeeded(filename):
             return filename
         case .failed:
-            return "\(job.platform) 下载失败"
+            return L10n.text("\(VideoSourcePlatform.displayName(for: job.platform)) 下载失败")
         }
     }
 
@@ -826,10 +818,13 @@ extension ContentView {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(.white.opacity(0.06))
 
-            if let image = importJobThumbnail(for: job) {
+            if let outputPath = job.outputPath,
+               let image = libraryStore.thumbnailImageByVideoPath[outputPath] {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()
+            } else if let data = job.thumbnailData {
+                ImportJobThumbnailView(data: data)
             } else {
                 Image(systemName: importStatusIconName(for: job))
                     .font(.system(size: 18, weight: .semibold))
@@ -842,17 +837,6 @@ extension ContentView {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(.white.opacity(0.08), lineWidth: 1)
         }
-    }
-
-    func importJobThumbnail(for job: RemoteImportJob) -> NSImage? {
-        if let outputPath = job.outputPath,
-           let image = libraryStore.thumbnailImageByVideoPath[outputPath] {
-            return image
-        }
-        if let data = job.thumbnailData {
-            return NSImage(data: data)
-        }
-        return nil
     }
 
     func importedVideo(for job: RemoteImportJob) -> VideoItem? {
@@ -870,21 +854,21 @@ extension ContentView {
 
         VStack(spacing: 4) {
             if case .paused = job.status {
-                importJobActionButton(icon: "play.fill", help: "继续下载", identifier: "import_job_resume_\(job.id.uuidString)") {
+                importJobActionButton(icon: "play.fill", help: L10n.text("继续下载"), identifier: "import_job_resume_\(job.id.uuidString)") {
                     libraryStore.resumeRemoteImportJob(id: job.id)
                 }
             } else if isActiveImportJob(job) {
-                importJobActionButton(icon: "pause.fill", help: "暂停下载", identifier: "import_job_pause_\(job.id.uuidString)") {
+                importJobActionButton(icon: "pause.fill", help: L10n.text("暂停下载"), identifier: "import_job_pause_\(job.id.uuidString)") {
                     libraryStore.pauseRemoteImportJob(id: job.id)
                 }
             } else if job.outputPath != nil {
-                importJobActionButton(icon: "arrow.turn.up.right", help: "跳转到视频", identifier: "import_job_jump_\(jobAccessibilityKey)_\(job.id.uuidString)") {
+                importJobActionButton(icon: "arrow.turn.up.right", help: L10n.text("跳转到视频"), identifier: "import_job_jump_\(jobAccessibilityKey)_\(job.id.uuidString)") {
                     libraryStore.jumpToRemoteImportJob(id: job.id)
                     closeImportPanel()
                 }
             }
 
-            importJobActionButton(icon: "trash", help: "删除条目", identifier: "import_job_delete_\(job.id.uuidString)") {
+            importJobActionButton(icon: "trash", help: L10n.text("删除条目"), identifier: "import_job_delete_\(job.id.uuidString)") {
                 libraryStore.deleteRemoteImportJob(id: job.id)
             }
         }
@@ -944,19 +928,19 @@ extension ContentView {
     func importStatusTitle(for job: RemoteImportJob) -> String {
         switch job.status {
         case .idle:
-            return "等待下载"
+            return L10n.text("等待下载")
         case .importing:
-            return "正在下载 \(job.platform)"
+            return L10n.text("正在下载 \(VideoSourcePlatform.displayName(for: job.platform))")
         case .transcoding:
-            return "正在转码为 H.264"
+            return L10n.text("正在转码为 H.264")
         case .finalizing:
-            return "正在整理导入结果"
+            return L10n.text("正在整理导入结果")
         case .paused:
-            return "\(job.platform) 已暂停"
+            return L10n.text("\(VideoSourcePlatform.displayName(for: job.platform)) 已暂停")
         case let .succeeded(filename):
             return filename
         case .failed:
-            return "\(job.platform) 下载失败"
+            return L10n.text("\(VideoSourcePlatform.displayName(for: job.platform)) 下载失败")
         }
     }
 

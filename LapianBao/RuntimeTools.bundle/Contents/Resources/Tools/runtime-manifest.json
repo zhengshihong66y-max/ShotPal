@@ -1,8 +1,29 @@
 {
   "schemaVersion": 1,
-  "date": "2026-06-21",
+  "date": "2026-08-30",
   "bundleResourceRoot": "RuntimeTools.bundle/Contents/Resources",
   "embeddedResources": [
+    {
+      "id": "yt-dlp",
+      "path": "Tools/bin/yt-dlp",
+      "required": true,
+      "executable": true,
+      "purpose": "Pinned official zipimport archive with EJS, invoked by bundled Python; no first-use installation"
+    },
+    {
+      "id": "deno",
+      "path": "Tools/bin/deno",
+      "required": true,
+      "executable": true,
+      "architecture": "arm64",
+      "purpose": "Offline JavaScript challenge runtime for yt-dlp"
+    },
+    {
+      "id": "downloader_manifest",
+      "path": "Tools/downloader-manifest.json",
+      "required": true,
+      "purpose": "Pinned downloader versions, source URLs and SHA256 hashes"
+    },
     {
       "id": "whisper_cli",
       "path": "Tools/whisper.cpp/build/bin/whisper-cli",
@@ -55,7 +76,7 @@
       "executable": true,
       "architecture": "arm64",
       "minimumMacOS": "11.0",
-      "purpose": "Bundled Python runtime used to create app-managed helper environments"
+      "purpose": "Bundled relocatable Python runtime"
     },
     {
       "id": "python_3_11_x86_64",
@@ -64,7 +85,7 @@
       "executable": true,
       "architecture": "x86_64",
       "minimumMacOS": "10.15",
-      "purpose": "Bundled Python runtime used to create app-managed helper environments"
+      "purpose": "Bundled relocatable Python runtime"
     },
     {
       "id": "music_detection_script",
@@ -82,13 +103,13 @@
       "id": "music_requirements",
       "path": "Tools/requirements-music.txt",
       "required": true,
-      "purpose": "Dependencies installed into the app-managed music Python runtime"
+      "purpose": "Build-time music dependency inputs; shipped as locked wheels"
     },
     {
       "id": "transnet_requirements",
       "path": "Tools/requirements-transnet.txt",
       "required": true,
-      "purpose": "Dependencies installed into the app-managed TransNet Python runtime"
+      "purpose": "Build-time scene dependency inputs; shipped as locked wheels"
     },
     {
       "id": "music_env_setup_script",
@@ -129,37 +150,23 @@
       "purpose": "Python standalone runtime source, hash, and license notice"
     }
   ],
-  "appManagedRuntimeDependencies": [
-    {
-      "id": "music_python_env",
-      "installLocation": "~/Library/Application Support/LapianBao/PythonRuntimes/music-env",
-      "requirements": "Tools/requirements-music.txt",
-      "setup": "Tools/setup_music_env.sh",
-      "baseRuntime": "Tools/python/cpython-3.11-<current-architecture>-apple-darwin",
-      "reasonNotCopiedIntoApp": "Virtual environments contain machine-specific interpreter paths and are created in a writable user directory on first use."
-    },
-    {
-      "id": "transnet_python_env",
-      "installLocation": "~/Library/Application Support/LapianBao/PythonRuntimes/transnet-env",
-      "requirements": "Tools/requirements-transnet.txt",
-      "setup": "Tools/setup_transnet_env.sh",
-      "baseRuntime": "Tools/python/cpython-3.11-<current-architecture>-apple-darwin",
-      "reasonNotCopiedIntoApp": "Virtual environments contain machine-specific interpreter paths and are created in a writable user directory on first use."
-    }
-  ],
-  "externalRuntimeDependencies": [
-    {
-      "id": "yt-dlp",
-      "purpose": "Remote video download",
-      "currentResolution": "App-managed self-check/download plus PATH fallbacks",
-      "packagingNote": "The app can install an app-managed yt-dlp at runtime. A Homebrew wrapper should not be copied into the bundle."
-    }
-  ],
+  "appManagedRuntimeDependencies": [],
+  "externalRuntimeDependencies": [],
   "excludedLocalArtifacts": [
     "Tools/music-env",
     "Tools/transnet-env",
     "tmp",
     "output",
     ".codex-derived"
-  ]
+  ],
+  "bundledRecognition": {
+    "architecture": "arm64",
+    "minimumMacOS": "14.0",
+    "python": "3.11",
+    "vendorPath": "Tools/recognition/site-packages",
+    "manifest": "Tools/recognition/manifest.json",
+    "bootstrap": "Tools/recognition_bootstrap.py",
+    "firstUseInstallation": false,
+    "musicMatchingRequiresNetwork": true
+  }
 }

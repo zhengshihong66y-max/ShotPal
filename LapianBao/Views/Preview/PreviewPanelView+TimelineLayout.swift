@@ -23,7 +23,7 @@ extension PreviewPanelView {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 28)
                 }
-                .accessibilityLabel("后退一帧")
+                .accessibilityLabel(L10n.text("后退一帧"))
                 .accessibilityIdentifier("preview_legacy_step_back_button")
 
                 Button {
@@ -35,7 +35,7 @@ extension PreviewPanelView {
                         .background(.white.opacity(0.14))
                         .clipShape(Circle())
                 }
-                .accessibilityLabel(controller.isPlaying ? "暂停播放" : "播放")
+                .accessibilityLabel(controller.isPlaying ? L10n.text("暂停播放") : L10n.text("播放"))
                 .accessibilityIdentifier("preview_legacy_play_pause_button")
 
                 Button {
@@ -45,7 +45,7 @@ extension PreviewPanelView {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 28)
                 }
-                .accessibilityLabel("前进一帧")
+                .accessibilityLabel(L10n.text("前进一帧"))
                 .accessibilityIdentifier("preview_legacy_step_forward_button")
             }
 
@@ -59,7 +59,7 @@ extension PreviewPanelView {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 30, height: 28)
                 }
-                .accessibilityLabel("添加批注")
+                .accessibilityLabel(L10n.text("添加批注"))
                 .accessibilityIdentifier("preview_legacy_add_annotation_button")
             }
         }
@@ -109,7 +109,7 @@ extension PreviewPanelView {
                 direction: .backward,
                 size: transportButtonSize,
                 isHighlighted: activeTransportShortcutFeedback == .backward,
-                help: "J 后退一帧；按住连续后退",
+                help: L10n.text("J 后退一帧；按住连续后退"),
                 accessibilityIdentifier: "preview_shuttle_backward_button",
                 step: {
                     flashTransportShortcutFeedback(.backward)
@@ -132,14 +132,14 @@ extension PreviewPanelView {
                     .animation(.easeOut(duration: 0.08), value: isPlaybackHighlighted)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(controller.isPlaying ? "暂停播放" : "播放")
+            .accessibilityLabel(controller.isPlaying ? L10n.text("暂停播放") : L10n.text("播放"))
             .accessibilityIdentifier("preview_play_pause_button")
 
             TimelineShuttleButton(
                 direction: .forward,
                 size: transportButtonSize,
                 isHighlighted: activeTransportShortcutFeedback == .forward,
-                help: "L 前进一帧；按住连续前进",
+                help: L10n.text("L 前进一帧；按住连续前进"),
                 accessibilityIdentifier: "preview_shuttle_forward_button",
                 step: {
                     flashTransportShortcutFeedback(.forward)
@@ -157,7 +157,7 @@ extension PreviewPanelView {
                 icon: previewTabIcon(.frames),
                 progress: frameTimelineRecognitionProgress(for: video),
                 isActive: expandedPreviewTab == .frames || activeTransportShortcutFeedback == .framesTimeline,
-                help: expandedPreviewTab == .frames ? "收起画面时间线" : "展开画面时间线",
+                help: expandedPreviewTab == .frames ? L10n.text("收起画面时间线") : L10n.text("展开画面时间线"),
                 accessibilityIdentifier: "preview_frames_timeline_toggle_button"
             ) {
                 toggleExpanded(.frames)
@@ -167,7 +167,7 @@ extension PreviewPanelView {
             timelineTransportIconButton(
                 icon: "camera.fill",
                 isActive: activeTransportShortcutFeedback == .screenshot,
-                help: "截取当前帧",
+                help: L10n.text("截取当前帧"),
                 accessibilityIdentifier: "preview_capture_frame_button"
             ) {
                 libraryStore.captureCurrentFrame(video: video, time: controller.elapsed)
@@ -178,7 +178,7 @@ extension PreviewPanelView {
                 icon: previewTabIcon(.content),
                 progress: contentTimelineRecognitionProgress(for: video),
                 isActive: expandedPreviewTab == .audio || activeTransportShortcutFeedback == .contentTimeline,
-                help: expandedPreviewTab == .audio ? "收起内容时间线" : "展开内容时间线",
+                help: expandedPreviewTab == .audio ? L10n.text("收起内容时间线") : L10n.text("展开内容时间线"),
                 accessibilityIdentifier: "preview_content_timeline_toggle_button"
             ) {
                 toggleExpanded(.audio)
@@ -197,7 +197,7 @@ extension PreviewPanelView {
             timelineTransportIconButton(
                 icon: "text.bubble.fill",
                 isActive: isAnnotationPopoverPresented || activeTransportShortcutFeedback == .annotation,
-                help: "添加批注",
+                help: L10n.text("添加批注"),
                 accessibilityIdentifier: "preview_add_annotation_button"
             ) {
                 beginTimelineAnnotation()
@@ -216,7 +216,7 @@ extension PreviewPanelView {
     ) -> some View {
         let isShowingProgress = progress != nil
         let isHighlighted = isActive || isShowingProgress
-        let accessibilityText = progress.map { "识别中 \(progressPercentText($0))" } ?? help
+        let accessibilityText = progress.map { L10n.text("识别中 \(progressPercentText($0))") } ?? help
 
         return Button(action: action) {
             Group {
@@ -327,7 +327,7 @@ extension PreviewPanelView {
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
-        .accessibilityLabel("添加视频标签")
+        .accessibilityLabel(L10n.text("添加视频标签"))
         .accessibilityIdentifier("preview_video_tag_add_button")
         .popover(isPresented: $isVideoTagPopoverPresented, arrowEdge: .bottom) {
             videoTagPopover(for: video)
@@ -724,7 +724,7 @@ extension PreviewPanelView {
                     audioTimeline(for: video, clock: clock)
                 },
                 detail: {
-                    contentTimelineDetailContent(for: video)
+                    contentTimelineDetailContent(for: video, clock: clock)
                 }
             )
         case .content:
@@ -736,7 +736,7 @@ extension PreviewPanelView {
                     contentTimeline(for: video, clock: clock)
                 },
                 detail: {
-                    timelineDetailContent(.content, for: video)
+                    timelineDetailContent(.content, for: video, clock: clock)
                 }
             )
         }
@@ -803,8 +803,8 @@ extension PreviewPanelView {
     }
 
     var audioSelectionButtonHelp: String {
-        if audioInPoint == nil || audioOutPoint != nil { return "设置声音 In 点" }
-        return "设置声音 Out 点"
+        if audioInPoint == nil || audioOutPoint != nil { return L10n.text("设置声音 In 点") }
+        return L10n.text("设置声音 Out 点")
     }
 
     func setNextAudioSelectionPoint() {
@@ -955,16 +955,8 @@ extension PreviewPanelView {
 
     func shouldDelayContentTimelineExpansion(for video: VideoItem) -> Bool {
         let path = video.url.path
-        if !libraryStore.transcriptSegmentsByVideoPath[path, default: []].isEmpty {
-            return false
-        }
-        if case .failed = libraryStore.transcriptStatusByVideoPath[path] {
-            return false
-        }
-        if case .completed = libraryStore.transcriptStatusByVideoPath[path] {
-            return false
-        }
-        return true
+        return !TranscriptTimelineState(segments: libraryStore.transcriptSegmentsByVideoPath[path],
+                                        status: libraryStore.transcriptStatusByVideoPath[path]).canExpand
     }
 
     func completePendingTimelineExpansionIfReady() {
@@ -983,13 +975,9 @@ extension PreviewPanelView {
                 libraryStore.hasSceneRecognitionResult(for: video)
             else { return }
         case .audio:
-            if !libraryStore.transcriptSegmentsByVideoPath[pendingPath, default: []].isEmpty {
-                break
-            }
-            if case .failed = libraryStore.transcriptStatusByVideoPath[pendingPath] {
-                return
-            }
-            guard !timelineTranscriptRecognitionIsRunning(for: pendingPath) else { return }
+            let state = TranscriptTimelineState(segments: libraryStore.transcriptSegmentsByVideoPath[pendingPath],
+                                                status: libraryStore.transcriptStatusByVideoPath[pendingPath])
+            guard state.canExpand else { return }
         case .content:
             return
         }
@@ -999,12 +987,6 @@ extension PreviewPanelView {
         applyExpandedTimeline(pendingTab, activeTab: pendingTab)
     }
 
-    func timelineTranscriptRecognitionIsRunning(for path: String) -> Bool {
-        if case .running = libraryStore.transcriptStatusByVideoPath[path] {
-            return true
-        }
-        return false
-    }
 }
 
 private struct TimelineRangeSelectionIcon: View {
