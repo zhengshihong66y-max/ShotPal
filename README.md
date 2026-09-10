@@ -8,6 +8,12 @@
 </p>
 
 <p align="center">
+  <a href="https://shotpal.newtybei.com">
+    <img src="docs/assets/github/release-strip.svg" width="820" alt="Visit the official ShotPal Pro website — version and platform information">
+  </a>
+</p>
+
+<p align="center">
   <img src="docs/assets/github/showcase/posters/download.webp" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
 </p>
 
