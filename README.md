@@ -6,6 +6,17 @@ A native macOS tool for studying films, capturing frames, extracting audio, and 
 
 [Download & install](#download-and-install) · [Quick start](#quick-start) · [Feature previews](#feature-previews) · [For developers](#for-developers)
 
+<p align="center">
+  <a href="https://shotpal.newtybei.com/#overview-story">
+    <img src="docs/assets/github/shotpal-feature-trio-github.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://shotpal.newtybei.com/#overview-story"><strong>▶ Watch the latest interactive product demo</strong></a><br>
+  <sub>The first frame is a complete overview when animated images are disabled.</sub>
+</p>
+
 ## Download and install
 
 > **Release candidate: 1.2.1, build 2026090901.** The installer is Developer ID–signed. Apple notarization and clean-Mac acceptance are pending, so this is not yet the final launch. Public installer downloads are available in [ShotPal-Releases](https://github.com/zhengshihong66y-max/ShotPal-Releases/releases/tag/v1.2.1-rc.2026090901). This source repository and its complete developer package remain private.
@@ -72,22 +83,6 @@ Scene detection and subtitle transcription run locally on your Mac. Online impor
 
 ## Feature previews
 
-<details>
-<summary>Show the product demo and eight feature previews</summary>
-
-<p align="center">
-  <a href="https://shotpal.newtybei.com/#overview-story">
-    <img src="docs/assets/github/shotpal-feature-trio-github.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://shotpal.newtybei.com/#overview-story"><strong>▶ Watch the latest interactive product demo</strong></a><br>
-  <sub>The first frame is a complete overview when animated images are disabled.</sub>
-</p>
-
-
-
 <a name="showcase"></a>
 
 <p align="center">
@@ -122,8 +117,6 @@ Scene detection and subtitle transcription run locally on your Mac. Online impor
   <img src="docs/assets/github/showcase/posters/music.webp" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
 </p>
 
-
-</details>
 
 ## For developers
 
