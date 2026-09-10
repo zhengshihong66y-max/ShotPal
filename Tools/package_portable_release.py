@@ -36,7 +36,7 @@ def main():
     if stage.exists() or dmg.exists():
         raise SystemExit("Refusing to overwrite an existing staging folder or DMG")
     stage.mkdir(parents=True)
-    app = stage / "拉片宝.app"
+    app = stage / "ShotPal Pro.app"
     shutil.copytree(args.app, app, symlinks=True)
     (stage / "Applications").symlink_to("/Applications")
     magics = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
@@ -60,7 +60,7 @@ def main():
     run(sys.executable, ROOT / "Tools/verify_download_runtime.py", app, "--report", evidence / "signed-runtime.json")
     run(sys.executable, ROOT / "Tools/check_download_pipeline.py", app, "--report", evidence / "signed-pipeline.json")
     run(sys.executable, ROOT / "Tools/verify_recognition_runtime.py", app, "--report", evidence / "signed-recognition.json")
-    ui_report = subprocess.check_output([str(app / "Contents/MacOS/拉片宝"), "--lapianbao-ui-state-check"], text=True)
+    ui_report = subprocess.check_output([str(app / "Contents/MacOS" / info["CFBundleExecutable"]), "--lapianbao-ui-state-check"], text=True)
     (evidence / "ui-state.json").write_text(ui_report)
     with (app / "Contents/Info.plist").open("rb") as stream:
         info = plistlib.load(stream)
