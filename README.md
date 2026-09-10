@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://github.com/zhengshihong66y-max/ShotPal/releases/download/v1.2.1-rc.2026090901/ShotPal-Pro-1.2.1-build2026090901-macOS14-AppleSilicon.dmg">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/7f3bb2aa9cb3a8b57a0f9a4af7415279ff933b1d/docs/assets/github/release-strip.svg" width="820" height="98" alt="Download ShotPal Pro DMG — version and platform information">
+  </a>
+</p>
+
 <p><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/en-active.svg" width="96" height="40" alt="EN — selected"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/c90b9a68640b823aa0ce5642905d742612fa149d/docs/assets/github/language/zh-inactive.svg" width="96" height="40" alt="简中 — 切换至简体中文"></a></p>
 
 <a name="feature-previews"></a>
@@ -6,12 +12,6 @@
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
     <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.%67if" width="1100" height="606" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://shotpal.newtybei.com">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/release-strip.svg" width="820" height="98" alt="Visit the official ShotPal Pro website — version and platform information">
   </a>
 </p>
 
