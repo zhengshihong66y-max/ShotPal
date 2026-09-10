@@ -1,4 +1,4 @@
-Language: [EN](README.md) | 简中
+<p><a href="README.md" title="English"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a526014cc8168e09aed615716afb59ca40316b67/docs/assets/github/language/en-inactive.svg" width="96" height="40" alt="EN — switch to English"></a><a href="README.zh-CN.md" title="简体中文"><img src="https://github.com/zhengshihong66y-max/ShotPal/raw/a526014cc8168e09aed615716afb59ca40316b67/docs/assets/github/language/zh-active.svg" width="96" height="40" alt="简中 — 当前语言"></a></p>
 
 <a name="feature-previews"></a>
 <a name="showcase"></a>
