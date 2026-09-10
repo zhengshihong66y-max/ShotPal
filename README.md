@@ -3,46 +3,46 @@
 
 <p align="center">
   <a href="https://shotpal.newtybei.com/#overview-story">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.gif" width="1100" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/shotpal-feature-trio-github.gif" width="1100" height="606" alt="ShotPal Pro deconstructs a film through download, analysis, and reusable output workflows">
   </a>
 </p>
 
 <p align="center">
   <a href="https://shotpal.newtybei.com">
-    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/release-strip.svg" width="820" alt="Visit the official ShotPal Pro website — version and platform information">
+    <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/release-strip.svg" width="820" height="98" alt="Visit the official ShotPal Pro website — version and platform information">
   </a>
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/download.webp" width="1100" alt="Download — Paste a public link to import the film and its source details into your library.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/download.webp" width="1100" height="825" alt="Download — Paste a public link to import the film and its source details into your library.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/scene.webp" width="1100" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/scene.webp" width="1100" height="825" alt="Scene Detection — Automatically detect cuts and jump between edits with the up and down arrow keys.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/capture.webp" width="1100" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/capture.webp" width="1100" height="825" alt="Capture Frame — Save the exact current frame with its source and timecode using E.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/audio.webp" width="1100" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/audio.webp" width="1100" height="825" alt="Audio Range — Set In and Out with I and O, then export the audio clip with P.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/subtitle.webp" width="1100" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/subtitle.webp" width="1100" height="825" alt="Local Subtitles — Transcribe on your Mac and keep every subtitle synchronized with playback.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/storyboard.webp" width="1100" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/storyboard.webp" width="1100" height="825" alt="Storyboard — Export shot numbers, timecodes, frames, and subtitles in one organized table.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/drag.webp" width="1100" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/drag.webp" width="1100" height="825" alt="Drag Out — Drag saved frames, audio, and music directly into your editing software.">
 </p>
 
 <p align="center">
-  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/music.webp" width="1100" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
+  <img src="https://github.com/zhengshihong66y-max/ShotPal/raw/36785bf1dc5ff11f2d2ebc0453805eb310e102cd/docs/assets/github/showcase/posters/music.webp" width="1100" height="825" alt="Music Recognition — Identify tracks and locate the matching moments in the film.">
 </p>
 
 # ShotPal Pro
